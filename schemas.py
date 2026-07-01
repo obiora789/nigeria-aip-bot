@@ -1,0 +1,95 @@
+"""
+schemas.py — strict structured-output schema for the extraction LLM.
+
+Key change from the original: the model NO LONGER maps city names to ICAO codes.
+That mapping was an unguarded hallucination path (wrong code -> wrong airport's
+real data shown as authoritative). The model now only reports the raw aerodrome
+name; deterministic resolution to an ICAO happens in resolver.py against your own
+database.
+"""
+from typing import List, Literal, Optional
+
+from pydantic import BaseModel, Field, field_validator
+
+
+class GroundedFact(BaseModel):
+    """A single AIP value the synthesized answer relies on, quoted verbatim."""
+    value: str = Field(description="A value copied EXACTLY from the AIP excerpts, e.g. '3610 m'")
+    what: str = Field(description="What this value is, e.g. 'RWY 04 TORA'")
+
+
+class GroundedAnswer(BaseModel):
+    """Output of the grounded-synthesis step. The LLM may compute/compare, but
+    only over values present in the excerpts; a deterministic verifier then
+    checks every asserted number against the source before anything is shown."""
+    answerable: bool = Field(
+        description="True ONLY if the answer is fully supported by the excerpts")
+    answer: str = Field(
+        default="", description="Concise factual answer using only the excerpts")
+    facts_used: List[GroundedFact] = Field(
+        default_factory=list,
+        description="Every AIP value the answer relies on, quoted exactly")
+    computation: str = Field(
+        default="", description="Arithmetic shown as 'A op B = C', else empty")
+
+
+class AIPQueryExtraction(BaseModel):
+    """Forces strict JSON. The model extracts parameters only — it does not answer."""
+
+    intent: Literal[
+        "frequency_retrieval",
+        "chart_retrieval",
+        "runway_data",
+        "aerodrome_fact",       # AD: elevation, ref temp, taxiways, declared distances,
+                                #     RFFS, fuel, facilities, hours, removal of disabled acft
+        "procedure_lookup",
+        "icao_lookup",          # ICAO code <-> city/airport name mapping
+        "airspace_lookup",      # ENR: FIR/TMA/CTR limits, airways, restricted areas, waypoints
+        "national_lookup",      # GEN: charges, MET policy, SAR, AIS, abbreviations
+        "general_greeting",
+        "out_of_scope",
+    ] = Field(description="Classify what the pilot is asking for.")
+
+    icao_code: Optional[str] = Field(
+        None,
+        description=(
+            "ONLY fill this if the user literally typed a 4-letter code starting "
+            "with 'DN' (e.g. 'DNAA'). NEVER infer a code from a city or airport "
+            "name — leave it null and put the name in aerodrome_name instead."
+        ),
+    )
+
+    aerodrome_name: Optional[str] = Field(
+        None,
+        description="The city or airport name the user mentioned, copied verbatim. Do not convert it to a code.",
+    )
+
+    procedure_type: Optional[str] = Field(
+        None,
+        description="e.g. 'ILS', 'RNAV', 'SID', 'STAR', 'Tower', 'ATIS'. Leave null if none.",
+    )
+
+    runway: Optional[str] = Field(
+        None,
+        description="Runway designator if mentioned, e.g. '18L', '22'. Leave null if none.",
+    )
+
+    filter_part: Literal["GEN", "ENR", "AD"] = Field(
+        description="Best guess at the AIP structural area. Treated as a hint only, not a hard constraint.",
+    )
+
+    @field_validator("icao_code")
+    @classmethod
+    def _norm_icao(cls, v: Optional[str]) -> Optional[str]:
+        if not v:
+            return None
+        v = v.strip().upper()
+        return v or None
+
+    @field_validator("runway", "aerodrome_name", "procedure_type")
+    @classmethod
+    def _strip(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        v = v.strip()
+        return v or None
