@@ -87,17 +87,26 @@ def _cite(r, outcome: SearchOutcome) -> str:
 
 def _source_block(outcome: SearchOutcome, ans) -> str:
     """The verbatim AIP excerpt(s) the synthesized answer rests on — always shown
-    so a pilot can verify the ground truth behind any synthesis or computation."""
+    so a pilot can verify the ground truth. For numeric answers we pick the chunk
+    holding the value; for qualitative answers we pick the chunk with the most
+    word overlap with the answer, so the shown source actually supports the claim
+    (not merely the top similarity hit)."""
     values = [v for f in ans.facts_used
               for v in re.findall(r"\d[\d,]*(?:\.\d+)?", f.value)]
     chosen = []
     for r in outcome.results:
-        if any(v.replace(",", "") in r.content.replace(",", "") for v in values):
+        if values and any(v.replace(",", "") in r.content.replace(",", "") for v in values):
             chosen.append(r)
         if len(chosen) >= config.MAX_DISPLAY_CHUNKS:
             break
-    if not chosen:                       # no value chunk identified -> show top hit
-        chosen = outcome.results[:1]
+    if not chosen:
+        # No numeric anchor — rank by word overlap with the answer + facts_used.
+        target = (ans.answer + " " + " ".join(f.value for f in ans.facts_used)).lower()
+        want = set(re.findall(r"[a-z]{4,}", target))
+        def overlap(r):
+            return len(want & set(re.findall(r"[a-z]{4,}", r.content.lower())))
+        ranked = sorted(outcome.results, key=overlap, reverse=True)
+        chosen = [r for r in ranked[:1] if overlap(r) > 0] or outcome.results[:1]
     blocks = []
     for r in chosen:
         pct = int(round(r.similarity * 100))

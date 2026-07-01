@@ -21,6 +21,8 @@ import resolver
 from agent import extract_query_parameters, get_embedding
 from database import get_charts, get_charts_smart, search_aip
 import synthesize
+import facts
+import toc
 from responder import (ambiguous, answer, chart_intro, chart_not_found, error,
                        grounded_reply, low_confidence, not_found, not_in_aip,
                        unresolved)
@@ -127,6 +129,23 @@ async def process(chat_id: int, text: str) -> None:
         if ex.intent == "general_greeting":
             await send_message(chat_id, config.GREETING)
             return
+
+        # Cross-aerodrome enumeration ("which aerodromes use 5000 ft TA") —
+        # structured-facts lookup, not retrieval.
+        if facts.is_ta_enumeration(text):
+            ans = facts.answer_ta_enumeration(text)
+            if ans:
+                await send_message(chat_id, ans)
+                return
+
+        # Structure/meta questions ("which part of the AIP covers X") are about
+        # the document's organisation — answer from the ToC, never retrieval.
+        if toc.is_structure_question(text):
+            ans = toc.answer(text)
+            if ans:
+                await send_message(chat_id, ans)
+                return
+
         if ex.intent == "out_of_scope":
             await send_message(chat_id, config.OUT_OF_SCOPE)
             return

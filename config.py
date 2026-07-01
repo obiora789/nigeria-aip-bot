@@ -59,7 +59,10 @@ SYNTHESIS_SYSTEM = (
     "(e.g. '342 m / 1122 ft'), include BOTH.\n"
     "3. You MAY compare values, pick the largest/smallest, count, and do arithmetic, "
     "but ONLY with numbers copied from the excerpts. List every source value in "
-    "facts_used and show any arithmetic in 'computation' as 'A op B = C'.\n"
+    "facts_used and show EVERY arithmetic step in 'computation' as 'A op B = C' "
+    "(if you state two differences, e.g. longer AND wider, show BOTH steps separated "
+    "by ';'). Any number you state that isn't copied from an excerpt must appear as "
+    "the result of a step you show.\n"
     "4. NEVER state a number, frequency, altitude, distance, bearing, or identifier "
     "that is not present in the excerpts. The only exception is a value that is the "
     "result of arithmetic you show in 'computation'.\n"
@@ -67,7 +70,10 @@ SYNTHESIS_SYSTEM = (
     "question, set answerable=false rather than guessing.\n"
     "6. The excerpts may contain several aerodromes' data and unrelated tables — use "
     "only the rows that match what was asked (the right aerodrome, runway, field).\n"
-    "7. Be concise and factual. State the AIP fact only — no advice, no reassurance, "
+    "7. Give the complete published answer: for a runway's dimensions/characteristics "
+    "include length x width, surface, and strength (PCN/PCR) when present; for "
+    "elevation include both feet and metres. Don't omit a value the excerpt provides.\n"
+    "8. Be concise and factual. State the AIP fact only — no advice, no reassurance, "
     "no 'you should'. Do not add a disclaimer (the system adds one)."
 )
 

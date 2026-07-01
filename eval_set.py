@@ -31,8 +31,14 @@ KEYWORDS = ["NIL", "Not Available", "not specified", "Jet A1", "Jet A-1",
             "Kano FIR"]
 
 
+def _despace(s: str) -> str:
+    # AIP writes thousands spaced ('3 610', '1 122'); GT uses '3610'. Collapse so
+    # a verbatim spaced value in the reply matches the unspaced ground truth.
+    return re.sub(r"(\d)\s+(\d{3})(?!\d)", r"\1\2", s or "")
+
+
 def _has_num(reply: str, n: str) -> bool:
-    return re.search(rf"(?<!\d){re.escape(n)}(?!\d)", reply) is not None
+    return re.search(rf"(?<!\d){re.escape(n)}(?!\d)", _despace(reply)) is not None
 
 
 def _plate_leak(reply: str) -> bool:
@@ -96,7 +102,7 @@ def score(row: dict, r: dict) -> tuple[str, str]:
     # retrieval / reasoning / nl_robustness -> numeric + keyword recall
     if r["path"] == "not_in_aip":
         return ("FAIL", "abstained but a value was expected")
-    gnums = NUM.findall(gt)
+    gnums = NUM.findall(_despace(gt))
     matched = [n for n in gnums if _has_num(reply, n)]
     kw = [k for k in KEYWORDS if k.upper() in gt.upper() and k.upper() in up]
     if gnums:

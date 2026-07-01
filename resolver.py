@@ -174,12 +174,18 @@ _AIRSPACE_TERMS = ("CTR TMA FIR UIR control zone terminal control area "
 _AD_FIELD_TERMS = [
     (re.compile(r"declared distance|\btora\b|\btoda\b|\basda\b|\blda\b", re.I),
      "AD 2.13 declared distances TORA TODA ASDA LDA"),
+    (re.compile(r"\batis\b|\btwr\b|\btower\b|ground control|clearance delivery|"
+                r"approach control|communication frequenc|\bcomm\b|callsign", re.I),
+     "AD 2.18 ATS communication facilities ATIS TWR APP GND frequency MHz callsign"),
+    (re.compile(r"\btaf\b|\bmetar\b|\btrend\b|meteorolog|weather (report|forecast)|"
+                r"forecast validity|met office", re.I),
+     "AD 2.11 meteorological information TAF METAR TREND period of validity forecast"),
     (re.compile(r"\bvor\b|\bdme\b|\bndb\b|navaid|identifier|\bident\b", re.I),
      "AD 2.19 radio navigation landing aids VOR DME identifier frequency MHz"),
     (re.compile(r"\bils\b|localizer|localiser|glide ?path", re.I),
      "AD 2.19 ILS localizer glide path category frequency MHz"),
     (re.compile(r"transition (altitude|level)", re.I),
-     "AD 2.22 transition altitude transition level flight level"),
+     "transition altitude transition level flight level QNH AMSL feet metres AD 2.17"),
     (re.compile(r"elevation|how high|\bamsl\b|reference temperature|temperature", re.I),
      "AD 2.2 aerodrome elevation reference temperature feet metres AMSL"),
     (re.compile(r"taxiway|\btwy\b", re.I),

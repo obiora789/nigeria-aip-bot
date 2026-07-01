@@ -177,12 +177,31 @@ def chart_matches(term: str, stored_procedure: str) -> bool:
 
 
 def get_charts_smart(icao: str, term: str = "", runway: str = "") -> List[ChartRef]:
-    """Fetch ALL of an aerodrome's charts, then filter by synonym-aware type and
-    (if requested) runway. Robust to the AIP's naming (SID vs Departure, slash
-    spacing) where the RPC's literal match fails."""
+    """Fetch ALL of an aerodrome's charts DIRECTLY from the table (the RPC drops
+    NULL-runway charts even on empty params), then filter by synonym-aware type.
+    Runway is a PREFERENCE, not a hard filter: return exact-end matches if any
+    exist, else return all type matches so send_charts can add the S5 warning —
+    a request for RWY 04 should still show the RWY 22 plate, flagged, not nothing."""
     from responder import runway_serves  # lazy import to avoid a cycle
-    charts = get_charts(icao, "", "")
+    try:
+        resp = supabase.table("aip_charts").select(
+            "chart_url, procedure_type, runway, icao_code").eq("icao_code", icao).execute()
+    except Exception:  # noqa: BLE001
+        log.exception("aip_charts direct fetch failed (icao=%s)", icao)
+        return []
+    charts: List[ChartRef] = []
+    for row in (resp.data or []):
+        url = row.get("chart_url")
+        if not url:
+            continue
+        ext = os.path.splitext(url.split("?")[0])[1].lower()
+        charts.append(ChartRef(
+            url=url, procedure_type=row.get("procedure_type"),
+            runway=row.get("runway"), icao_code=row.get("icao_code"),
+            is_pdf=(ext not in _IMAGE_EXTS)))
     charts = [c for c in charts if chart_matches(term, c.procedure_type)]
     if runway:
-        charts = [c for c in charts if runway_serves(runway, c.runway)]
+        exact = [c for c in charts if runway_serves(runway, c.runway)]
+        if exact:
+            return exact
     return charts

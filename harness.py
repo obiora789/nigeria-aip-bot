@@ -16,6 +16,8 @@ import sys
 
 import config
 import resolver
+import facts
+import toc
 from agent import extract_query_parameters, get_embedding
 from database import get_charts, get_charts_smart, search_aip
 import synthesize
@@ -36,6 +38,10 @@ def run(text: str) -> None:
 
     if ex.intent == "general_greeting":
         print("\nREPLY:\n", config.GREETING); return
+    if toc.is_structure_question(text):
+        ans = toc.answer(text)
+        if ans:
+            print("\nREPLY:\n", ans); return
     if ex.intent == "out_of_scope":
         print("\nREPLY:\n", config.OUT_OF_SCOPE); return
 

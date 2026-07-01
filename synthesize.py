@@ -32,7 +32,11 @@ _ARITH = re.compile(
 
 
 def _nums(s: str) -> set:
-    return {m.replace(",", "") for m in _NUM.findall(s or "")}
+    # The AIP writes thousands with a space ('3 610', '1 122'). Collapse those
+    # so a value matches whether spaced or not, and so arithmetic the model does
+    # on unspaced numbers ('3900 - 2745') verifies against spaced source text.
+    s = re.sub(r"(\d)\s+(\d{3})(?!\d)", r"\1\2", s or "")
+    return {m.replace(",", "") for m in _NUM.findall(s)}
 
 
 def _fmt_context(results: List[AIPResult]) -> str:
@@ -110,14 +114,28 @@ def verify_grounded_answer(ans: GroundedAnswer, context: str) -> Tuple[bool, Lis
     return (not issues, issues)
 
 
+# Approach minima (CAT I/II/III decision heights, OCA/OCH, DA/DH) are among the
+# highest-stakes values in the AIP and live in dense per-runway/per-category
+# tables. The number-verifier cannot catch a value pulled from the RIGHT table but
+# the WRONG row (e.g. RWY 04's CAT II DH attributed to RWY 22). So we NEVER
+# synthesize these — we show the table verbatim and let the pilot read the exact
+# row. Conservative by design for the values where misattribution is most dangerous.
+_MINIMA_RE = re.compile(
+    r"\bcat\s?(i{1,3}|1|2|3)\b|decision (height|altitude)|\bdh\b|\bda\b|"
+    r"\boca\b|\boch\b|\bminima\b|minimum descent|\bmda\b", re.I)
+
+
 def synthesize_decision(question: str, results: List[AIPResult]) -> Tuple[str, object]:
     """Decide how to answer a text query. Returns (status, grounded_answer):
       'grounded'   -> a VERIFIED synthesized answer (show grounded_reply)
       'not_in_aip' -> the model found no answer in the excerpts (faithful abstain)
-      'fallback'   -> show verbatim chunks (synthesis off / error / FAILED verify)
+      'fallback'   -> show verbatim chunks (synthesis off / error / FAILED verify /
+                      safety carve-out for approach minima)
     Fails safe: an unverified answer never returns 'grounded'."""
     if not config.SYNTHESIS_ENABLED:
         return ("fallback", None)
+    if _MINIMA_RE.search(question or ""):
+        return ("fallback", None)      # never synthesize a decision height
     ans = generate_grounded_answer(question, results)
     if ans is None:
         return ("fallback", None)

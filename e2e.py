@@ -23,6 +23,8 @@ import sys
 
 import config
 import resolver
+import facts
+import toc
 import synthesize
 from agent import extract_query_parameters, get_embedding
 from database import get_charts, get_charts_smart, search_aip
@@ -64,8 +66,30 @@ def run_pipeline(q: str) -> dict:
         out["path"], out["reply"] = "greeting", config.GREETING
         return out
     if ex.intent == "out_of_scope":
+        # A structure question ("which part covers X") can be mis-tagged
+        # out_of_scope — answer it deterministically from the ToC first.
+        if toc.is_structure_question(q):
+            ans = toc.answer(q)
+            if ans:
+                out["path"], out["reply"] = "structure", ans
+                return out
         out["path"], out["reply"] = "out_of_scope", config.OUT_OF_SCOPE
         return out
+
+    # Cross-aerodrome enumeration (e.g. "which aerodromes use 5000 ft TA") — a
+    # structured-facts lookup, not retrieval (top-k can't scan all 40 at once).
+    if facts.is_ta_enumeration(q):
+        ans = facts.answer_ta_enumeration(q)
+        if ans:
+            out["path"], out["reply"] = "facts", ans
+            return out
+
+    # Structure/meta questions are about the AIP's organisation, not data.
+    if toc.is_structure_question(q):
+        ans = toc.answer(q)
+        if ans:
+            out["path"], out["reply"] = "structure", ans
+            return out
 
     res = resolver.resolve(ex)
     out["icao"], out["ref"], out["hint"] = res.icao, res.reference, res.aerodrome_hint

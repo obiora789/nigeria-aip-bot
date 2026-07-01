@@ -21,14 +21,27 @@ _DN_RE = re.compile(r"\bDN[A-Z]{2}\b")
 # A clear identity/mapping question — safe to rescue from a wrong out_of_scope.
 _MAPPING_RE = re.compile(
     r"(icao code|what (?:city|airport|aerodrome)|what(?:'s| is)\s+dn[a-z]{2})", re.I)
+# An unmistakable chart request: an explicit chart/plate noun, OR a display verb
+# near a plate type. Catches 'Show the RNAV (GNSS) approach' that the model
+# mislabels as a procedure lookup. Intents that are genuinely about VALUES
+# (frequency/runway data) are left alone.
+_CHART_NOUN_RE = re.compile(r"\b(chart|plate)\b", re.I)
+_CHART_REQ_RE = re.compile(
+    r"\b(show|display|pull|view|see|bring up)\b[^.?!]{0,40}?"
+    r"\b(rnav|gnss|rnp|ils|vor|ndb|sid|star)\b", re.I)
+_CHART_FORCEABLE = {"procedure_lookup", "aerodrome_fact", "airspace_lookup",
+                    "icao_lookup", "general_query"}
+# A per-aerodrome MET/comm/hours field — belongs to AD 2.11/2.18/2.3, not national.
+_AD_FIELD_AT_RE = re.compile(
+    r"\b(taf|metar|trend|atis|operational hours|hours of operation)\b", re.I)
 
 
 def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
-    """Deterministic correction of two LLM extraction failures a regex handles
+    """Deterministic correction of LLM extraction failures a regex handles
     perfectly: (1) a fabricated/invalid ICAO code, (2) a real DN code or a clear
-    mapping question wrongly sent to out_of_scope. Never converts a genuine
-    out-of-scope query (live weather, foreign airport) into an answer — the
-    out_of_scope rescue only fires on an explicit identity/mapping question."""
+    mapping question wrongly sent to out_of_scope, (3) an obvious chart request
+    mislabelled as a text/procedure lookup. Never converts a genuine out-of-scope
+    query (live weather, foreign airport) into an answer."""
     resolver.load_index()
     # 1) drop a code the model invented (e.g. 'DNLM' for 'Murtala Muhammed Lagos')
     if ex.icao_code and ex.icao_code not in resolver.VALID_ICAO \
@@ -46,6 +59,18 @@ def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
         if not ex.icao_code and not ex.aerodrome_name:
             cands = resolver.match_name(raw)
             if len(cands) == 1:
+                ex.icao_code = next(iter(cands))
+    # 4) unmistakable chart request mislabelled as text -> force chart_retrieval
+    if ex.intent in _CHART_FORCEABLE and (
+            _CHART_NOUN_RE.search(raw) or _CHART_REQ_RE.search(raw)):
+        ex.intent = "chart_retrieval"
+    # 5) a per-aerodrome field (TAF/METAR/ATIS/hours) asked AT a named aerodrome is
+    #    an aerodrome fact (AD 2.11/2.18), not a national MET/AIS policy question.
+    if ex.intent in ("national_lookup", "out_of_scope") and _AD_FIELD_AT_RE.search(raw):
+        cands = resolver.match_name(raw)
+        if ex.icao_code in resolver.VALID_ICAO or len(cands) == 1:
+            ex.intent = "aerodrome_fact"
+            if not ex.icao_code and len(cands) == 1:
                 ex.icao_code = next(iter(cands))
     return ex
 
