@@ -26,18 +26,35 @@ def _rwy_num(r) -> str | None:
     return f"{int(m.group(1)):02d}" if m else None
 
 
+def _rwy_token(r):
+    """(heading, side) e.g. '18L' -> ('18','L'), '04' -> ('04',''). Side is
+    L/R/C when present. Used for strict parallel-runway matching."""
+    m = re.match(r"\s*(\d{1,2})\s*([LRC])?", str(r or "").strip(), re.I)
+    if not m:
+        return (None, "")
+    return (f"{int(m.group(1)):02d}", (m.group(2) or "").upper())
+
+
 def _rwy_opposite(num: str) -> str:
     return f"{((int(num) + 18 - 1) % 36) + 1:02d}"
 
 
 def runway_serves(requested, field) -> bool:
-    """True if a chart's runway field covers the requested end (so no warning).
-    Compares heading numbers, ignoring L/R/C, and handles combined '04/22'."""
-    req = _rwy_num(requested)
-    if not req or not field:
+    """True if a chart's runway field covers the requested end. Side-aware: if the
+    pilot names a side (18L) and the chart names the other side (18R) they do NOT
+    match — 18L and 18R are separate parallel runways. If either omits the side,
+    match on heading only. Handles a combined field like '18L/36R'."""
+    rn, rs = _rwy_token(requested)
+    if not rn or not field:
         return True
-    ends = [e for e in (_rwy_num(x) for x in re.split(r"[\/,]", str(field))) if e]
-    return req in ends if ends else True
+    for part in re.split(r"[\/,]", str(field)):
+        fn, fs = _rwy_token(part)
+        if fn != rn:
+            continue
+        if rs and fs and rs != fs:   # both sided, different side -> not this runway
+            continue
+        return True
+    return False
 
 
 def runway_warning(requested, field) -> str | None:
@@ -85,33 +102,54 @@ def _cite(r, outcome: SearchOutcome) -> str:
     return " / ".join(bits) if bits else "Nigeria AIP"
 
 
+def _focus(content: str, needles: list, width: int = 360) -> str:
+    """Collapse whitespace and return a focused window around the answer's values,
+    so the source shows the supporting line — not a screen of flattened table."""
+    text = re.sub(r"\s+", " ", (content or "").strip())
+    if len(text) <= width:
+        return text
+    pos = [text.find(n) for n in needles]
+    pos = [p for p in pos if p >= 0]
+    if pos:
+        lo = max(0, min(pos) - 90)
+        hi = min(len(text), max(pos) + 210)
+        if hi - lo > width:
+            hi = lo + width
+        return ("… " if lo > 0 else "") + text[lo:hi].strip() + (" …" if hi < len(text) else "")
+    return text[:width].strip() + " …"
+
+
 def _source_block(outcome: SearchOutcome, ans) -> str:
-    """The verbatim AIP excerpt(s) the synthesized answer rests on — always shown
-    so a pilot can verify the ground truth. For numeric answers we pick the chunk
-    holding the value; for qualitative answers we pick the chunk with the most
-    word overlap with the answer, so the shown source actually supports the claim
-    (not merely the top similarity hit)."""
-    values = [v for f in ans.facts_used
+    """The ONE best-supporting AIP excerpt behind a synthesized answer, trimmed to
+    the relevant window. Verifiability without the dump: a computed answer needs a
+    single source line a pilot can check, not several full chunks (some of which
+    only matched incidentally)."""
+    values = [v.replace(",", "") for f in ans.facts_used
               for v in re.findall(r"\d[\d,]*(?:\.\d+)?", f.value)]
-    chosen = []
-    for r in outcome.results:
-        if values and any(v.replace(",", "") in r.content.replace(",", "") for v in values):
-            chosen.append(r)
-        if len(chosen) >= config.MAX_DISPLAY_CHUNKS:
-            break
-    if not chosen:
-        # No numeric anchor — rank by word overlap with the answer + facts_used.
+
+    def val_score(r):
+        c = r.content.replace(",", "")
+        return sum(1 for v in values if v in c)
+
+    best = None
+    if values:
+        ranked = sorted(outcome.results, key=lambda r: (val_score(r), r.similarity),
+                        reverse=True)
+        if ranked and val_score(ranked[0]) > 0:
+            best = ranked[0]
+    if best is None:
+        # Qualitative answer — rank by word overlap so the source truly supports it.
         target = (ans.answer + " " + " ".join(f.value for f in ans.facts_used)).lower()
         want = set(re.findall(r"[a-z]{4,}", target))
-        def overlap(r):
-            return len(want & set(re.findall(r"[a-z]{4,}", r.content.lower())))
-        ranked = sorted(outcome.results, key=overlap, reverse=True)
-        chosen = [r for r in ranked[:1] if overlap(r) > 0] or outcome.results[:1]
-    blocks = []
-    for r in chosen:
-        pct = int(round(r.similarity * 100))
-        blocks.append(f"[AIP {_cite(r, outcome)} · {pct}% match]\n{r.content.strip()}")
-    return "\n\n".join(blocks)
+        ranked = sorted(
+            outcome.results,
+            key=lambda r: len(want & set(re.findall(r"[a-z]{4,}", r.content.lower()))),
+            reverse=True)
+        best = ranked[0] if ranked else (outcome.results[0] if outcome.results else None)
+    if best is None:
+        return ""
+    pct = int(round(best.similarity * 100))
+    return f"[AIP {_cite(best, outcome)} · {pct}% match]\n{_focus(best.content, values)}"
 
 
 def grounded_reply(ans, outcome: SearchOutcome, res: Resolution) -> str:
