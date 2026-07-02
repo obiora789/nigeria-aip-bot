@@ -1,0 +1,36 @@
+name: Eval
+
+# The full 63-case eval hits OpenAI + Supabase (costs money, needs the live DB),
+# so it is NOT on the deploy path. It runs weekly and on demand, and uploads the
+# results CSV as an artifact. Informational — it does not block deploys.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"   # Mondays 06:00 UTC
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      QUERY_LOG_ENABLED: "0"    # don't pollute the query log with eval traffic
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run eval
+        run: python eval_set.py
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vannie-eval-results
+          path: vannie_eval_results.csv
+          if-no-files-found: ignore

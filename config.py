@@ -43,6 +43,8 @@ MAX_CHARTS = int(os.getenv("MAX_CHARTS", "6"))   # cap (Kano FIR returns ~10 pla
 # retrieved AIP excerpts, verified by a deterministic checker that fails safe to
 # verbatim display. Set SYNTHESIS_ENABLED=0 to revert to pure verbatim.
 SYNTHESIS_ENABLED = os.getenv("SYNTHESIS_ENABLED", "1") == "1"
+QUERY_LOG_ENABLED = os.getenv("QUERY_LOG_ENABLED", "1") == "1"
+DASHBOARD_TOKEN = os.getenv("DASHBOARD_TOKEN", "")   # empty -> /dashboard disabled
 SYNTHESIS_MODEL = os.getenv("SYNTHESIS_MODEL", "gpt-4o-mini")
 SYNTHESIS_CONTEXT_CHUNKS = int(os.getenv("SYNTHESIS_CONTEXT_CHUNKS", "15"))
 
