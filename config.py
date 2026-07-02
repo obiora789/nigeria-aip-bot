@@ -45,6 +45,16 @@ MAX_CHARTS = int(os.getenv("MAX_CHARTS", "6"))   # cap (Kano FIR returns ~10 pla
 SYNTHESIS_ENABLED = os.getenv("SYNTHESIS_ENABLED", "1") == "1"
 QUERY_LOG_ENABLED = os.getenv("QUERY_LOG_ENABLED", "1") == "1"
 DASHBOARD_TOKEN = os.getenv("DASHBOARD_TOKEN", "")   # empty -> /dashboard disabled
+
+# --- Alerting: ping the operator when a credential/infra check degrades --------
+ALERT_ENABLED = os.getenv("ALERT_ENABLED", "1") == "1"
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "")       # Telegram chat to alert; blank -> off
+ALERT_MIN_INTERVAL = int(os.getenv("ALERT_MIN_INTERVAL", "900"))   # anti-spam, seconds
+DEEP_CHECK_INTERVAL_SEC = int(os.getenv("DEEP_CHECK_INTERVAL_SEC", "600"))  # 0 -> off
+
+# --- Short-term conversation context (slot-fill + follow-ups) ------------------
+CONTEXT_ENABLED = os.getenv("CONTEXT_ENABLED", "1") == "1"
+CONTEXT_TTL_MIN = int(os.getenv("CONTEXT_TTL_MIN", "10"))   # context expires fast
 SYNTHESIS_MODEL = os.getenv("SYNTHESIS_MODEL", "gpt-4o-mini")
 SYNTHESIS_CONTEXT_CHUNKS = int(os.getenv("SYNTHESIS_CONTEXT_CHUNKS", "15"))
 
@@ -92,6 +102,12 @@ NATIONAL_REFERENCE_TAGS = [
 PER_CHAT_COOLDOWN_SECONDS = float(os.getenv("PER_CHAT_COOLDOWN_SECONDS", "1.5"))
 DEDUP_CACHE_SIZE = int(os.getenv("DEDUP_CACHE_SIZE", "2048"))
 
+# --- Distributed dedup/throttle (optional) ------------------------------------
+# Set REDIS_URL to share dedup + throttle state across restarts and instances.
+# Unset -> in-memory fallback (single-instance, wiped on restart) — unchanged.
+REDIS_URL = os.getenv("REDIS_URL", "")
+DEDUP_TTL_SEC = int(os.getenv("DEDUP_TTL_SEC", "3600"))   # how long an update_id is remembered
+
 # --- Safety copy -----------------------------------------------------------
 DISCLAIMER = (
     "Reference aid only — NOT an operational source. "
@@ -110,6 +126,26 @@ GREETING = (
     "Hi, I'm Vannie — a reference assistant for the Nigerian AIP. "
     "Ask me about an aerodrome's published frequencies, runway data, procedures, "
     "or charts (e.g. \"Lagos tower frequency\" or \"ILS chart for DNAA runway 04\").\n\n"
+    f"{DISCLAIMER}"
+)
+
+HELP = (
+    "Vannie — Nigerian AIP reference assistant.\n"
+    f"Data: Nigeria AIP · {AIRAC_CYCLE}.\n\n"
+    "What I can look up, per aerodrome:\n"
+    "• Frequencies — tower, approach, ground, ATIS\n"
+    "• Runway data — dimensions, declared distances (TORA/TODA/ASDA/LDA), PCN\n"
+    "• Elevation, reference temperature, transition altitude\n"
+    "• Navaids — VOR/DME/ILS identifiers and frequencies\n"
+    "• Approach procedures — holding, letdown, missed approach\n"
+    "• Charts/plates — ILS, VOR, RNAV, SID, STAR, aerodrome, parking\n"
+    "• ICAO ↔ city mapping, and where a topic sits in the AIP\n\n"
+    "Tips:\n"
+    "• Name the aerodrome (city or ICAO, e.g. Lagos or DNMM).\n"
+    "• Add a runway/procedure for charts: \"VOR approach for Lagos RWY 18L\".\n"
+    "• Tap 👍/👎 under an answer — 👎 flags it for review.\n\n"
+    "What I don't do: live weather/METAR/TAF values, NOTAMs, flight planning, or "
+    "anything outside the published Nigerian AIP.\n\n"
     f"{DISCLAIMER}"
 )
 

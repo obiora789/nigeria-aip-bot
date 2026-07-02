@@ -12,52 +12,81 @@ milliseconds; otherwise Telegram retries the update and we'd pay twice.
 import asyncio
 import logging
 import re
-from collections import deque
+import uuid
 
 from fastapi import BackgroundTasks, FastAPI, Header, Request, Response
 from fastapi.responses import HTMLResponse
 
+import cache
 import config
 import resolver
 from agent import extract_query_parameters, get_embedding
 from database import get_charts, get_charts_smart, search_aip
 import synthesize
 import facts
+import memory
 import observability
 import toc
 from responder import (ambiguous, answer, chart_intro, chart_not_found, error,
                        grounded_reply, low_confidence, not_found, not_in_aip,
                        unresolved)
-from telegram import send_charts, send_message, verify_secret
+from telegram import (answer_callback, feedback_kb, send_charts, send_message,
+                      verify_secret)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("vannie.main")
 
 app = FastAPI(title="Vannie — Nigeria AIP Reference Assistant")
 
-# In-memory dedup + throttle. NOTE: single-instance only; use Redis if you scale
-# horizontally so these are shared across workers.
-_seen_updates: deque = deque(maxlen=config.DEDUP_CACHE_SIZE)
-_seen_set: set = set()
-_last_seen: dict = {}  # chat_id -> monotonic timestamp
-
 
 @app.on_event("startup")
-def _warm() -> None:
+async def _warm() -> None:
     try:
         resolver.load_index()
     except Exception:  # noqa: BLE001
         log.exception("index warmup failed; will lazy-load on first request")
+    # Deep check on boot -> loud PASS/FAIL, and an alert if a credential is bad.
     try:
-        observability.startup_healthcheck()   # loud PASS/FAIL for OpenAI + Supabase
+        ok, fails = await asyncio.to_thread(observability.healthcheck)
+        if not ok:
+            log.error("startup DEGRADED: %s", fails)
     except Exception:  # noqa: BLE001
         log.exception("startup healthcheck errored")
+    try:
+        redis_ok = await cache.ping()
+        log.info("cache backend: %s", "Redis" if redis_ok else "in-memory (no REDIS_URL or unreachable)")
+    except Exception:  # noqa: BLE001
+        log.exception("cache ping errored")
+    # Periodic background monitor so degradation alerts even without a restart.
+    if config.DEEP_CHECK_INTERVAL_SEC > 0:
+        asyncio.create_task(_health_monitor())
+
+
+async def _health_monitor() -> None:
+    """Re-run the deep check on an interval; alerting.report() fires on
+    healthy<->degraded transitions (throttled, with recovery notices)."""
+    while True:
+        await asyncio.sleep(config.DEEP_CHECK_INTERVAL_SEC)
+        try:
+            await asyncio.to_thread(observability.healthcheck)
+        except Exception:  # noqa: BLE001
+            log.exception("periodic healthcheck errored")
 
 
 @app.get("/health")
 def health() -> dict:
-    checks = observability.startup_healthcheck()
-    return {"status": "ok" if checks else "degraded", "airac": config.AIRAC_CYCLE}
+    """Cheap liveness — no external calls, safe for frequent Render pings."""
+    return {"status": "ok", "airac": config.AIRAC_CYCLE}
+
+
+@app.get("/health/deep")
+def health_deep(token: str = ""):
+    """Deep check (OpenAI + Supabase). Token-gated because it makes API calls."""
+    if not config.DASHBOARD_TOKEN or token != config.DASHBOARD_TOKEN:
+        return Response("not found", status_code=404)
+    ok, fails = observability.healthcheck()
+    return {"status": "ok" if ok else "degraded", "failed": fails,
+            "airac": config.AIRAC_CYCLE}
 
 
 @app.get("/dashboard")
@@ -72,28 +101,6 @@ def dashboard(token: str = "", days: int = 30):
     return HTMLResponse(observability.render_dashboard(rows, days))
 
 
-def _dedup(update_id) -> bool:
-    """True if this update_id was already seen."""
-    if update_id is None:
-        return False
-    if update_id in _seen_set:
-        return True
-    _seen_set.add(update_id)
-    _seen_updates.append(update_id)
-    if len(_seen_set) > len(_seen_updates):  # trim evicted ids
-        _seen_set.intersection_update(_seen_updates)
-    return False
-
-
-def _throttled(chat_id: int) -> bool:
-    now = asyncio.get_event_loop().time()
-    last = _last_seen.get(chat_id, 0.0)
-    if now - last < config.PER_CHAT_COOLDOWN_SECONDS:
-        return True
-    _last_seen[chat_id] = now
-    return False
-
-
 @app.post("/webhook")
 async def webhook(request: Request, background: BackgroundTasks,
                   x_telegram_bot_api_secret_token: str | None = Header(default=None)):
@@ -105,8 +112,14 @@ async def webhook(request: Request, background: BackgroundTasks,
     except Exception:  # noqa: BLE001
         return {"status": "ignored"}
 
-    if _dedup(payload.get("update_id")):
+    if await cache.already_seen(payload.get("update_id")):
         return {"status": "duplicate"}
+
+    # Button taps (👍/👎) arrive as callback_query, not message.
+    cb = payload.get("callback_query")
+    if cb:
+        background.add_task(handle_feedback, cb)
+        return {"status": "accepted"}
 
     msg = payload.get("message") or payload.get("edited_message") or {}
     text = msg.get("text")
@@ -115,11 +128,26 @@ async def webhook(request: Request, background: BackgroundTasks,
     if not text or chat_id is None:
         return {"status": "ignored"}
 
-    if _throttled(chat_id):
+    if await cache.throttled(chat_id):
         return {"status": "throttled"}
 
     background.add_task(process, chat_id, text)
     return {"status": "accepted"}
+
+
+async def handle_feedback(cb: dict) -> None:
+    """Record a 👍/👎 tap and acknowledge it. Never raises."""
+    try:
+        data = cb.get("data") or ""
+        cid = cb.get("id")
+        if data.startswith("fb:"):
+            _, verdict, qid = data.split(":", 2)
+            await asyncio.to_thread(observability.record_feedback, qid, verdict)
+            msg = "Thanks — logged." if verdict == "up" else "Thanks — flagged for review."
+            if cid:
+                await answer_callback(cid, msg)
+    except Exception:  # noqa: BLE001
+        log.exception("handle_feedback failed")
 
 
 # Procedure types that imply a published chart (not a frequency/service).
@@ -166,11 +194,35 @@ async def _send_approach_procedures(chat_id, text, ex, res):
     await send_message(chat_id, answer(outcome, res, ex.runway))
 
 
+_AVIATION_INTENTS = {"chart_retrieval", "procedure_lookup", "frequency_retrieval",
+                     "runway_data", "aerodrome_fact", "airspace_lookup"}
+
+
+def _bare_aerodrome(ex) -> bool:
+    """True when the message is essentially just naming a place ('Lagos', 'DNMM')
+    — the safe signal that it answers an earlier 'which aerodrome?'. Kept strict
+    (icao_lookup, no field) so 'elevation of Abuja' is treated as a NEW query, not
+    a slot-fill answer."""
+    return ex.intent == "icao_lookup" and not ex.procedure_type and not ex.runway
+
+
+def _aviation_intent(ex) -> bool:
+    return ex.intent in _AVIATION_INTENTS
+
+
 async def process(chat_id: int, text: str) -> None:
     """All heavy lifting; runs after the 200 ack. Never raises to the caller."""
     rec = {"intent": None, "icao": None, "path": "unknown",
-           "similarity": None, "charts": 0}
+           "similarity": None, "charts": 0, "qid": uuid.uuid4().hex[:12]}
+    kb = feedback_kb(rec["qid"])   # 👍/👎 buttons for the substantive answers
     try:
+        # Commands: answered deterministically, no LLM call.
+        cmd = text.strip().lower().split("@")[0]
+        if cmd in ("/start", "/help"):
+            rec["path"] = "help"
+            await send_message(chat_id, config.HELP)
+            return
+
         # 1) extract (sync SDK -> threadpool)
         ex = await asyncio.to_thread(extract_query_parameters, text)
         if ex is None:
@@ -208,16 +260,50 @@ async def process(chat_id: int, text: str) -> None:
             return
 
         # 2) deterministic resolution
+        ctx = await asyncio.to_thread(memory.load, chat_id)
         res = await asyncio.to_thread(resolver.resolve, ex)
         rec["icao"] = res.icao
+
+        # --- conversation context: fill a GAP only, always surfaced -----------
+        ctx_note = None
+        pending = ctx.get("pending")
+        if pending and _bare_aerodrome(ex) and res.icao:
+            # A bare "Lagos" answering an earlier "which aerodrome?" — merge the
+            # remembered request onto this aerodrome and re-run it.
+            ex.intent = pending.get("intent") or ex.intent
+            ex.procedure_type = pending.get("procedure_type")
+            ex.runway = pending.get("runway")
+            ex.icao_code, ex.aerodrome_name = res.icao, None
+            res = await asyncio.to_thread(resolver.resolve, ex)
+            rec["icao"] = res.icao
+            ctx_note = f"Continuing your earlier request — {res.label}:"
+        elif res.unresolved and ctx.get("last_icao") and _aviation_intent(ex):
+            # A follow-up with no aerodrome ("what about the ILS?") — carry the
+            # last one, but SAY which, so a wrong carry-over is caught instantly.
+            ex.icao_code = ctx["last_icao"]
+            res = await asyncio.to_thread(resolver.resolve, ex)
+            rec["icao"] = res.icao
+            if not res.unresolved:
+                ctx_note = f"Using your last aerodrome, {res.label}:"
+
         if res.ambiguous:
             rec["path"] = "ambiguous"
             await send_message(chat_id, ambiguous(res))
             return
         if res.unresolved:
             rec["path"] = "unresolved"
+            # Remember this request so the next bare aerodrome name completes it.
+            await asyncio.to_thread(memory.save_pending, chat_id, ex, text,
+                                    ctx.get("last_icao"))
             await send_message(chat_id, unresolved(res))
             return
+
+        # Resolved: remember the aerodrome for follow-ups, clear any pending.
+        if res.icao:
+            await asyncio.to_thread(memory.save_last, chat_id, res.icao)
+        # Surface any carried context BEFORE the answer (guardrail: never silent).
+        if ctx_note:
+            await send_message(chat_id, ctx_note)
 
         # ICAO <-> name mapping: answer deterministically from the static table.
         # No retrieval, no LLM — the safest possible path.
@@ -250,7 +336,7 @@ async def process(chat_id: int, text: str) -> None:
             rec["charts"] = len(charts)
             if charts:
                 rec["path"] = "chart"
-                await send_message(chat_id, chart_intro(res, ex))
+                await send_message(chat_id, chart_intro(res, ex), reply_markup=kb)
                 # For instrument approaches, show the AD 2.22 procedures (holding,
                 # letdown, missed approach) as text, then the plate itself.
                 if chart_icao not in ("GEN", "DNKK") and _is_approach(ex, text):
@@ -288,11 +374,11 @@ async def process(chat_id: int, text: str) -> None:
                 synthesize.synthesize_decision, text, outcome.results)
             rec["path"] = status if status in ("grounded", "not_in_aip") else "answer"
             if status == "grounded":
-                await send_message(chat_id, grounded_reply(ga, outcome, res))
+                await send_message(chat_id, grounded_reply(ga, outcome, res), reply_markup=kb)
             elif status == "not_in_aip":
-                await send_message(chat_id, not_in_aip(res))
+                await send_message(chat_id, not_in_aip(res), reply_markup=kb)
             else:
-                await send_message(chat_id, answer(outcome, res, ex.runway))
+                await send_message(chat_id, answer(outcome, res, ex.runway), reply_markup=kb)
 
         # 5) charts (no AI). Aerodrome charts by ICAO; plus two special targets:
         #    Kano FIR en-route plates (icao_code DNKK) and the SAR units chart
@@ -329,6 +415,6 @@ async def process(chat_id: int, text: str) -> None:
             await asyncio.to_thread(
                 observability.log_query, chat_id=chat_id, query=text,
                 intent=rec["intent"], icao=rec["icao"], path=rec["path"],
-                similarity=rec["similarity"], charts=rec["charts"])
+                similarity=rec["similarity"], charts=rec["charts"], qid=rec["qid"])
         except Exception:  # noqa: BLE001
             log.exception("query log failed")

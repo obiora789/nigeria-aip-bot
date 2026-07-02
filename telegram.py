@@ -26,13 +26,34 @@ def verify_secret(header_value: str | None) -> bool:
     return header_value == config.TELEGRAM_WEBHOOK_SECRET
 
 
-async def send_message(chat_id: int, text: str) -> None:
+def feedback_kb(qid: str) -> dict:
+    """Inline 👍/👎 keyboard; callback_data carries the query id for triage."""
+    return {"inline_keyboard": [[
+        {"text": "👍 Helpful", "callback_data": f"fb:up:{qid}"},
+        {"text": "👎 Wrong", "callback_data": f"fb:down:{qid}"},
+    ]]}
+
+
+async def answer_callback(callback_id: str, text: str = "") -> None:
+    """Acknowledge a button tap so Telegram stops the loading spinner."""
+    async with httpx.AsyncClient(timeout=10) as http:
+        try:
+            await http.post(f"{_API}/answerCallbackQuery",
+                            json={"callback_query_id": callback_id, "text": text})
+        except Exception:  # noqa: BLE001
+            log.exception("answerCallbackQuery error")
+
+
+async def send_message(chat_id: int, text: str, reply_markup=None) -> None:
+    parts = split_for_telegram(text)
     async with httpx.AsyncClient(timeout=15) as http:
-        for part in split_for_telegram(text):
+        for i, part in enumerate(parts):
+            body = {"chat_id": chat_id, "text": part,
+                    "disable_web_page_preview": True}
+            if reply_markup and i == len(parts) - 1:   # buttons under the last part
+                body["reply_markup"] = reply_markup
             try:
-                resp = await http.post(f"{_API}/sendMessage",
-                                       json={"chat_id": chat_id, "text": part,
-                                             "disable_web_page_preview": True})
+                resp = await http.post(f"{_API}/sendMessage", json=body)
                 if resp.status_code != 200:
                     log.warning("sendMessage %s: %s", resp.status_code, resp.text[:300])
             except Exception:  # noqa: BLE001

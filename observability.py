@@ -40,7 +40,7 @@ def _hash_chat(chat_id) -> str | None:
 
 
 def log_query(*, chat_id=None, query="", intent=None, icao=None, path="unknown",
-              similarity=None, charts=0) -> None:
+              similarity=None, charts=0, qid=None) -> None:
     """Insert one query-log row. Best-effort; never raises."""
     if not config.QUERY_LOG_ENABLED:
         return
@@ -54,6 +54,7 @@ def log_query(*, chat_id=None, query="", intent=None, icao=None, path="unknown",
         "charts": int(charts or 0),
         "needs_review": path in REVIEW_PATHS,
         "airac": config.AIRAC_CYCLE,
+        "qid": qid,
     }
     try:
         supabase.table("vannie_query_log").insert(row).execute()
@@ -61,17 +62,36 @@ def log_query(*, chat_id=None, query="", intent=None, icao=None, path="unknown",
         log.exception("query-log insert failed (path=%s)", path)
 
 
-def startup_healthcheck() -> bool:
-    """Ping OpenAI + Supabase once and log a clear PASS/FAIL line. Returns True if
-    both pass. Called on boot so credential problems are loud, not silent."""
-    ok = True
+def record_feedback(qid: str, verdict: str) -> None:
+    """Attach a pilot's 👍/👎 to the logged query. A 👎 flags it for review, so
+    real wrong answers land in the triage queue."""
+    if not qid or verdict not in ("up", "down"):
+        return
+    payload = {"feedback": verdict}
+    if verdict == "down":
+        payload["needs_review"] = True
+        payload["reviewed"] = False
+    try:
+        supabase.table("vannie_query_log").update(payload).eq("qid", qid).execute()
+    except Exception:  # noqa: BLE001
+        log.exception("record_feedback failed (qid=%s)", qid)
+
+
+def healthcheck() -> tuple[bool, list]:
+    """Ping OpenAI + Supabase, log a clear line, and report each component to the
+    alerter (which fires on healthy<->degraded transitions). Returns (ok, failures)
+    so the caller can surface which credential is bad."""
+    import alerting
+    failures = []
 
     # Supabase: a trivial read that requires a valid key.
     try:
         supabase.table("aip_charts").select("icao_code").limit(1).execute()
+        alerting.report("Supabase", True)
         log.info("healthcheck: Supabase OK")
     except Exception as e:  # noqa: BLE001
-        ok = False
+        failures.append("Supabase")
+        alerting.report("Supabase", False, "check SUPABASE_KEY")
         log.error("healthcheck: Supabase FAILED — check SUPABASE_KEY (%s)", e)
 
     # OpenAI: a tiny embedding call that requires a valid key.
@@ -79,13 +99,21 @@ def startup_healthcheck() -> bool:
         from agent import get_embedding
         if get_embedding("healthcheck") is None:
             raise RuntimeError("embedding returned None")
+        alerting.report("OpenAI", True)
         log.info("healthcheck: OpenAI OK")
     except Exception as e:  # noqa: BLE001
-        ok = False
+        failures.append("OpenAI")
+        alerting.report("OpenAI", False, "check OPENAI_API_KEY")
         log.error("healthcheck: OpenAI FAILED — check OPENAI_API_KEY (%s)", e)
 
-    log.info("healthcheck: %s", "ALL PASS" if ok else "DEGRADED — see errors above")
-    return ok
+    ok = not failures
+    log.info("healthcheck: %s", "ALL PASS" if ok else f"DEGRADED — {failures}")
+    return ok, failures
+
+
+# Back-compat alias: some callers expect a bool.
+def startup_healthcheck() -> bool:
+    return healthcheck()[0]
 
 
 # ── shared read/aggregate/mark layer (used by triage CLI and the dashboard) ───
