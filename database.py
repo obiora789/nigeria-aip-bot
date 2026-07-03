@@ -176,6 +176,23 @@ def chart_matches(term: str, stored_procedure: str) -> bool:
     return any(t in (stored_procedure or "").lower() for t in targets)
 
 
+def get_section_text(icao: str, section_prefix: str = "AD 2.22") -> str:
+    """Reconstruct an aerodrome's full section text (e.g. AD 2.22) by fetching all
+    its chunks in order and concatenating. Used by the approach-procedure
+    sectioniser, which needs the whole ordered block, not a single retrieved piece."""
+    try:
+        resp = (supabase.table("aip_knowledge_base")
+                .select("content, source_page, source_chunk")
+                .eq("reference_tag", icao)
+                .like("aip_section", f"{section_prefix}%").execute())
+    except Exception:  # noqa: BLE001
+        log.exception("get_section_text failed (icao=%s)", icao)
+        return ""
+    rows = sorted((resp.data or []),
+                  key=lambda r: (r.get("source_page") or 0, r.get("source_chunk") or 0))
+    return "\n".join(r.get("content", "") for r in rows)
+
+
 def get_charts_smart(icao: str, term: str = "", runway: str = "") -> List[ChartRef]:
     """Fetch ALL of an aerodrome's charts DIRECTLY from the table (the RPC drops
     NULL-runway charts even on empty params), then filter by synonym-aware type.

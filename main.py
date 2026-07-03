@@ -21,11 +21,12 @@ import cache
 import config
 import resolver
 from agent import extract_query_parameters, get_embedding
-from database import get_charts, get_charts_smart, search_aip
+from database import get_charts, get_charts_smart, get_section_text, search_aip
 import synthesize
 import facts
 import memory
 import observability
+import procedures
 import toc
 from responder import (ambiguous, answer, chart_intro, chart_not_found, error,
                        grounded_reply, low_confidence, not_found, not_in_aip,
@@ -177,21 +178,26 @@ def _is_approach(ex, text) -> bool:
     return "approach" in t or _APPROACH_RE.search(t) is not None
 
 
+_PLATE_POINTER = (
+    "The approach is depicted on the plate below — the descent (letdown) profile, "
+    "the missed-approach note, and the hold on the plan view. Read the procedures "
+    "directly from the chart.")
+
+
 async def _send_approach_procedures(chat_id, text, ex, res):
-    """Retrieve and show the AD 2.22 approach procedure TEXT (holding, letdown,
-    missed approach) for the requested approach. Shown verbatim — these are
-    safety-critical procedures, so the pilot reads the AIP's exact wording, not a
-    synthesized paraphrase."""
-    q = (f"{res.label} instrument approach procedure {ex.procedure_type or ''} "
-         f"runway {ex.runway or ''} holding procedure letdown procedure missed "
-         f"approach procedure initial approach altitude AD 2.22")
-    emb = await asyncio.to_thread(get_embedding, q)
-    if emb is None:
-        return
-    outcome = await asyncio.to_thread(search_aip, emb, res, "", "")
-    if outcome.abstained or not outcome.results:
-        return
-    await send_message(chat_id, answer(outcome, res, ex.runway))
+    """For an instrument approach: show the AD 2.22 Holding/Letdown/Missed-Approach
+    VERBATIM, scoped to the exact requested approach — but ONLY when it parses
+    cleanly and unambiguously. Otherwise defer to the plate. Never a partial or
+    spliced procedure."""
+    result = None
+    if config.PROCEDURES_TEXT_ENABLED and ex.runway and res.icao:
+        full = await asyncio.to_thread(get_section_text, res.icao, "AD 2.22")
+        if full:
+            result = procedures.extract(full, ex.runway, ex.procedure_type or "")
+    if result:
+        await send_message(chat_id, procedures.format_message(res.label, result))
+    else:
+        await send_message(chat_id, _PLATE_POINTER)
 
 
 _AVIATION_INTENTS = {"chart_retrieval", "procedure_lookup", "frequency_retrieval",

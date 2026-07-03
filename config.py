@@ -55,6 +55,13 @@ DEEP_CHECK_INTERVAL_SEC = int(os.getenv("DEEP_CHECK_INTERVAL_SEC", "600"))  # 0 
 # --- Short-term conversation context (slot-fill + follow-ups) ------------------
 CONTEXT_ENABLED = os.getenv("CONTEXT_ENABLED", "1") == "1"
 CONTEXT_TTL_MIN = int(os.getenv("CONTEXT_TTL_MIN", "10"))   # context expires fast
+
+# Verbatim approach-procedure text (Holding/Letdown/Missed Approach from AD 2.22).
+# OFF by default: it must be validated against the real re-ingested data and a
+# sample of aerodromes first (does each section's text match the plate exactly?).
+# While off, approach requests get the plate-pointer. The plate always follows
+# either way, so this only controls whether the text is shown too.
+PROCEDURES_TEXT_ENABLED = os.getenv("PROCEDURES_TEXT_ENABLED", "0") == "1"
 SYNTHESIS_MODEL = os.getenv("SYNTHESIS_MODEL", "gpt-4o-mini")
 SYNTHESIS_CONTEXT_CHUNKS = int(os.getenv("SYNTHESIS_CONTEXT_CHUNKS", "15"))
 
