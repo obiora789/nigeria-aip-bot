@@ -143,7 +143,10 @@ async def handle_feedback(cb: dict) -> None:
     try:
         data = cb.get("data") or ""
         cid = cb.get("id")
-        chat_id = ((cb.get("message") or {}).get("chat") or {}).get("id")
+        # The tapper's own id is the reliable reply target in a 1:1 chat;
+        # callback_query.message can be absent or not the human's chat.
+        chat_id = (((cb.get("message") or {}).get("chat") or {}).get("id")
+                   or (cb.get("from") or {}).get("id"))
 
         if data.startswith("fb:"):
             _, verdict, qid = data.split(":", 2)
@@ -156,38 +159,48 @@ async def handle_feedback(cb: dict) -> None:
         if data.startswith("clar:") and chat_id is not None:
             parts = data.split(":")
             if len(parts) < 4:
+                if cid:
+                    await answer_callback(cid)
                 return
             dim, val, qid = parts[1], parts[2], parts[3]
             if cid:
-                await answer_callback(cid, val)
-            ctx = await asyncio.to_thread(memory.load, chat_id)
-            pending = ctx.get("pending") or {}
-            # qid guard: a stale button (pending replaced/expired) must not act.
-            if pending.get("kind") != "chart_clar" or pending.get("qid") != qid:
-                await send_message(chat_id,
-                                   "That chart request expired — please ask again.")
-                return
-            ptype = pending.get("type") or ""
-            runway = pending.get("runway") or ""
-            if dim == "type":
-                ptype = val
-            elif dim == "rwy":
-                runway = val
-            res = SimpleNamespace(icao=pending["icao"],
-                                  label=pending.get("label") or pending["icao"])
-            # log this outcome + wire feedback to it, then run the decision
-            new_qid = uuid.uuid4().hex[:12]
-            await asyncio.to_thread(
-                observability.log_query, chat_id=chat_id,
-                query=f"[clarify {dim}={val}] {ptype} {runway}".strip(),
-                intent="chart_retrieval", icao=pending["icao"], path="chart", qid=new_qid)
-            kb = feedback_kb(new_qid)
+                await answer_callback(cid, val)      # stop the spinner immediately
+            try:
+                ctx = await asyncio.to_thread(memory.load, chat_id)
+                pending = ctx.get("pending") or {}
+                # qid guard: a stale button (pending replaced/expired) must not act.
+                if pending.get("kind") != "chart_clar" or pending.get("qid") != qid:
+                    await send_message(chat_id,
+                                       "That chart request expired — please ask again.")
+                    return
+                ptype = pending.get("type") or ""
+                runway = pending.get("runway") or ""
+                if dim == "type":
+                    ptype = val
+                elif dim == "rwy":
+                    runway = val
+                res = SimpleNamespace(icao=pending["icao"],
+                                      label=pending.get("label") or pending["icao"])
+                new_qid = uuid.uuid4().hex[:12]
+                await asyncio.to_thread(
+                    observability.log_query, chat_id=chat_id,
+                    query=f"[clarify {dim}={val}] {ptype} {runway}".strip(),
+                    intent="chart_retrieval", icao=pending["icao"], path="chart",
+                    qid=new_qid)
+                kb = feedback_kb(new_qid)
 
-            async def send_info(text_: str) -> None:
-                await send_message(chat_id, text_, reply_markup=kb)
+                async def send_info(text_: str) -> None:
+                    await send_message(chat_id, text_, reply_markup=kb)
 
-            await _run_chart_decision(chat_id, res, pending["icao"], ptype, runway,
-                                      send_info)
+                await _run_chart_decision(chat_id, res, pending["icao"], ptype,
+                                          runway, send_info)
+            except Exception:  # noqa: BLE001 — surface, never vanish
+                log.exception("chart clarification callback failed")
+                await send_message(
+                    chat_id,
+                    "Sorry — I couldn't finish that chart request. Please ask again "
+                    "(e.g. \"VOR approach plate for Lagos RWY 18L\").")
+            return
     except Exception:  # noqa: BLE001
         log.exception("handle_feedback failed")
 
