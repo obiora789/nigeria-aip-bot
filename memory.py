@@ -35,7 +35,7 @@ def _past(ts: str) -> bool:
 
 
 def load(chat_id) -> dict:
-    """Current non-expired context: {'last_icao':…, 'pending':{…}} or {}."""
+    """Current non-expired context: {'last_icao':…, 'pending':{…}, 'last_query':…} or {}."""
     if not config.CONTEXT_ENABLED:
         return {}
     try:
@@ -45,18 +45,20 @@ def load(chat_id) -> dict:
         if not rows or _past(rows[0].get("expires_at")):
             return {}
         return {"last_icao": rows[0].get("last_icao"),
-                "pending": rows[0].get("pending")}
+                "pending": rows[0].get("pending"),
+                "last_query": rows[0].get("last_query")}
     except Exception:  # noqa: BLE001
         log.exception("context load failed")
         return {}
 
 
-def _write(chat_id, *, last_icao, pending) -> None:
+def _write(chat_id, *, last_icao, pending, last_query=None) -> None:
     if not config.CONTEXT_ENABLED:
         return
     now = dt.datetime.now(dt.timezone.utc)
     exp = now + dt.timedelta(minutes=config.CONTEXT_TTL_MIN)
     row = {"chat_hash": _hash(chat_id), "last_icao": last_icao, "pending": pending,
+           "last_query": last_query,
            "updated_at": now.isoformat(), "expires_at": exp.isoformat()}
     try:
         supabase.table("conversation_context").upsert(row).execute()
@@ -66,12 +68,22 @@ def _write(chat_id, *, last_icao, pending) -> None:
 
 def save_pending(chat_id, ex, raw: str, last_icao=None) -> None:
     """Remember a request awaiting an aerodrome (keeps any last_icao)."""
-    _write(chat_id, last_icao=last_icao, pending={
+    _write(chat_id, last_icao=last_icao, last_query=raw, pending={
         "intent": ex.intent, "procedure_type": ex.procedure_type,
         "runway": ex.runway, "raw": raw})
 
 
-def save_last(chat_id, icao) -> None:
-    """Remember the last aerodrome and clear any pending slot-fill."""
+def save_last(chat_id, icao, last_query=None) -> None:
+    """Remember the last aerodrome + query and clear any pending slot-fill."""
     if icao:
-        _write(chat_id, last_icao=icao, pending=None)
+        _write(chat_id, last_icao=icao, pending=None, last_query=last_query)
+
+
+def save_chart_pending(chat_id, icao, label, ptype, runway, qid, last_icao=None) -> None:
+    """Remember an under-specified chart request awaiting a clarifying answer
+    (a button tap or a bare type/runway token). qid guards against stale taps;
+    label lets the tap handler rebuild the reply without re-resolving."""
+    _write(chat_id, last_icao=last_icao or icao, last_query=None,
+           pending={"kind": "chart_clar", "icao": icao, "label": label,
+                    "type": ptype or "", "runway": runway or "", "qid": qid})
+

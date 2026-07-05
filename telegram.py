@@ -34,6 +34,22 @@ def feedback_kb(qid: str) -> dict:
     ]]}
 
 
+def _rows(buttons, per_row=3):
+    return [buttons[i:i + per_row] for i in range(0, len(buttons), per_row)]
+
+
+def clarify_type_kb(options, qid: str) -> dict:
+    """Tappable approach-type options (built from the real catalogue)."""
+    btns = [{"text": t, "callback_data": f"clar:type:{t}:{qid}"} for t in options]
+    return {"inline_keyboard": _rows(btns)}
+
+
+def clarify_runway_kb(options, qid: str) -> dict:
+    """Tappable runway options for the chosen approach type."""
+    btns = [{"text": f"RWY {r}", "callback_data": f"clar:rwy:{r}:{qid}"} for r in options]
+    return {"inline_keyboard": _rows(btns)}
+
+
 async def answer_callback(callback_id: str, text: str = "") -> None:
     """Acknowledge a button tap so Telegram stops the loading spinner."""
     async with httpx.AsyncClient(timeout=10) as http:

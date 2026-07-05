@@ -13,6 +13,7 @@ import asyncio
 import logging
 import re
 import uuid
+from types import SimpleNamespace
 
 from fastapi import BackgroundTasks, FastAPI, Header, Request, Response
 from fastapi.responses import HTMLResponse
@@ -25,14 +26,15 @@ from database import get_charts, get_charts_smart, get_section_text, search_aip
 import synthesize
 import facts
 import memory
+import clarify
 import observability
 import procedures
 import toc
 from responder import (ambiguous, answer, chart_intro, chart_not_found, error,
                        grounded_reply, low_confidence, not_found, not_in_aip,
                        unresolved)
-from telegram import (answer_callback, feedback_kb, send_charts, send_message,
-                      verify_secret)
+from telegram import (answer_callback, clarify_runway_kb, clarify_type_kb,
+                      feedback_kb, send_charts, send_message, verify_secret)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("vannie.main")
@@ -137,16 +139,55 @@ async def webhook(request: Request, background: BackgroundTasks,
 
 
 async def handle_feedback(cb: dict) -> None:
-    """Record a 👍/👎 tap and acknowledge it. Never raises."""
+    """Route a button tap: 👍/👎 feedback, or a chart-clarification answer. Never raises."""
     try:
         data = cb.get("data") or ""
         cid = cb.get("id")
+        chat_id = ((cb.get("message") or {}).get("chat") or {}).get("id")
+
         if data.startswith("fb:"):
             _, verdict, qid = data.split(":", 2)
             await asyncio.to_thread(observability.record_feedback, qid, verdict)
             msg = "Thanks — logged." if verdict == "up" else "Thanks — flagged for review."
             if cid:
                 await answer_callback(cid, msg)
+            return
+
+        if data.startswith("clar:") and chat_id is not None:
+            parts = data.split(":")
+            if len(parts) < 4:
+                return
+            dim, val, qid = parts[1], parts[2], parts[3]
+            if cid:
+                await answer_callback(cid, val)
+            ctx = await asyncio.to_thread(memory.load, chat_id)
+            pending = ctx.get("pending") or {}
+            # qid guard: a stale button (pending replaced/expired) must not act.
+            if pending.get("kind") != "chart_clar" or pending.get("qid") != qid:
+                await send_message(chat_id,
+                                   "That chart request expired — please ask again.")
+                return
+            ptype = pending.get("type") or ""
+            runway = pending.get("runway") or ""
+            if dim == "type":
+                ptype = val
+            elif dim == "rwy":
+                runway = val
+            res = SimpleNamespace(icao=pending["icao"],
+                                  label=pending.get("label") or pending["icao"])
+            # log this outcome + wire feedback to it, then run the decision
+            new_qid = uuid.uuid4().hex[:12]
+            await asyncio.to_thread(
+                observability.log_query, chat_id=chat_id,
+                query=f"[clarify {dim}={val}] {ptype} {runway}".strip(),
+                intent="chart_retrieval", icao=pending["icao"], path="chart", qid=new_qid)
+            kb = feedback_kb(new_qid)
+
+            async def send_info(text_: str) -> None:
+                await send_message(chat_id, text_, reply_markup=kb)
+
+            await _run_chart_decision(chat_id, res, pending["icao"], ptype, runway,
+                                      send_info)
     except Exception:  # noqa: BLE001
         log.exception("handle_feedback failed")
 
@@ -184,20 +225,54 @@ _PLATE_POINTER = (
     "directly from the chart.")
 
 
-async def _send_approach_procedures(chat_id, text, ex, res):
+async def _send_approach_procedures(chat_id, ex, res, send_info):
     """For an instrument approach: show the AD 2.22 Holding/Letdown/Missed-Approach
     VERBATIM, scoped to the exact requested approach — but ONLY when it parses
     cleanly and unambiguously. Otherwise defer to the plate. Never a partial or
-    spliced procedure."""
+    spliced procedure. send_info is passed in (it's a per-request closure)."""
     result = None
     if config.PROCEDURES_TEXT_ENABLED and ex.runway and res.icao:
         full = await asyncio.to_thread(get_section_text, res.icao, "AD 2.22")
         if full:
             result = procedures.extract(full, ex.runway, ex.procedure_type or "")
     if result:
-        await send_message(chat_id, procedures.format_message(res.label, result))
+        await send_info(procedures.format_message(res.label, result))
     else:
-        await send_message(chat_id, _PLATE_POINTER)
+        await send_info(_PLATE_POINTER)
+
+
+async def _run_chart_decision(chat_id, res, chart_icao, ptype, runway, send_info):
+    """Fetch the aerodrome's charts, decide, and either ASK a clarifying question
+    (storing pending + tappable options built from the real catalogue) or SEND the
+    plate(s). Reused by the chart branch and the clarification-tap handler. Fails
+    safe: ambiguous-but-unanswerable shows all matches; nothing found -> not_found."""
+    shim = SimpleNamespace(procedure_type=ptype or None, runway=runway or None)
+    all_charts = await asyncio.to_thread(get_charts_smart, chart_icao, "", "")
+    d = clarify.decide(all_charts, ptype or "", runway or "")
+
+    if d.action == "ask_type":
+        qid = uuid.uuid4().hex[:12]
+        await asyncio.to_thread(memory.save_chart_pending, chat_id, chart_icao,
+                                res.label, ptype, runway, qid)
+        await send_message(chat_id, f"Which approach for {res.label}? Tap one:",
+                           reply_markup=clarify_type_kb(d.options, qid))
+        return "ask_type"
+    if d.action == "ask_runway":
+        qid = uuid.uuid4().hex[:12]
+        await asyncio.to_thread(memory.save_chart_pending, chat_id, chart_icao,
+                                res.label, d.type, runway, qid)
+        await send_message(chat_id,
+                           f"{d.type} approach for {res.label} — which runway? Tap one:",
+                           reply_markup=clarify_runway_kb(d.options, qid))
+        return "ask_runway"
+    if d.action == "not_found":
+        await send_info(chart_not_found(res, shim))
+        return "not_found"
+    # send: intro -> procedures (verbatim/pointer) -> the narrowed plate(s)
+    await send_info(chart_intro(res, shim))
+    await _send_approach_procedures(chat_id, shim, res, send_info)
+    await send_charts(chat_id, d.charts, requested_runway=runway or None)
+    return "send"
 
 
 _AVIATION_INTENTS = {"chart_retrieval", "procedure_lookup", "frequency_retrieval",
@@ -216,11 +291,23 @@ def _aviation_intent(ex) -> bool:
     return ex.intent in _AVIATION_INTENTS
 
 
+# A bare approach type or runway typed instead of tapping a clarify button.
+_BARE_CLAR_RE = re.compile(r"^(ILS|VOR|RNAV|GNSS|RNP|NDB|\d{2}[LRC]?)$", re.I)
+
+
 async def process(chat_id: int, text: str) -> None:
     """All heavy lifting; runs after the 200 ack. Never raises to the caller."""
     rec = {"intent": None, "icao": None, "path": "unknown",
            "similarity": None, "charts": 0, "qid": uuid.uuid4().hex[:12]}
-    kb = feedback_kb(rec["qid"])   # 👍/👎 buttons for the substantive answers
+    kb = feedback_kb(rec["qid"])   # 👍/👎 buttons
+
+    async def send_info(text_: str) -> None:
+        """Any INFORMATIONAL reply (answer, refusal, abstention, mapping, facts,
+        structure, chart result). Always carries the 👍/👎 feedback keyboard.
+        Non-informational messages (greeting, help, system error, clarification
+        prompts, context prefix) use plain send_message and get no buttons."""
+        await send_message(chat_id, text_, reply_markup=kb)
+
     try:
         # Commands: answered deterministically, no LLM call.
         cmd = text.strip().lower().split("@")[0]
@@ -228,6 +315,26 @@ async def process(chat_id: int, text: str) -> None:
             rec["path"] = "help"
             await send_message(chat_id, config.HELP)
             return
+
+        # Free-text answer to a pending chart clarification ("VOR", "18L") — treat
+        # like a button tap so pilots who type instead of tapping still get through.
+        if _BARE_CLAR_RE.match(text.strip()):
+            ctx0 = await asyncio.to_thread(memory.load, chat_id)
+            p = ctx0.get("pending") or {}
+            if p.get("kind") == "chart_clar":
+                tok = text.strip().upper()
+                ptype = p.get("type") or ""
+                runway = p.get("runway") or ""
+                if clarify.norm_type(tok):
+                    ptype = tok
+                else:
+                    runway = tok
+                res_shim = SimpleNamespace(icao=p["icao"],
+                                           label=p.get("label") or p["icao"])
+                rec["path"], rec["icao"] = "chart", p["icao"]
+                await _run_chart_decision(chat_id, res_shim, p["icao"], ptype,
+                                          runway, send_info)
+                return
 
         # 1) extract (sync SDK -> threadpool)
         ex = await asyncio.to_thread(extract_query_parameters, text)
@@ -248,7 +355,7 @@ async def process(chat_id: int, text: str) -> None:
             ans = facts.answer_ta_enumeration(text)
             if ans:
                 rec["path"] = "facts"
-                await send_message(chat_id, ans)
+                await send_info(ans)
                 return
 
         # Structure/meta questions ("which part of the AIP covers X") are about
@@ -257,12 +364,12 @@ async def process(chat_id: int, text: str) -> None:
             ans = toc.answer(text)
             if ans:
                 rec["path"] = "structure"
-                await send_message(chat_id, ans)
+                await send_info(ans)
                 return
 
         if ex.intent == "out_of_scope":
             rec["path"] = "out_of_scope"
-            await send_message(chat_id, config.OUT_OF_SCOPE)
+            await send_info(config.OUT_OF_SCOPE)
             return
 
         # 2) deterministic resolution
@@ -272,6 +379,7 @@ async def process(chat_id: int, text: str) -> None:
 
         # --- conversation context: fill a GAP only, always surfaced -----------
         ctx_note = None
+        follow_query = text
         pending = ctx.get("pending")
         if pending and _bare_aerodrome(ex) and res.icao:
             # A bare "Lagos" answering an earlier "which aerodrome?" — merge the
@@ -282,14 +390,17 @@ async def process(chat_id: int, text: str) -> None:
             ex.icao_code, ex.aerodrome_name = res.icao, None
             res = await asyncio.to_thread(resolver.resolve, ex)
             rec["icao"] = res.icao
+            follow_query = pending.get("raw") or text
             ctx_note = f"Continuing your earlier request — {res.label}:"
         elif res.unresolved and ctx.get("last_icao") and _aviation_intent(ex):
-            # A follow-up with no aerodrome ("what about the ILS?") — carry the
-            # last one, but SAY which, so a wrong carry-over is caught instantly.
+            # A follow-up with no aerodrome ("what about the ILS?", "can you list
+            # them?") — carry the last aerodrome AND fold in the last query so a
+            # bare anaphor inherits the previous topic. Surfaced, never silent.
             ex.icao_code = ctx["last_icao"]
             res = await asyncio.to_thread(resolver.resolve, ex)
             rec["icao"] = res.icao
             if not res.unresolved:
+                follow_query = f"{ctx.get('last_query') or ''} {text}".strip()
                 ctx_note = f"Using your last aerodrome, {res.label}:"
 
         if res.ambiguous:
@@ -304,9 +415,9 @@ async def process(chat_id: int, text: str) -> None:
             await send_message(chat_id, unresolved(res))
             return
 
-        # Resolved: remember the aerodrome for follow-ups, clear any pending.
+        # Resolved: remember the aerodrome + query for follow-ups, clear pending.
         if res.icao:
-            await asyncio.to_thread(memory.save_last, chat_id, res.icao)
+            await asyncio.to_thread(memory.save_last, chat_id, res.icao, text)
         # Surface any carried context BEFORE the answer (guardrail: never silent).
         if ctx_note:
             await send_message(chat_id, ctx_note)
@@ -316,8 +427,7 @@ async def process(chat_id: int, text: str) -> None:
         if ex.intent == "icao_lookup":
             rec["path"] = "mapping"
             full = resolver.aerodrome_full_name(res.icao) or res.label
-            await send_message(
-                chat_id,
+            await send_info(
                 f"{res.icao} — {full}, Nigeria.\nSource: Nigeria AIP · {config.AIRAC_CYCLE}")
             return
 
@@ -332,6 +442,14 @@ async def process(chat_id: int, text: str) -> None:
                 chart_icao = "DNKK"
             charts = []
             if chart_icao:
+                # Instrument-approach requests go through clarification: ask
+                # ILS/VOR/RNAV and runway when ambiguous, send directly when not.
+                if chart_icao not in ("GEN", "DNKK") and _is_approach(ex, text):
+                    rec["path"] = "chart"
+                    await _run_chart_decision(chat_id, res, chart_icao,
+                                              ex.procedure_type or "", ex.runway or "",
+                                              send_info)
+                    return
                 if chart_icao in ("GEN", "DNKK"):
                     charts = await asyncio.to_thread(get_charts, chart_icao, "", "")
                 else:
@@ -342,20 +460,17 @@ async def process(chat_id: int, text: str) -> None:
             rec["charts"] = len(charts)
             if charts:
                 rec["path"] = "chart"
-                await send_message(chat_id, chart_intro(res, ex), reply_markup=kb)
-                # For instrument approaches, show the AD 2.22 procedures (holding,
-                # letdown, missed approach) as text, then the plate itself.
-                if chart_icao not in ("GEN", "DNKK") and _is_approach(ex, text):
-                    await _send_approach_procedures(chat_id, text, ex, res)
+                await send_info(chart_intro(res, ex))
                 await send_charts(chat_id, charts, requested_runway=ex.runway)
             else:
                 rec["path"] = "chart_not_found"
-                await send_message(chat_id, chart_not_found(res, ex))
+                await send_info(chart_not_found(res, ex))
             return
 
         # 3) embed an enriched query: expands the aerodrome name (PH -> Port
         #    Harcourt) and, for airspace, prepends AIP airspace terminology.
-        search_text = resolver.build_search_text(ex, res, text)
+        #    On a follow-up, follow_query folds in the prior topic.
+        search_text = resolver.build_search_text(ex, res, follow_query)
         embedding = await asyncio.to_thread(get_embedding, search_text)
         if embedding is None:
             rec["path"] = "error"
@@ -370,21 +485,21 @@ async def process(chat_id: int, text: str) -> None:
 
         if outcome.abstained and outcome.reason == "low_confidence":
             rec["path"] = "low_confidence"
-            await send_message(chat_id, low_confidence(outcome))
+            await send_info(low_confidence(outcome))
             # still offer charts below if we have an ICAO
         elif outcome.abstained:
             rec["path"] = "not_found"
-            await send_message(chat_id, not_found())
+            await send_info(not_found())
         else:
             status, ga = await asyncio.to_thread(
-                synthesize.synthesize_decision, text, outcome.results)
+                synthesize.synthesize_decision, follow_query, outcome.results)
             rec["path"] = status if status in ("grounded", "not_in_aip") else "answer"
             if status == "grounded":
-                await send_message(chat_id, grounded_reply(ga, outcome, res), reply_markup=kb)
+                await send_info(grounded_reply(ga, outcome, res))
             elif status == "not_in_aip":
-                await send_message(chat_id, not_in_aip(res), reply_markup=kb)
+                await send_info(not_in_aip(res))
             else:
-                await send_message(chat_id, answer(outcome, res, ex.runway), reply_markup=kb)
+                await send_info(answer(outcome, res, ex.runway, follow_query))
 
         # 5) charts (no AI). Aerodrome charts by ICAO; plus two special targets:
         #    Kano FIR en-route plates (icao_code DNKK) and the SAR units chart

@@ -92,7 +92,11 @@ SYNTHESIS_SYSTEM = (
     "7. Give the complete published answer: for a runway's dimensions/characteristics "
     "include length x width, surface, and strength (PCN/PCR) when present; for "
     "elevation include both feet and metres. Don't omit a value the excerpt provides.\n"
-    "8. Be concise and factual. State the AIP fact only — no advice, no reassurance, "
+    "8. A runway has TWO ends sharing one strip (e.g. '06/24' is ONE physical runway "
+    "with ends 06 and 24). When asked HOW MANY runways, count physical runways "
+    "(reciprocal pairs), not the individual end designators. When asked to LIST "
+    "runways, list the paired designators (e.g. 'RWY 06/24, RWY 05/23').\n"
+    "9. Be concise and factual. State the AIP fact only — no advice, no reassurance, "
     "no 'you should'. Do not add a disclaimer (the system adds one)."
 )
 

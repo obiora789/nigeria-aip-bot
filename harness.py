@@ -106,7 +106,7 @@ def run(text: str) -> None:
         elif status == "not_in_aip":
             print("\nREPLY:\n", not_in_aip(res))
         else:
-            print("\nREPLY:\n", answer(outcome, res, ex.runway))
+            print("\nREPLY:\n", answer(outcome, res, ex.runway, text))
 
     if res.icao:
         charts = get_charts(res.icao, ex.procedure_type or "", ex.runway or "")

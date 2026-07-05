@@ -145,7 +145,7 @@ def run_pipeline(q: str) -> dict:
         elif status == "not_in_aip":
             out["path"], out["reply"] = "not_in_aip", not_in_aip(res)
         else:
-            out["path"], out["reply"] = "answer", answer(outcome, res, ex.runway)
+            out["path"], out["reply"] = "answer", answer(outcome, res, ex.runway, q)
 
     # Supplementary charts (SAR rides along with SAR text; chart-procedure hints).
     ql = q.lower()

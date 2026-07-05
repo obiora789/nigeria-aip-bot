@@ -172,14 +172,24 @@ def not_in_aip(res: Resolution) -> str:
             f"———\nSource: Nigeria AIP · {config.AIRAC_CYCLE}\n{config.DISCLAIMER}")
 
 
-def answer(outcome: SearchOutcome, res: Resolution, requested_runway=None) -> str:
-    chunks = outcome.results[: config.MAX_DISPLAY_CHUNKS]
-    blocks = []
-    for r in chunks:
-        pct = int(round(r.similarity * 100))
-        blocks.append(f"[AIP {_cite(r, outcome)} · {pct}% match]\n{r.content.strip()}")
-    body = "\n\n".join(blocks)
-    warn = _runway_text_warning(requested_runway, body)
+def answer(outcome: SearchOutcome, res: Resolution, requested_runway=None,
+           query: str = "") -> str:
+    """Verbatim fallback (no verified synthesis). Show the SINGLE best chunk,
+    trimmed to a focused window — not a multi-chunk dump. The chunk is the answer
+    here, so we keep it verbatim, just scoped to the relevant region."""
+    if not outcome.results:
+        return not_found()
+    # Rank by overlap with the query (+ aerodrome label) so the shown chunk is the
+    # one that answers what was asked, not merely the top similarity hit.
+    want = set(re.findall(r"[a-z]{4,}", f"{query} {res.label}".lower()))
+    best = max(outcome.results,
+               key=lambda r: (len(want & set(re.findall(r"[a-z]{4,}", r.content.lower()))),
+                              r.similarity))
+    pct = int(round(best.similarity * 100))
+    needles = re.findall(r"\d[\d,]*(?:\.\d+)?", query) or list(want)[:6]
+    snippet = _focus(best.content, needles, width=520)
+    body = f"[AIP {_cite(best, outcome)} · {pct}% match]\n{snippet}"
+    warn = _runway_text_warning(requested_runway, best.content)
     if warn:
         body = f"{warn}\n\n{body}"
     footer = f"Source: Nigeria AIP · {config.AIRAC_CYCLE}\n{config.DISCLAIMER}"

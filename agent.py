@@ -34,6 +34,15 @@ _CHART_FORCEABLE = {"procedure_lookup", "aerodrome_fact", "airspace_lookup",
 # A per-aerodrome MET/comm/hours field — belongs to AD 2.11/2.18/2.3, not national.
 _AD_FIELD_AT_RE = re.compile(
     r"\b(taf|metar|trend|atis|operational hours|hours of operation)\b", re.I)
+# "how many / list / configuration" of runways -> a runway-data question, not
+# out_of_scope or a greeting.
+_RWY_INV_RE = re.compile(
+    r"how many runways|list (the )?runways|runway configuration|which runways|"
+    r"number of runways|how many rwy", re.I)
+# A genuine greeting/smalltalk — the ONLY thing that should get the canned reply.
+_REAL_GREETING_RE = re.compile(
+    r"^\s*(hi|hello|hey|yo|howdy|good (morning|afternoon|evening)|greetings|"
+    r"thanks?|thank you|help|start|what can you do|who are you)\b[\s!.?]*$", re.I)
 
 
 def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
@@ -72,6 +81,20 @@ def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
             ex.intent = "aerodrome_fact"
             if not ex.icao_code and len(cands) == 1:
                 ex.icao_code = next(iter(cands))
+    # 6) "how many/list runways" for a named aerodrome is runway data, never
+    #    out_of_scope or a greeting.
+    if _RWY_INV_RE.search(raw):
+        cands = resolver.match_name(raw)
+        if ex.icao_code in resolver.VALID_ICAO or ex.aerodrome_name or len(cands) == 1:
+            if ex.intent in ("out_of_scope", "general_greeting", "national_lookup"):
+                ex.intent = "runway_data"
+            if not ex.icao_code and len(cands) == 1:
+                ex.icao_code = next(iter(cands))
+    # 7) the model sometimes tags a follow-up ("can you list them?") as a greeting.
+    #    Only a REAL greeting gets the canned reply; otherwise treat it as a normal
+    #    query so conversation-context carry can resolve it.
+    if ex.intent == "general_greeting" and not _REAL_GREETING_RE.match(raw.strip()):
+        ex.intent = "aerodrome_fact"
     return ex
 
 

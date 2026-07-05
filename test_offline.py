@@ -177,3 +177,31 @@ def test_vor_idents_resolve_via_real_index():
     # works inside a natural phrase too
     assert resolver.resolve(_ex(aerodrome_name="POT VOR frequency")).icao == "DNPO"
     resolver._loaded = False                        # let other tests re-seed cleanly
+
+
+# --- routing backstops added in the fix patch (deterministic, regression-guarded)
+
+def test_runway_inventory_routes_to_runway_data():
+    """'how many runways in Lagos' must be a runway-data query, not out_of_scope."""
+    _seed_index()
+    import agent
+    resolver.VALID_ICAO.add("DNMM")
+    ex = agent._backstop(_ex(intent="out_of_scope", aerodrome_name="Lagos"),
+                         "How many runways are there in Lagos")
+    assert ex.intent == "runway_data", ex.intent
+
+
+def test_followup_not_treated_as_greeting():
+    """A follow-up wrongly tagged greeting flows on (so context carry can resolve)."""
+    _seed_index()
+    import agent
+    ex = agent._backstop(_ex(intent="general_greeting"), "Can you list them?")
+    assert ex.intent != "general_greeting", ex.intent
+
+
+def test_real_greeting_stays_greeting():
+    """An actual greeting is still a greeting."""
+    _seed_index()
+    import agent
+    ex = agent._backstop(_ex(intent="general_greeting"), "Hi")
+    assert ex.intent == "general_greeting", ex.intent
