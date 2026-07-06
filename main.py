@@ -304,6 +304,14 @@ def _aviation_intent(ex) -> bool:
     return ex.intent in _AVIATION_INTENTS
 
 
+def _names_a_place(ex) -> bool:
+    """True if the message references a specific aerodrome — by name or code —
+    even one we can't resolve. When a place IS named but unresolved (e.g.
+    'Jalingo'), a follow-up carry must NOT fire: we refuse for the named place
+    rather than silently answering for the last aerodrome."""
+    return bool(getattr(ex, "aerodrome_name", None) or getattr(ex, "icao_code", None))
+
+
 # A bare approach type or runway typed instead of tapping a clarify button.
 _BARE_CLAR_RE = re.compile(r"^(ILS|VOR|RNAV|GNSS|RNP|NDB|\d{2}[LRC]?)$", re.I)
 
@@ -405,10 +413,14 @@ async def process(chat_id: int, text: str) -> None:
             rec["icao"] = res.icao
             follow_query = pending.get("raw") or text
             ctx_note = f"Continuing your earlier request — {res.label}:"
-        elif res.unresolved and ctx.get("last_icao") and _aviation_intent(ex):
-            # A follow-up with no aerodrome ("what about the ILS?", "can you list
-            # them?") — carry the last aerodrome AND fold in the last query so a
-            # bare anaphor inherits the previous topic. Surfaced, never silent.
+        elif (res.unresolved and ctx.get("last_icao") and _aviation_intent(ex)
+              and not _names_a_place(ex)):
+            # A follow-up with NO aerodrome reference ("what about the ILS?", "can
+            # you list them?") — carry the last aerodrome and fold in the last
+            # query. Surfaced, never silent. If the message NAMED a place we
+            # couldn't resolve (e.g. "Jalingo"), we do NOT reach here — it falls
+            # through to the honest "not a published aerodrome" refusal below,
+            # instead of borrowing the last aerodrome.
             ex.icao_code = ctx["last_icao"]
             res = await asyncio.to_thread(resolver.resolve, ex)
             rec["icao"] = res.icao
