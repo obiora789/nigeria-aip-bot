@@ -1,0 +1,64 @@
+id,category,question,ground_truth,test_type
+A1,single_fact,What is the aerodrome elevation of Abuja (DNAA)?,342 m / 1122 ft,retrieval
+A2,single_fact,What is the reference temperature at Nnamdi Azikiwe International?,35.6 C (JUL),retrieval
+A3,single_fact,What is the Tower frequency at Abuja?,118.6 MHz primary; 118.9 MHz secondary,retrieval
+A4,single_fact,What is Abuja Approach primary frequency?,127.9 MHz (sec 119.8; emerg 121.5),retrieval
+A5,single_fact,What is the ATIS frequency at Abuja?,127.05 MHz,retrieval
+A6,single_fact,What is the rescue and fire-fighting category at Abuja?,CAT 9,retrieval
+A7,single_fact,What are the dimensions of Abuja runway?,3610 m x 45 m asphalt PCR 631/F/B/X/U,retrieval
+A8,single_fact,What is the true bearing of Abuja RWY 22?,215 deg 05 min,retrieval
+A9,single_fact,What is the VOR/DME identifier and frequency at Abuja?,ABC 116.3 MHz,retrieval
+A10,single_fact,What is the transition altitude at Abuja?,5000 ft (FL 65),retrieval
+A11,single_fact,What is the transition altitude at Calabar?,3500 ft (FL 50),retrieval
+A12,single_fact,What are the dimensions of Lagos main runway 18R/36L?,3900 m x 60 m asphalt PCR 631/F/B/X/U,retrieval
+A13,single_fact,What fuel type is available at Abuja?,Jet A1,retrieval
+A14,single_fact,What are the declared distances for Abuja RWY 04?,TORA 3610 TODA 3960 ASDA 3610 LDA 3610 (m),retrieval
+A15,single_fact,What is the ground-control frequency at Abuja and its hours?,121.9 MHz 0600-2000,retrieval
+B1,synthesis,Compare the two runways at Lagos - which is longer and by how much?,18R/36L 3900x60; 18L/36R 2745x45; main is 1155 m longer 15 m wider,reasoning
+B2,synthesis,Which ILS components serve Abuja RWY 22 and on what frequencies?,LOC IAB 109.3 MHz; GP CH 30X / 332.0 MHz,reasoning
+B3,synthesis,What are the lateral limits of the Abuja CTR and TMA?,CTR 20 NM radius on ABC VOR; TMA 50 NM radius on ABC VOR,reasoning
+B4,synthesis,At Abuja which taxiway is widest and how wide?,TWY D 34 m,reasoning
+B5,synthesis,Which aerodromes use 5000 ft transition altitude?,Abuja Ado Ekiti Bauchi Dutse Enugu (5000 ft / FL 65),reasoning
+B6,synthesis,Is disabled B747 removal supported at Abuja and who to call?,Yes B747-400; +234 803 605 7829,reasoning
+B7,synthesis,What is the TAF validity at Abuja and trend issuance interval?,TAF 30 hours; trend every 30 min,reasoning
+C1,faithfulness,What de-icing facilities are available at Abuja?,NIL / none,no_hallucination
+C2,faithfulness,Are there repair facilities for visiting aircraft at Abuja?,Not Available,no_hallucination
+C3,faithfulness,What ILS category can I expect on Abuja RWY 22?,Equipment CAT III but currently downgraded to CAT 1,no_hallucination
+C4,faithfulness,Can I get ground control at Abuja at 0300 local?,No - Ground Control 0600-2000 only,no_hallucination
+C5,faithfulness,What is the ILS frequency at London Heathrow?,Out of scope - return fallback,out_of_scope
+C6,faithfulness,Give me the runway length for aerodrome DNZZ.,DNZZ invalid - decline/fallback,out_of_scope
+C7,faithfulness,What is the CAT II decision height for Abuja RWY 22?,Must not invent DH - ILS downgraded to CAT 1,no_hallucination
+C8,faithfulness,Whats the night-flying ban at Lagos?,If not stated say not specified,no_hallucination
+C9,faithfulness,List every helicopter approach procedure at Abuja.,Only what AD 2 contains - no padding,no_hallucination
+C10,faithfulness,What is the fuel price at Abuja?,Not AIP content - decline,out_of_scope
+D1,icao_code,What city/airport is DNAA?,Abuja / Nnamdi Azikiwe,mapping
+D2,icao_code,What is the ICAO code for Murtala Muhammed Lagos?,DNMM,mapping
+D3,icao_code,What airport is DNAS?,Asaba,mapping
+D4,icao_code,What is DNBC?,Bauchi / Sir Abubakar Tafawa Balewa,mapping
+D5,icao_code,What is DNIM?,Owerri / Sam Mbakwe,mapping
+D6,icao_code,What is DNAI?,Uyo / Victor Attah,mapping
+D7,icao_code,What is DNET?,Ado Ekiti,mapping
+D8,icao_code,What is DNEN?,Enugu / Akanu Ibiam,mapping
+D9,icao_code,What is the ICAO code for Port Harcourt International?,DNPO,mapping
+D10,icao_code,What airport is DNKT?,Katsina / Umaru Musa Yar'adua,mapping
+E1,structure,What FIR controls Nigerian airspace?,Kano FIR (DNKK) single FIR Lagos and Kano sectors,structure
+E2,structure,Which part covers prohibited and restricted areas?,ENR 5,structure
+E3,structure,Where are aerodrome charges published?,GEN 4,structure
+E4,structure,Where is the table of cruising levels?,ENR 1,structure
+E5,structure,Which section lists en-route radio navigation aids?,ENR 4,structure
+E6,structure,What is the publishing authority of the Nigeria AIP?,NCAA authority; produced by NAMA,structure
+F1,chart,Show me the ILS approach chart for Abuja RWY 22.,DNAA ILS RWY 22 plate,multimodal
+F2,chart,I need the parking/docking chart for Abuja.,DNAA aerodrome parking-docking chart,multimodal
+F3,chart,Show the RNAV (GNSS) approach for Port Harcourt RWY 21.,DNPO RNAV GNSS RWY 21,multimodal
+F4,chart,Pull the SID chart for Lagos.,DNMM SID plate,multimodal
+F5,chart,Show the en-route chart for the Kano FIR.,ENR 6 en-route chart,multimodal
+F6,chart,Show me the approach plate for Abuja RWY 04.,DNAA RWY 04 plate (not RWY 22),multimodal
+G1,currency,What AIRAC amendment is the Abuja data current to?,AIRAC AMDT 03/2026 (16 APR 26),currency
+G2,currency,Is this AIP the 2026 edition?,Yes 2026 Nigeria AIP,currency
+G3,currency,Does the bot flag that AIP data may be amended by NOTAM?,Should note NOTAM/Supplement may supersede,currency
+H1,robustness,abuja twr freq?,118.6 MHz,nl_robustness
+H2,robustness,how high is abuja airport in feet,1122 ft,nl_robustness
+H3,robustness,longest rwy lagos,3900 m RWY 18R/36L,nl_robustness
+H4,robustness,whats the atis at nnamdi azikiwe,127.05 MHz,nl_robustness
+H5,robustness,fire category abuja,CAT 9,nl_robustness
+H6,robustness,DNAA approach radar frequency,127.9 MHz,nl_robustness
