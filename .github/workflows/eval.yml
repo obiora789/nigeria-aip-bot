@@ -15,6 +15,9 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      # config.py reads this at import; the eval never sends to Telegram, so a
+      # dummy value is enough to satisfy the import.
+      TELEGRAM_BOT_TOKEN: "eval-not-used"
       QUERY_LOG_ENABLED: "0"    # don't pollute the query log with eval traffic
     steps:
       - uses: actions/checkout@v4
