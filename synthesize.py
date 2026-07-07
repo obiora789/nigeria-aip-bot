@@ -18,6 +18,7 @@ from typing import List, Tuple
 from openai import OpenAI
 
 import config
+from retry import retry_call
 from models import AIPResult
 from schemas import GroundedAnswer
 
@@ -56,7 +57,8 @@ def generate_grounded_answer(question: str, results: List[AIPResult]) -> Grounde
     user = (f"Question: {question}\n\n"
             f"AIP excerpts (the ONLY source you may use):\n{context}")
     try:
-        resp = _client.beta.chat.completions.parse(
+        resp = retry_call(
+            _client.beta.chat.completions.parse,
             model=config.SYNTHESIS_MODEL,
             messages=[{"role": "system", "content": config.SYNTHESIS_SYSTEM},
                       {"role": "user", "content": user}],

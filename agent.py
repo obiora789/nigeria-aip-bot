@@ -10,6 +10,8 @@ from typing import Optional
 
 from openai import OpenAI
 
+from retry import retry_call
+
 import config
 import resolver
 from schemas import AIPQueryExtraction
@@ -151,7 +153,8 @@ _SYSTEM = (
 def extract_query_parameters(user_text: str) -> Optional[AIPQueryExtraction]:
     """Returns the parsed parameters, or None if extraction fails (caller abstains)."""
     try:
-        response = client.beta.chat.completions.parse(
+        response = retry_call(
+            client.beta.chat.completions.parse,
             model=config.EXTRACTION_MODEL,
             messages=[
                 {"role": "system", "content": _SYSTEM},
@@ -172,7 +175,8 @@ def get_embedding(text: str) -> Optional[list]:
     if not cleaned:
         return None
     try:
-        response = client.embeddings.create(input=[cleaned], model=config.EMBEDDING_MODEL)
+        response = retry_call(client.embeddings.create,
+                              input=[cleaned], model=config.EMBEDDING_MODEL)
         return response.data[0].embedding
     except Exception:  # noqa: BLE001
         log.exception("embedding failed")
