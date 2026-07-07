@@ -177,14 +177,60 @@ def mark_reviewed(ids: list, note: str | None = None) -> int:
         return 0
 
 
+def prune_logs(before_days: int) -> int:
+    """Delete query-log rows OLDER than before_days. Floored at 7 days so recent
+    data and the audit trail can never be wiped from the web dashboard. Returns
+    the number deleted."""
+    before_days = max(7, int(before_days))
+    cutoff = (dt.datetime.now(dt.timezone.utc)
+              - dt.timedelta(days=before_days)).isoformat()
+    try:
+        resp = (supabase.table("vannie_query_log").delete()
+                .lt("created_at", cutoff).execute())
+        n = len(resp.data or [])
+        log.info("prune_logs: deleted %d rows older than %d days", n, before_days)
+        return n
+    except Exception:  # noqa: BLE001
+        log.exception("prune_logs failed")
+        return 0
+
+
+def wipe_logs() -> int:
+    """Delete ALL query-log rows. Destructive — CLI-only, never exposed on the web
+    dashboard. Returns the number deleted."""
+    try:
+        resp = (supabase.table("vannie_query_log").delete()
+                .gte("created_at", "2000-01-01T00:00:00Z").execute())
+        n = len(resp.data or [])
+        log.info("wipe_logs: deleted %d rows", n)
+        return n
+    except Exception:  # noqa: BLE001
+        log.exception("wipe_logs failed")
+        return 0
+
+
+def export_csv(rows: list) -> str:
+    """Serialize log rows to CSV for offline analysis / audit."""
+    import csv
+    import io
+    cols = ["id", "created_at", "path", "intent", "icao", "similarity", "charts",
+            "needs_review", "reviewed", "feedback", "query"]
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(cols)
+    for r in rows:
+        w.writerow([r.get(c, "") for c in cols])
+    return buf.getvalue()
+
+
 def _esc(s) -> str:
     return (str(s or "").replace("&", "&amp;").replace("<", "&lt;")
             .replace(">", "&gt;").replace('"', "&quot;"))
 
 
-def render_dashboard(rows: list, days: int) -> str:
+def render_dashboard(rows: list, days: int, token: str = "") -> str:
     """Self-contained HTML dashboard (inline CSS, no external deps, no third-party
-    data egress). Read-only; marking reviewed is done via the triage CLI."""
+    data egress). Read-only apart from an age-based prune; a full wipe is CLI-only."""
     s = summarize(rows)
     total = s["total"] or 1
     pct_review = 100 * len(s["review"]) // total
@@ -199,8 +245,23 @@ def render_dashboard(rows: list, days: int) -> str:
         card("queries", s["total"], f"last {days} days"),
         card("needs review", len(s["review"]), f"{pct_review}% of traffic"),
         card("open (unhandled)", len(s["open"]), "in the queue now"),
+        card("👎 flagged", sum(1 for r in rows if r.get("feedback") == "down"),
+             "wrong per pilots"),
         card("avg similarity", avg, "text answers"),
     ])
+
+    # pilot 👎 — the strongest error signal: a human said "this was wrong"
+    down = [r for r in rows if r.get("feedback") == "down"]
+    down_rows = ""
+    for r in down[:25]:
+        ts = (r.get("created_at") or "")[:16].replace("T", " ")
+        down_rows += (f'<tr><td class="id">#{r.get("id")}</td>'
+                      f'<td>{_esc(r.get("path"))}</td>'
+                      f'<td>{_esc(r.get("icao") or "—")}</td>'
+                      f'<td>{_esc((r.get("query") or "")[:70])}</td>'
+                      f'<td class="id">{ts}</td></tr>')
+    if not down_rows:
+        down_rows = '<tr><td colspan="5" class="empty">No 👎 in this window 🎉</td></tr>'
 
     maxp = max(s["paths"].values()) if s["paths"] else 1
     path_rows = ""
@@ -224,6 +285,12 @@ def render_dashboard(rows: list, days: int) -> str:
                    for ic, n in s["icaos"].most_common(10)) or \
         '<tr><td colspan="2" class="empty">—</td></tr>'
 
+    # time-range toggle (carries the token) — daily / weekly / monthly / quarter
+    def rng(label, d):
+        cls = "on" if d == days else ""
+        return f'<a class="rng {cls}" href="?token={_esc(token)}&amp;days={d}">{label}</a>'
+    ranges = (rng("Today", 1) + rng("Week", 7) + rng("Month", 30) + rng("90 days", 90))
+
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Vannie · query dashboard</title><style>
@@ -240,11 +307,23 @@ td,th{{padding:8px 12px;border-bottom:1px solid #232b36;text-align:left;font-siz
 .bar{{width:40%}}.bar span{{display:block;height:10px;border-radius:5px}}
 .bar .ok{{background:#3b82f6}}.bar .warn{{background:#e0a13c}}
 .empty{{text-align:center;color:#8a96a3;padding:16px}}
-.hint{{font-size:12px;color:#8a96a3;margin-top:8px}}</style></head>
+.hint{{font-size:12px;color:#8a96a3;margin-top:8px}}
+.rng{{display:inline-block;padding:5px 12px;margin-right:6px;border-radius:8px;
+background:#1a2029;border:1px solid #262e3a;color:#b8c2cc;text-decoration:none;font-size:13px}}
+.rng.on{{background:#3b82f6;border-color:#3b82f6;color:#fff}}
+.tools{{margin-top:28px;padding-top:16px;border-top:1px solid #232b36}}
+.tools select,.tools button{{background:#1a2029;border:1px solid #262e3a;color:#e6e6e6;
+border-radius:8px;padding:6px 10px;font-size:13px}}
+.tools button{{cursor:pointer}}</style></head>
 <body><div class="wrap">
 <h1>Vannie — query dashboard</h1>
 <div class="muted">last {days} days · generated live from vannie_query_log</div>
+<div class="rangebar">{ranges}
+<a class="rng" href="/dashboard/export.csv?token={_esc(token)}&amp;days={days}">⬇ Export CSV</a></div>
 <div class="cards">{cards}</div>
+<h2>👎 Flagged wrong by pilots</h2><table>
+<tr><th class="id">id</th><th>path</th><th>icao</th><th>query</th><th class="id">when</th></tr>
+{down_rows}</table>
 <h2>Outcome mix</h2><table>{path_rows}</table>
 <h2>Open review queue — repeated failures first</h2><table>
 <tr><th class="num">n</th><th>path</th><th>icao</th><th class="id">id</th><th>query</th></tr>
@@ -252,4 +331,15 @@ td,th{{padding:8px 12px;border-bottom:1px solid #232b36;text-align:left;font-siz
 <div class="hint">Mark handled items so they leave the queue:
 <code>python triage.py --mark 123 456 --note "fixed enrichment"</code></div>
 <h2>Top aerodromes</h2><table>{tops}</table>
+<div class="tools">
+  <form method="post" action="/dashboard/prune"
+        onsubmit="return confirm('Delete log entries older than the selected age? This cannot be undone.');">
+    <input type="hidden" name="token" value="{_esc(token)}">
+    Clear entries older than
+    <select name="before_days"><option value="30">30</option><option value="90" selected>90</option></select>
+    days <button type="submit">Clear old logs</button>
+  </form>
+  <div class="hint">Recent entries (last 7 days) are always kept. To wipe everything,
+  use the CLI: <code>python triage.py --wipe --yes</code></div>
+</div>
 </div></body></html>"""

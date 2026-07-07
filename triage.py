@@ -26,11 +26,31 @@ def main() -> None:
     ap.add_argument("--mark", nargs="+", metavar="ID",
                     help="mark these log ids reviewed (they leave the queue)")
     ap.add_argument("--note", default=None, help="note to attach when marking")
+    ap.add_argument("--prune-days", type=int, metavar="N",
+                    help="delete log entries older than N days (min 7)")
+    ap.add_argument("--wipe", action="store_true",
+                    help="delete ALL log entries (requires --yes)")
+    ap.add_argument("--yes", action="store_true", help="confirm a destructive --wipe")
     args = ap.parse_args()
 
     if args.mark:
         n = obs.mark_reviewed(args.mark, note=args.note)
         print(f"marked {n} item(s) reviewed.")
+        return
+
+    if args.prune_days is not None:
+        n = obs.prune_logs(args.prune_days)
+        print(f"pruned {n} entries older than {max(7, args.prune_days)} days.")
+        return
+
+    if args.wipe:
+        if not args.yes:
+            print("Refusing to wipe the entire query log without --yes.\n"
+                  "This deletes the whole audit trail. Re-run: "
+                  "python triage.py --wipe --yes")
+            return
+        n = obs.wipe_logs()
+        print(f"wiped {n} entries (entire query log).")
         return
 
     rows = obs.fetch_log(days=args.days, icao=args.icao)

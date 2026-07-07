@@ -15,8 +15,8 @@ import re
 import uuid
 from types import SimpleNamespace
 
-from fastapi import BackgroundTasks, FastAPI, Header, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi import BackgroundTasks, FastAPI, Form, Header, Request, Response
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 import cache
 import config
@@ -101,7 +101,31 @@ def dashboard(token: str = "", days: int = 30):
         return Response("not found", status_code=404)
     days = max(1, min(int(days), 90))
     rows = observability.fetch_log(days=days)
-    return HTMLResponse(observability.render_dashboard(rows, days))
+    return HTMLResponse(observability.render_dashboard(rows, days, config.DASHBOARD_TOKEN))
+
+
+@app.post("/dashboard/prune")
+def dashboard_prune(token: str = Form(""), before_days: int = Form(90)):
+    """Age-based prune from the dashboard. Token-gated; floored at 7 days in
+    prune_logs so recent data can't be wiped. A full wipe is CLI-only."""
+    if not config.DASHBOARD_TOKEN or token != config.DASHBOARD_TOKEN:
+        return Response("not found", status_code=404)
+    observability.prune_logs(before_days)
+    # back to the dashboard (month view)
+    return RedirectResponse(f"/dashboard?token={config.DASHBOARD_TOKEN}&days=30",
+                            status_code=303)
+
+
+@app.get("/dashboard/export.csv")
+def dashboard_export(token: str = "", days: int = 30):
+    """Download the query log for the window as CSV (offline analysis / audit)."""
+    if not config.DASHBOARD_TOKEN or token != config.DASHBOARD_TOKEN:
+        return Response("not found", status_code=404)
+    days = max(1, min(int(days), 90))
+    rows = observability.fetch_log(days=days)
+    csv_text = observability.export_csv(rows)
+    return Response(csv_text, media_type="text/csv", headers={
+        "Content-Disposition": f'attachment; filename="vannie_log_{days}d.csv"'})
 
 
 @app.post("/webhook")
