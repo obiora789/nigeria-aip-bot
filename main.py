@@ -316,6 +316,35 @@ def _names_a_place(ex) -> bool:
 _BARE_CLAR_RE = re.compile(r"^(ILS|VOR|RNAV|GNSS|RNP|NDB|\d{2}[LRC]?)$", re.I)
 
 
+async def _admin_health_report() -> str:
+    """Operator health snapshot: proves the full webhook->process->reply path AND
+    that OpenAI + Supabase are reachable."""
+    ok, fails = await asyncio.to_thread(observability.healthcheck)
+    redis_ok = await cache.ping()
+    return "\n".join([
+        f"Vannie status — {'ALL OK' if ok else 'DEGRADED'}",
+        f"• OpenAI: {'OK' if 'OpenAI' not in fails else 'FAIL'}",
+        f"• Supabase: {'OK' if 'Supabase' not in fails else 'FAIL'}",
+        f"• Cache: {'Redis' if redis_ok else 'in-memory'}",
+        f"• AIRAC: {config.AIRAC_CYCLE}",
+    ])
+
+
+async def _admin_stats_report() -> str:
+    """Operator pulse from the query log: volume and the review backlog."""
+    rows = await asyncio.to_thread(observability.fetch_log, 1)   # last 24h
+    s = observability.summarize(rows)
+    top = ", ".join(f"{ic}({n})" for ic, n in s["icaos"].most_common(3)) or "—"
+    pct = (100 * len(s["review"]) // s["total"]) if s["total"] else 0
+    return "\n".join([
+        "Vannie — last 24h",
+        f"• queries: {s['total']}",
+        f"• needs review: {len(s['review'])} ({pct}%)",
+        f"• open (unhandled): {len(s['open'])}",
+        f"• top aerodromes: {top}",
+    ])
+
+
 async def process(chat_id: int, text: str) -> None:
     """All heavy lifting; runs after the 200 ack. Never raises to the caller."""
     rec = {"intent": None, "icao": None, "path": "unknown",
@@ -335,6 +364,17 @@ async def process(chat_id: int, text: str) -> None:
         if cmd in ("/start", "/help"):
             rec["path"] = "help"
             await send_message(chat_id, config.HELP)
+            return
+        # Operator-only diagnostics. Non-admins are ignored silently — the
+        # commands don't exist for them (no info leak, no OpenAI/Supabase cost).
+        if cmd in ("/health", "/stats"):
+            if not (config.ADMIN_CHAT_ID and str(chat_id) == str(config.ADMIN_CHAT_ID)):
+                rec["path"] = "ignored"
+                return
+            rec["path"] = "admin"
+            report = (await _admin_health_report() if cmd == "/health"
+                      else await _admin_stats_report())
+            await send_message(chat_id, report)
             return
 
         # Free-text answer to a pending chart clarification ("VOR", "18L") — treat
