@@ -41,6 +41,12 @@ _AD_FIELD_AT_RE = re.compile(
 _RWY_INV_RE = re.compile(
     r"how many runways|list (the )?runways|runway configuration|which runways|"
     r"number of runways|how many rwy", re.I)
+# Requests for approach PROCEDURES (holding/letdown/missed approach). These must
+# go through the approach-chart flow (clarification + scoped-or-plate), NOT general
+# synthesis over an unscoped AD 2.22 chunk — which can splice one approach's holding
+# onto another's letdown and assert values that don't match the source.
+_APPROACH_PROC_RE = re.compile(
+    r"\b(holding|letdown|let-down|missed[\s-]*approach|approach procedure)\b", re.I)
 # A genuine greeting/smalltalk — the ONLY thing that should get the canned reply.
 _REAL_GREETING_RE = re.compile(
     r"^\s*(hi|hello|hey|yo|howdy|good (morning|afternoon|evening)|greetings|"
@@ -90,6 +96,16 @@ def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
         if ex.icao_code in resolver.VALID_ICAO or ex.aerodrome_name or len(cands) == 1:
             if ex.intent in ("out_of_scope", "general_greeting", "national_lookup"):
                 ex.intent = "runway_data"
+            if not ex.icao_code and len(cands) == 1:
+                ex.icao_code = next(iter(cands))
+    # 6b) approach PROCEDURE requests (holding/letdown/missed) for a named
+    #     aerodrome route through the approach-chart flow, so they inherit the
+    #     clarification + scoped-or-plate safety instead of raw synthesis over an
+    #     unscoped AD 2.22 chunk.
+    if _APPROACH_PROC_RE.search(raw):
+        cands = resolver.match_name(raw)
+        if ex.icao_code in resolver.VALID_ICAO or ex.aerodrome_name or len(cands) == 1:
+            ex.intent = "chart_retrieval"
             if not ex.icao_code and len(cands) == 1:
                 ex.icao_code = next(iter(cands))
     # 7) the model sometimes tags a follow-up ("can you list them?") as a greeting.

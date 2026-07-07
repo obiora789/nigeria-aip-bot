@@ -205,3 +205,39 @@ def test_real_greeting_stays_greeting():
     import agent
     ex = agent._backstop(_ex(intent="general_greeting"), "Hi")
     assert ex.intent == "general_greeting", ex.intent
+
+
+# --- carry-poisoning guard: a named-but-unresolved place must NOT borrow the
+#     last aerodrome (the "Jalingo -> answered for Asaba" bug).
+
+def test_named_place_blocks_followup_carry():
+    import main
+    # "approach plate for Jalingo" -> extractor sets aerodrome_name, no icao
+    assert main._names_a_place(_ex(aerodrome_name="Jalingo")) is True
+    assert main._names_a_place(_ex(icao_code="DNXX")) is True
+
+
+def test_bare_followup_allows_carry():
+    import main
+    # "what about the ILS?" -> no place named -> carry may fire
+    assert main._names_a_place(_ex()) is False
+
+
+# --- approach-procedure requests must route to the chart/approach flow, NOT
+#     general synthesis (the DNBK holding/letdown safety bug).
+
+def test_approach_procedures_route_to_chart():
+    _seed_index()
+    import agent
+    resolver.VALID_ICAO.add("DNBK")
+    ex = agent._backstop(_ex(intent="procedure_lookup", aerodrome_name="Birnin Kebbi"),
+                         "what are the holding and letdown procedures for DNBK approach")
+    assert ex.intent == "chart_retrieval", ex.intent
+
+
+def test_frequency_query_not_rerouted_to_chart():
+    _seed_index()
+    import agent
+    ex = agent._backstop(_ex(intent="frequency_retrieval", aerodrome_name="Lagos"),
+                         "lagos tower frequency")
+    assert ex.intent == "frequency_retrieval", ex.intent

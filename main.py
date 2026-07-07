@@ -253,7 +253,9 @@ def _is_approach(ex, text) -> bool:
     if any(w in t for w in ("sid", "star", "departure", "arrival", "parking",
                             "docking", "obstacle", "terrain", "aerodrome chart")):
         return _APPROACH_RE.search(t) is not None and "approach" in t
-    return "approach" in t or _APPROACH_RE.search(t) is not None
+    return ("approach" in t or _APPROACH_RE.search(t) is not None
+            or any(w in t for w in ("holding", "letdown", "let-down",
+                                    "missed approach")))
 
 
 _PLATE_POINTER = (
