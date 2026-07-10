@@ -241,3 +241,40 @@ def test_frequency_query_not_rerouted_to_chart():
     ex = agent._backstop(_ex(intent="frequency_retrieval", aerodrome_name="Lagos"),
                          "lagos tower frequency")
     assert ex.intent == "frequency_retrieval", ex.intent
+
+
+# --- defense-in-depth: the synthesis path itself refuses approach procedures,
+#     independently of routing (the second layer for the DNBK bug).
+
+def test_synthesis_refuses_approach_procedures():
+    import synthesize
+    # guard returns BEFORE any LLM call, so this is offline-safe
+    status, _ = synthesize.synthesize_decision(
+        "what are the holding and letdown procedures for DNBK", [])
+    assert status == "approach_procedure", status
+
+
+def test_synthesis_procedure_guard_does_not_overfire():
+    import synthesize
+    # a normal factual question must not match the procedure guard
+    assert synthesize._PROC_RE.search("lagos tower frequency") is None
+    assert synthesize._PROC_RE.search("transition altitude at kano") is None
+
+
+# --- navaid-value guard: never synthesize one navaid's value from a multi-navaid
+#     AD 2.19 block (the DNMM VOR-distance misattribution).
+
+def test_navaid_value_query_refuses_synthesis():
+    import synthesize
+    status, _ = synthesize.synthesize_decision(
+        "distance from the VOR to threshold of rwy 18L in lagos", [])
+    assert status == "navaid", status
+
+
+def test_navaid_guard_does_not_overfire():
+    import synthesize
+    # normal single-value queries must NOT be caught (they still synthesize)
+    for q in ("lagos tower frequency", "elevation of abuja",
+              "declared distances for DNAA"):
+        assert not (synthesize._NAVAID_RE.search(q)
+                    and synthesize._NAVAID_VALUE_RE.search(q)), q

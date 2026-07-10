@@ -584,6 +584,31 @@ async def process(chat_id: int, text: str) -> None:
         else:
             status, ga = await asyncio.to_thread(
                 synthesize.synthesize_decision, follow_query, outcome.results)
+            if status == "approach_procedure":
+                # Defense-in-depth: synthesis refused to write approach procedures.
+                # Route to the safe approach-chart flow (clarification + plate);
+                # NEVER dump the AD 2.22 chunk verbatim.
+                if res.icao:
+                    rec["path"] = "chart"
+                    await _run_chart_decision(chat_id, res, res.icao,
+                                              ex.procedure_type or "", ex.runway or "",
+                                              send_info)
+                else:
+                    rec["path"] = "not_found"
+                    await send_info(not_found())
+                return
+            if status == "navaid":
+                # Several navaids are published together for one aerodrome; the
+                # block can't be split into per-navaid values safely, so we never
+                # single one out — show the source focused and let the pilot read
+                # the exact figure for the navaid they need.
+                rec["path"] = "navaid"
+                note = ("This aerodrome publishes several navaids in one AIP table, "
+                        "so I won't single out one value — read the exact figure for "
+                        "the navaid you need from the source below:")
+                await send_info(f"{note}\n\n"
+                                f"{answer(outcome, res, ex.runway, follow_query)}")
+                return
             rec["path"] = status if status in ("grounded", "not_in_aip") else "answer"
             if status == "grounded":
                 await send_info(grounded_reply(ga, outcome, res))

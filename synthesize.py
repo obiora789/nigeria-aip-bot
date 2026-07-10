@@ -126,6 +126,31 @@ _MINIMA_RE = re.compile(
     r"\bcat\s?(i{1,3}|1|2|3)\b|decision (height|altitude)|\bdh\b|\bda\b|"
     r"\boca\b|\boch\b|\bminima\b|minimum descent|\bmda\b", re.I)
 
+# Approach PROCEDURES (holding/letdown/missed approach) are the other content we
+# must never synthesize: the AD 2.22 text interleaves multiple approaches without
+# reliable delimiters, so free synthesis can splice one approach's holding onto
+# another's letdown (proven with DNPO) and assert values that disagree with the
+# source (seen with DNBK). This is a SECOND, independent layer: even if routing
+# fails to send an approach-procedure request to the chart flow, synthesis itself
+# refuses and the caller defers to the plate.
+_PROC_RE = re.compile(
+    r"\b(holding|letdown|let-down|missed[\s-]*approach|approach procedure)\b", re.I)
+
+# Navaid VALUE queries (a VOR/ILS/DME/LLZ/GP/NDB distance, frequency, position,
+# ident). AD 2.19 stacks several navaids per aerodrome into one table block with
+# misaligned fields — proven unparseable into clean per-navaid records even with
+# table extraction — so synthesizing "the distance/frequency" grabs the wrong
+# navaid's value (DNMM: localizer's 345 m returned for the VOR, which is 6.66 NM).
+# The number-verifier can't catch this (the wrong value IS in the source). So we
+# never synthesize a single navaid value — we show the block and the pilot reads
+# the exact row.
+_NAVAID_RE = re.compile(
+    r"\b(d?vor|dme|ils|llz|localiz\w*|glide\s?path|glide\s?slope|\bgp\b|ndb|"
+    r"tacan|nav\s?aid|navaid)\b", re.I)
+_NAVAID_VALUE_RE = re.compile(
+    r"\b(distance|how far|frequenc\w+|\bfreq\b|position|coordinate\w*|located|"
+    r"\bident\b|channel|elevation|bearing)\b", re.I)
+
 
 def synthesize_decision(question: str, results: List[AIPResult]) -> Tuple[str, object]:
     """Decide how to answer a text query. Returns (status, grounded_answer):
@@ -138,6 +163,10 @@ def synthesize_decision(question: str, results: List[AIPResult]) -> Tuple[str, o
         return ("fallback", None)
     if _MINIMA_RE.search(question or ""):
         return ("fallback", None)      # never synthesize a decision height
+    if _PROC_RE.search(question or ""):
+        return ("approach_procedure", None)   # never synthesize procedures -> plate
+    if _NAVAID_RE.search(question or "") and _NAVAID_VALUE_RE.search(question or ""):
+        return ("navaid", None)        # never synthesize one navaid's value -> verbatim
     ans = generate_grounded_answer(question, results)
     if ans is None:
         return ("fallback", None)
