@@ -335,3 +335,20 @@ def test_rwy_char_guard_does_not_overfire():
     for q in ("elevation of abuja", "aerodrome elevation lagos",
               "runway length DNAA", "width of runway 04", "PCN of runway 22"):
         assert synthesize.synthesize_decision(q, [])[0] != "rwy_char", q
+
+
+# --- AD 2.2 aerodrome-data path: fetch-by-section then synthesize (fixes the
+#     Kano reference-temperature false abstention).
+
+def test_aerodrome_data_query_detected():
+    import main
+    for q in ("aerodrome reference temperature of Kano", "magnetic variation lagos",
+              "ARP coordinates for kano", "transition altitude DNAA"):
+        assert main._AERODROME_DATA_RE.search(q), q
+
+
+def test_aerodrome_data_does_not_catch_other_fields():
+    import main
+    for q in ("tower frequency", "TORA for rwy 22", "threshold elevation of rwy 04",
+              "how many runways in kano"):
+        assert not main._AERODROME_DATA_RE.search(q), q

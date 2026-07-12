@@ -12,6 +12,7 @@ Fixes folded in vs. the original:
 """
 import logging
 import os
+import re
 from typing import List, Optional, Tuple
 
 from supabase import Client, create_client
@@ -206,6 +207,26 @@ def get_declared_distances(icao: str) -> list:
     except Exception:  # noqa: BLE001
         log.exception("get_declared_distances failed (icao=%s)", icao)
         return []
+
+
+def get_aerodrome_data(icao: str) -> str:
+    """AD 2.2 aerodrome geographic/admin data, fetched BY SECTION. AD 2.2 is a
+    prefix of AD 2.20-2.24, so a plain LIKE would pull in local regs / noise /
+    procedures / the chart index — we keep only 'AD 2.2' (and its 'AD 2.2.x'
+    sub-items) and drop 'AD 2.2<digit>'. Used to answer paired fields like
+    reference temperature that the general vector search under-retrieves."""
+    try:
+        resp = (supabase.table("aip_knowledge_base")
+                .select("content, source_page, source_chunk, aip_section")
+                .eq("reference_tag", icao)
+                .like("aip_section", "AD 2.2%").execute())
+    except Exception:  # noqa: BLE001
+        log.exception("get_aerodrome_data failed (icao=%s)", icao)
+        return ""
+    rows = [r for r in (resp.data or [])
+            if not re.match(r"AD 2\.2\d", r.get("aip_section") or "")]
+    rows.sort(key=lambda r: (r.get("source_page") or 0, r.get("source_chunk") or 0))
+    return "\n".join(r["content"] for r in rows)
 
 
 def get_charts_smart(icao: str, term: str = "", runway: str = "") -> List[ChartRef]:

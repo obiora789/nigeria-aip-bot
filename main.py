@@ -22,8 +22,9 @@ import cache
 import config
 import resolver
 from agent import extract_query_parameters, get_embedding
-from database import (get_charts, get_charts_smart, get_declared_distances,
-                      get_section_text, search_aip)
+from database import (get_aerodrome_data, get_charts, get_charts_smart,
+                      get_declared_distances, get_section_text, search_aip)
+from models import AIPResult, SearchOutcome
 import synthesize
 import facts
 import memory
@@ -343,6 +344,15 @@ def _names_a_place(ex) -> bool:
 # A bare approach type or runway typed instead of tapping a clarify button.
 _BARE_CLAR_RE = re.compile(r"^(ILS|VOR|RNAV|GNSS|RNP|NDB|\d{2}[LRC]?)$", re.I)
 
+# AD 2.2 aerodrome geographic/admin fields — routed to a fetch-by-section then
+# synthesize, because the general vector search under-retrieves the secondary
+# paired values (e.g. reference temperature sits behind elevation in one field).
+_AERODROME_DATA_RE = re.compile(
+    r"\b(reference temp\w*|ref\.?\s?temp\w*|magnetic variation|mag\.?\s?var\w*|"
+    r"annual change|aerodrome reference point|\barp\b|geoid|"
+    r"transition (altitude|level)|aerodrome elevation|elevation of the aerodrome)\b",
+    re.I)
+
 
 async def _admin_health_report() -> str:
     """Operator health snapshot: proves the full webhook->process->reply path AND
@@ -559,6 +569,37 @@ async def process(chat_id: int, text: str) -> None:
                 rec["path"] = "chart_not_found"
                 await send_info(chart_not_found(res, ex))
             return
+
+        # 2.5) Aerodrome geographic/admin data (AD 2.2): reference temperature,
+        #      magnetic variation, ARP, transition altitude/level, geoid,
+        #      aerodrome elevation. The general vector search under-retrieves the
+        #      SECONDARY paired values (Kano ref temp 33.1C was falsely abstained
+        #      even though it's published), so fetch AD 2.2 BY SECTION and
+        #      synthesize over that guaranteed-correct chunk. These fields are
+        #      unit-disambiguated (m vs C vs FL), so synthesis is safe once the
+        #      right chunk is in hand.
+        if _AERODROME_DATA_RE.search(follow_query) and res.icao:
+            ad_text = await asyncio.to_thread(get_aerodrome_data, res.icao)
+            if ad_text:
+                ad_res = AIPResult(content=ad_text, similarity=1.0,
+                                   aip_section="AD 2.2", reference_tag=res.icao)
+                ad_out = SearchOutcome(results=[ad_res], max_similarity=1.0,
+                                       abstained=False, used_reference=res.icao)
+                status, ga = await asyncio.to_thread(
+                    synthesize.synthesize_decision, follow_query, [ad_res])
+                if status == "grounded":
+                    rec["path"] = "aerodrome_data"
+                    await send_info(grounded_reply(ga, ad_out, res))
+                    return
+                if status == "not_in_aip":
+                    rec["path"] = "not_in_aip"
+                    await send_info(not_in_aip(res))
+                    return
+                # any other status -> show the AD 2.2 chunk focused (safe, sourced)
+                rec["path"] = "aerodrome_data"
+                await send_info(answer(ad_out, res, ex.runway, follow_query))
+                return
+            # no AD 2.2 chunk stored -> fall through to the normal search path
 
         # 3) embed an enriched query: expands the aerodrome name (PH -> Port
         #    Harcourt) and, for airspace, prepends AIP airspace terminology.
