@@ -220,6 +220,58 @@ def low_confidence(outcome: SearchOutcome) -> str:
     )
 
 
+_DD_METRICS = ("tora", "toda", "asda", "lda")
+
+
+def _dd_rwy_match(spec: str, stored: str) -> bool:
+    sm = re.match(r"\s*(\d{1,2})\s*([LRC])?", str(spec or ""), re.I)
+    tm = re.match(r"\s*(\d{1,2})\s*([LRC])?", str(stored or ""), re.I)
+    if not sm or not tm:
+        return False
+    if f"{int(sm.group(1)):02d}" != f"{int(tm.group(1)):02d}":
+        return False
+    ss, ts = (sm.group(2) or "").upper(), (tm.group(2) or "").upper()
+    return not (ss and ts and ss != ts)   # '18' matches 18L & 18R; '18L' only 18L
+
+
+def declared_distance_reply(res: Resolution, recs: list, requested_runway=None,
+                            query: str = "") -> str:
+    """Exact declared-distance answer from STRUCTURED data (validated at ingestion,
+    so never misattributed). Answers the specific runway+metric if asked, else
+    lists every runway's TORA/TODA/ASDA/LDA."""
+    asked = [m for m in _DD_METRICS if re.search(rf"\b{m}\b", query or "", re.I)]
+    metrics = asked or list(_DD_METRICS)
+    footer = (f"\n\n———\nSource: Nigeria AIP · AD 2.13 · {config.AIRAC_CYCLE}\n"
+              f"{config.DISCLAIMER}")
+
+    if requested_runway:
+        hits = [r for r in recs if _dd_rwy_match(requested_runway, r["runway"])]
+        if len(hits) == 1:
+            r = hits[0]
+            vals = "\n".join(f"{m.upper()}: {r[m]} m" for m in metrics)
+            return f"{res.label} — RWY {r['runway']}\n\n{vals}{footer}"
+        if len(hits) > 1:            # e.g. '18' matched 18L and 18R -> show both
+            recs = hits
+
+    lines = [f"{res.label} — declared distances (AD 2.13)", ""]
+    for r in recs:
+        lines.append("RWY {}: TORA {} · TODA {} · ASDA {} · LDA {} (m)".format(
+            r["runway"], r["tora"], r["toda"], r["asda"], r["lda"]))
+    return "\n".join(lines) + footer
+
+
+def navaid_reply(res: Resolution, nav_text: str, query: str = "") -> str:
+    """Read-the-source navaid reply, from the AD 2.19 section fetched BY NAME (not
+    by similarity, which can surface the wrong section). Focused around the query's
+    navaid/runway terms. Never asserts a single value — the pilot reads the exact
+    figure for the navaid they asked about."""
+    needles = re.findall(r"\d{2}[LRC]?|d?vor|dme|ils|llz|localiz\w*|ndb|gp",
+                         query or "", re.I)
+    snippet = _focus(nav_text, needles, width=800)
+    return (f"{res.label}\n\n[AIP AD 2.19 / {res.icao}]\n{snippet}\n\n———\n"
+            f"Source: Nigeria AIP · AD 2.19 · {config.AIRAC_CYCLE}\n{config.DISCLAIMER}")
+
+
 def not_found() -> str:
     return (
         "I couldn't find anything matching that in the published AIP. Please "

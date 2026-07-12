@@ -22,7 +22,8 @@ import cache
 import config
 import resolver
 from agent import extract_query_parameters, get_embedding
-from database import get_charts, get_charts_smart, get_section_text, search_aip
+from database import (get_charts, get_charts_smart, get_declared_distances,
+                      get_section_text, search_aip)
 import synthesize
 import facts
 import memory
@@ -30,8 +31,9 @@ import clarify
 import observability
 import procedures
 import toc
-from responder import (ambiguous, answer, chart_intro, chart_not_found, error,
-                       grounded_reply, low_confidence, not_found, not_in_aip,
+from responder import (ambiguous, answer, chart_intro, chart_not_found,
+                       declared_distance_reply, error, grounded_reply,
+                       low_confidence, navaid_reply, not_found, not_in_aip,
                        unresolved)
 from telegram import (answer_callback, clarify_runway_kb, clarify_type_kb,
                       feedback_kb, send_charts, send_message, verify_secret)
@@ -597,17 +599,42 @@ async def process(chat_id: int, text: str) -> None:
                     rec["path"] = "not_found"
                     await send_info(not_found())
                 return
+            if status == "declared_distance":
+                # Answer from STRUCTURED per-runway data (validated at ingestion,
+                # never misattributed). If this aerodrome wasn't parsed cleanly,
+                # there's no structured row -> refuse to source (AD 2.13 verbatim).
+                rec["path"] = "declared_distance"
+                recs = (await asyncio.to_thread(get_declared_distances, res.icao)
+                        if res.icao else [])
+                if recs:
+                    await send_info(declared_distance_reply(res, recs, ex.runway,
+                                                             follow_query))
+                else:
+                    note = ("I don't have structured declared-distance data for this "
+                            "aerodrome, so I won't single out a value — read the exact "
+                            "figure from the AD 2.13 source below:")
+                    await send_info(f"{note}\n\n"
+                                    f"{answer(outcome, res, ex.runway, follow_query)}")
+                return
             if status == "navaid":
                 # Several navaids are published together for one aerodrome; the
                 # block can't be split into per-navaid values safely, so we never
-                # single one out — show the source focused and let the pilot read
-                # the exact figure for the navaid they need.
+                # single one out. Fetch AD 2.19 BY NAME (the vector search can rank
+                # the wrong section — it surfaced AD 2.12 for this query) and show
+                # it focused, so the pilot reads the right navaid's figure.
                 rec["path"] = "navaid"
                 note = ("This aerodrome publishes several navaids in one AIP table, "
                         "so I won't single out one value — read the exact figure for "
-                        "the navaid you need from the source below:")
-                await send_info(f"{note}\n\n"
-                                f"{answer(outcome, res, ex.runway, follow_query)}")
+                        "the navaid you need from the AD 2.19 source below:")
+                nav_text = ""
+                if res.icao:
+                    nav_text = await asyncio.to_thread(get_section_text, res.icao,
+                                                       "AD 2.19")
+                if nav_text:
+                    body = navaid_reply(res, nav_text, follow_query)
+                else:
+                    body = answer(outcome, res, ex.runway, follow_query)
+                await send_info(f"{note}\n\n{body}")
                 return
             rec["path"] = status if status in ("grounded", "not_in_aip") else "answer"
             if status == "grounded":

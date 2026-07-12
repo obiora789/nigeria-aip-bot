@@ -193,6 +193,21 @@ def get_section_text(icao: str, section_prefix: str = "AD 2.22") -> str:
     return "\n".join(r.get("content", "") for r in rows)
 
 
+def get_declared_distances(icao: str) -> list:
+    """Structured per-runway declared distances (AD 2.13). Attribution was
+    resolved and validated at ingestion, so each row is exact — no synthesis, no
+    misattribution. Empty list means this aerodrome wasn't parsed cleanly (or is
+    unknown): the caller falls back to the refuse-to-source guard."""
+    try:
+        resp = (supabase.table("aip_declared_distances")
+                .select("runway, tora, toda, asda, lda")
+                .eq("icao", icao).execute())
+        return resp.data or []
+    except Exception:  # noqa: BLE001
+        log.exception("get_declared_distances failed (icao=%s)", icao)
+        return []
+
+
 def get_charts_smart(icao: str, term: str = "", runway: str = "") -> List[ChartRef]:
     """Fetch ALL of an aerodrome's charts DIRECTLY from the table (the RPC drops
     NULL-runway charts even on empty params), then filter by synonym-aware type.

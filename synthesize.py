@@ -150,6 +150,12 @@ _NAVAID_RE = re.compile(
 _NAVAID_VALUE_RE = re.compile(
     r"\b(distance|how far|frequenc\w+|\bfreq\b|position|coordinate\w*|located|"
     r"\bident\b|channel|elevation|bearing)\b", re.I)
+# Declared distances (AD 2.13). We answer these from STRUCTURED per-runway data
+# (validated at ingestion), never by synthesizing a value out of the paired
+# "3610 3610" / "893.1 871.15" cells — which misattributes at asymmetric fields
+# (Lagos 18L=2745 vs 18R=3900, Kano, DNFD…). The caller looks up the exact value;
+# if the aerodrome has no structured row, it refuses to source (AD 2.13 verbatim).
+_DECLARED_RE = re.compile(r"\b(tora|toda|asda|lda|declared distance)", re.I)
 
 
 def synthesize_decision(question: str, results: List[AIPResult]) -> Tuple[str, object]:
@@ -165,6 +171,8 @@ def synthesize_decision(question: str, results: List[AIPResult]) -> Tuple[str, o
         return ("fallback", None)      # never synthesize a decision height
     if _PROC_RE.search(question or ""):
         return ("approach_procedure", None)   # never synthesize procedures -> plate
+    if _DECLARED_RE.search(question or ""):
+        return ("declared_distance", None)     # structured lookup, else -> verbatim
     if _NAVAID_RE.search(question or "") and _NAVAID_VALUE_RE.search(question or ""):
         return ("navaid", None)        # never synthesize one navaid's value -> verbatim
     ans = generate_grounded_answer(question, results)

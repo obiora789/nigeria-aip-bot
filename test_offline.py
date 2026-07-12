@@ -278,3 +278,24 @@ def test_navaid_guard_does_not_overfire():
               "declared distances for DNAA"):
         assert not (synthesize._NAVAID_RE.search(q)
                     and synthesize._NAVAID_VALUE_RE.search(q)), q
+
+
+# --- declared distances: structured, exact, never misattributed (Lagos 18L!=18R)
+
+def test_declared_distance_query_routes_structured():
+    import synthesize
+    for q in ("TORA for RWY 22 in abuja", "declared distances for lagos",
+              "LDA for runway 18R"):
+        status, _ = synthesize.synthesize_decision(q, [])
+        assert status == "declared_distance", (q, status)
+
+
+def test_declared_reply_per_runway_no_misattribution():
+    import responder
+    from models import Resolution
+    res = Resolution(); res.label = "Lagos"; res.icao = "DNMM"
+    recs = [{"runway": "18L", "tora": "2745", "toda": "2745", "asda": "2788", "lda": "2745"},
+            {"runway": "18R", "tora": "3900", "toda": "3900", "asda": "4020", "lda": "3900"}]
+    a = responder.declared_distance_reply(res, recs, "18L", "tora for 18L")
+    b = responder.declared_distance_reply(res, recs, "18R", "tora for 18R")
+    assert "TORA: 2745 m" in a and "TORA: 3900 m" in b, (a, b)
