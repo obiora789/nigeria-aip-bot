@@ -157,6 +157,34 @@ _NAVAID_VALUE_RE = re.compile(
 # if the aerodrome has no structured row, it refuses to source (AD 2.13 verbatim).
 _DECLARED_RE = re.compile(r"\b(tora|toda|asda|lda|declared distance)", re.I)
 
+# ATS communications (AD 2.18). Tower/Ground/Approach/ATIS frequencies are stacked
+# in one block (with primary+secondary per service and misaligned counts, like
+# navaids), so synthesizing "the tower frequency" can return another service's
+# value — a dangerous wrong frequency. We never synthesize one; we show AD 2.18
+# focused and the pilot reads the exact frequency. Unambiguous service words fire
+# on their own; 'approach'/'departure' (which also mean charts/procedures, handled
+# before synthesis) only fire alongside an explicit frequency word.
+_COMMS_SVC_RE = re.compile(
+    r"\b(tower|twr|ground|gnd|atis|clearance|delivery|apron|ramp|ground control)\b",
+    re.I)
+_COMMS_AMBIG_RE = re.compile(
+    r"\b(approach|\bapp\b|departure|\bdep\b|radar|director|\bfis\b|information|"
+    r"centre|center)\b", re.I)
+_COMMS_FREQ_RE = re.compile(r"\b(frequenc\w+|\bfreq\b|\bmhz\b|contact|call)\b", re.I)
+
+# AD 2.12 runway physical characteristics split two ways. SYMMETRIC fields
+# (length/width/dimensions, PCN/strength — one physical strip) are SAFE to
+# synthesize and NOT caught here. ASYMMETRIC fields differ per runway END —
+# true bearing (035° vs 215°), threshold elevation (DNAA 331 m vs 342 m),
+# threshold coordinates — so synthesizing 'the' value can grab the wrong end.
+# Threshold elevation must be distinguished from AERODROME elevation (AD 2.2,
+# a single safe value): only a THRESHOLD/RWY-qualified elevation is caught.
+_RWY_BEARING_RE = re.compile(r"\b(true|runway|rwy)?\s*bearing\b", re.I)
+_THR_FIELD_RE = re.compile(
+    r"\b(threshold|thr)\b.{0,20}\b(elevation|elev|coordinate\w*|position\w*|located)\b|"
+    r"\b(elevation|elev|coordinate\w*|position\w*|located)\b.{0,20}\b(threshold|thr)\b|"
+    r"\b(elevation|coordinate\w*|position\w*|located)\b.{0,12}\b(rwy|runway)\s*\d", re.I)
+
 
 def synthesize_decision(question: str, results: List[AIPResult]) -> Tuple[str, object]:
     """Decide how to answer a text query. Returns (status, grounded_answer):
@@ -175,6 +203,12 @@ def synthesize_decision(question: str, results: List[AIPResult]) -> Tuple[str, o
         return ("declared_distance", None)     # structured lookup, else -> verbatim
     if _NAVAID_RE.search(question or "") and _NAVAID_VALUE_RE.search(question or ""):
         return ("navaid", None)        # never synthesize one navaid's value -> verbatim
+    if (_COMMS_SVC_RE.search(question or "")
+            or (_COMMS_AMBIG_RE.search(question or "")
+                and _COMMS_FREQ_RE.search(question or ""))):
+        return ("comms", None)         # never synthesize one service's freq -> verbatim
+    if _RWY_BEARING_RE.search(question or "") or _THR_FIELD_RE.search(question or ""):
+        return ("rwy_char", None)      # asymmetric AD 2.12 field -> verbatim per end
     ans = generate_grounded_answer(question, results)
     if ans is None:
         return ("fallback", None)

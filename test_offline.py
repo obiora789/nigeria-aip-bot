@@ -299,3 +299,39 @@ def test_declared_reply_per_runway_no_misattribution():
     a = responder.declared_distance_reply(res, recs, "18L", "tora for 18L")
     b = responder.declared_distance_reply(res, recs, "18R", "tora for 18R")
     assert "TORA: 2745 m" in a and "TORA: 3900 m" in b, (a, b)
+
+
+# --- comms guard (AD 2.18): never synthesize one ATS service's frequency
+
+def test_comms_query_refuses_synthesis():
+    import synthesize
+    for q in ("lagos tower frequency", "ground frequency for abuja",
+              "ATIS frequency at kano", "approach frequency for lagos"):
+        status, _ = synthesize.synthesize_decision(q, [])
+        assert status == "comms", (q, status)
+
+
+def test_comms_guard_does_not_overfire():
+    import synthesize
+    # ILS freq -> navaid (not comms); TORA -> declared; normal -> synthesize
+    assert synthesize.synthesize_decision("ILS frequency for abuja", [])[0] == "navaid"
+    assert synthesize.synthesize_decision("TORA for rwy 22", [])[0] == "declared_distance"
+    assert synthesize.synthesize_decision("elevation of abuja", [])[0] != "comms"
+
+
+# --- AD 2.12 asymmetric-field guard: bearing / threshold elevation / threshold
+#     coords differ per runway end; aerodrome elevation + length/width/PCN are safe.
+
+def test_rwy_asymmetric_field_refuses_synthesis():
+    import synthesize
+    for q in ("true bearing of runway 04", "threshold elevation of RWY 22",
+              "THR elevation rwy 04", "threshold coordinates for RWY 18L"):
+        assert synthesize.synthesize_decision(q, [])[0] == "rwy_char", q
+
+
+def test_rwy_char_guard_does_not_overfire():
+    import synthesize
+    # aerodrome elevation and symmetric fields must still synthesize
+    for q in ("elevation of abuja", "aerodrome elevation lagos",
+              "runway length DNAA", "width of runway 04", "PCN of runway 22"):
+        assert synthesize.synthesize_decision(q, [])[0] != "rwy_char", q

@@ -32,9 +32,9 @@ import observability
 import procedures
 import toc
 from responder import (ambiguous, answer, chart_intro, chart_not_found,
-                       declared_distance_reply, error, grounded_reply,
+                       comms_reply, declared_distance_reply, error, grounded_reply,
                        low_confidence, navaid_reply, not_found, not_in_aip,
-                       unresolved)
+                       rwy_char_reply, unresolved)
 from telegram import (answer_callback, clarify_runway_kb, clarify_type_kb,
                       feedback_kb, send_charts, send_message, verify_secret)
 
@@ -632,6 +632,44 @@ async def process(chat_id: int, text: str) -> None:
                                                        "AD 2.19")
                 if nav_text:
                     body = navaid_reply(res, nav_text, follow_query)
+                else:
+                    body = answer(outcome, res, ex.runway, follow_query)
+                await send_info(f"{note}\n\n{body}")
+                return
+            if status == "comms":
+                # Tower/Ground/Approach/ATIS frequencies share one AD 2.18 block;
+                # fetch it BY NAME and show focused so the pilot reads the exact
+                # frequency for the service they need — never a synthesized value
+                # that could be another service's frequency.
+                rec["path"] = "comms"
+                note = ("This aerodrome lists several ATS frequencies together, so I "
+                        "won't single one out — read the exact frequency for the "
+                        "service you need from the AD 2.18 source below:")
+                ctext = ""
+                if res.icao:
+                    ctext = await asyncio.to_thread(get_section_text, res.icao,
+                                                    "AD 2.18")
+                if ctext:
+                    body = comms_reply(res, ctext, follow_query)
+                else:
+                    body = answer(outcome, res, ex.runway, follow_query)
+                await send_info(f"{note}\n\n{body}")
+                return
+            if status == "rwy_char":
+                # Asymmetric AD 2.12 field (bearing / threshold elevation /
+                # threshold coordinates) differs per runway end; fetch AD 2.12 BY
+                # NAME and show focused so the pilot reads the value for the exact
+                # end. Symmetric fields (length/width/PCN) never reach here.
+                rec["path"] = "rwy_char"
+                note = ("This value differs per runway end, so I won't single one "
+                        "out — read the exact figure for the runway end you need "
+                        "from the AD 2.12 source below:")
+                rtext = ""
+                if res.icao:
+                    rtext = await asyncio.to_thread(get_section_text, res.icao,
+                                                    "AD 2.12")
+                if rtext:
+                    body = rwy_char_reply(res, rtext, follow_query)
                 else:
                     body = answer(outcome, res, ex.runway, follow_query)
                 await send_info(f"{note}\n\n{body}")

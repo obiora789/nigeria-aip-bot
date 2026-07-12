@@ -260,16 +260,44 @@ def declared_distance_reply(res: Resolution, recs: list, requested_runway=None,
     return "\n".join(lines) + footer
 
 
+def _section_source_reply(res: Resolution, text: str, needles, section: str) -> str:
+    """Read-the-source reply from a named AD section fetched BY NAME (not by
+    similarity, which can surface the wrong section). Focused around the query's
+    terms. Never asserts a single value — the pilot reads the exact figure. Used
+    for dense multi-entity tables (navaids AD 2.19, comms AD 2.18) where per-entity
+    values can't be split safely."""
+    snippet = _focus(text, needles, width=800)
+    return (f"{res.label}\n\n[AIP {section} / {res.icao}]\n{snippet}\n\n———\n"
+            f"Source: Nigeria AIP · {section} · {config.AIRAC_CYCLE}\n{config.DISCLAIMER}")
+
+
 def navaid_reply(res: Resolution, nav_text: str, query: str = "") -> str:
-    """Read-the-source navaid reply, from the AD 2.19 section fetched BY NAME (not
-    by similarity, which can surface the wrong section). Focused around the query's
-    navaid/runway terms. Never asserts a single value — the pilot reads the exact
-    figure for the navaid they asked about."""
+    """Focused AD 2.19 navaid reply — the pilot reads the exact figure for the
+    navaid they asked about (multiple navaids share one block)."""
     needles = re.findall(r"\d{2}[LRC]?|d?vor|dme|ils|llz|localiz\w*|ndb|gp",
                          query or "", re.I)
-    snippet = _focus(nav_text, needles, width=800)
-    return (f"{res.label}\n\n[AIP AD 2.19 / {res.icao}]\n{snippet}\n\n———\n"
-            f"Source: Nigeria AIP · AD 2.19 · {config.AIRAC_CYCLE}\n{config.DISCLAIMER}")
+    return _section_source_reply(res, nav_text, needles, "AD 2.19")
+
+
+def comms_reply(res: Resolution, comms_text: str, query: str = "") -> str:
+    """Focused AD 2.18 communications reply — the pilot reads the exact frequency
+    for the service they asked about (Tower/Ground/Approach/ATIS share one block,
+    with primary+secondary frequencies stacked, so a single value can't be split
+    out safely)."""
+    needles = re.findall(
+        r"tower|twr|ground|gnd|approach|\bapp\b|departure|\bdep\b|atis|clearance|"
+        r"delivery|apron|radar|director|\d{3}\.\d", query or "", re.I)
+    return _section_source_reply(res, comms_text, needles, "AD 2.18")
+
+
+def rwy_char_reply(res: Resolution, rc_text: str, query: str = "") -> str:
+    """Focused AD 2.12 reply for an ASYMMETRIC field (bearing / threshold elevation
+    / threshold coordinates), which differ per runway end — the pilot reads the
+    value for the specific end rather than a synthesized one that could be the
+    reciprocal end's."""
+    needles = re.findall(r"\d{2}[LRC]?|bearing|elevation|elev|threshold|thr|"
+                         r"coordinate|position", query or "", re.I)
+    return _section_source_reply(res, rc_text, needles, "AD 2.12")
 
 
 def not_found() -> str:
