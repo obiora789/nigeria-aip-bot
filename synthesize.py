@@ -71,20 +71,78 @@ def generate_grounded_answer(question: str, results: List[AIPResult]) -> Grounde
         return None
 
 
-def verify_grounded_answer(ans: GroundedAnswer, context: str) -> Tuple[bool, List[str]]:
-    """Deterministic anti-hallucination check. PASSES only if:
-      - every number in each facts_used value appears in the source context;
-      - every arithmetic step is valid AND its operands are in the source;
-      - every number asserted in the answer text is either in the source or is a
-        result of the shown arithmetic.
-    Any violation -> (False, issues); the caller must then NOT show this answer."""
-    ctx = _nums(context)
-    issues: List[str] = []
+def _norm(s: str) -> str:
+    """Whitespace-collapsed, case-folded form for verbatim-substring checks. The
+    AIP's own extracted text has irregular spacing (multi-space gaps, wrapped
+    lines); this keeps a real verbatim quote matchable without allowing anything
+    looser than that."""
+    return re.sub(r"\s+", " ", (s or "").strip()).lower()
 
+
+def verify_grounded_answer(ans: GroundedAnswer, results: List[AIPResult]) -> Tuple[bool, List[str]]:
+    """Deterministic anti-hallucination AND anti-misattribution check.
+
+    This checks each fact against its OWN cited excerpt (results[source_excerpt-1])
+    rather than a flattened blob of every retrieved chunk. That distinction is
+    the fix for the multi-entity misattribution class: the old version verified
+    a number against the union of ALL retrieved excerpts, so a real value from
+    Excerpt 3 verified successfully even when the reply's citation pointed at
+    Excerpt 1's (wrong) section — the number-verifier "passing" was never proof
+    the number came from where the answer said it did. Checking per-excerpt
+    closes that gap for numbers, and — because every fact (numeric or prose) now
+    requires a verbatim substring match against its cited excerpt, not just a
+    digit-membership check — it also closes the second gap this surfaced: a
+    purely prose claim with zero digits (e.g. a stated VFR restriction) used to
+    skip verification entirely, since _nums() found nothing to check. A fact
+    with no digits still must appear verbatim in its cited excerpt now.
+
+    PASSES only if:
+      - answerable=False (nothing to verify), OR
+      - facts_used is non-empty, AND every fact cites a valid excerpt index,
+        AND every fact's own numbers appear in THAT excerpt (not elsewhere),
+        AND the fact's value itself appears verbatim (whitespace-collapsed) in
+        THAT excerpt, AND every arithmetic step's operands come from a
+        successfully-verified fact, AND every number in the final answer text
+        is either from a verified fact or a shown computation result.
+    Any violation -> (False, issues); the caller must then NOT show this answer.
+    """
+    issues: List[str] = []
+    if not ans.answerable:
+        return (True, issues)
+
+    if not ans.facts_used:
+        issues.append("answerable=True but facts_used is empty — nothing to "
+                      "verify a prose or numeric claim against")
+        return (False, issues)
+
+    cited_nums = set()
     for f in ans.facts_used:
-        for n in _nums(f.value):
-            if n not in ctx:
-                issues.append(f"ungrounded fact value {n} ({f.what})")
+        idx = getattr(f, "source_excerpt", None)
+        if not idx or not (1 <= idx <= len(results)):
+            issues.append(f"fact '{f.what}' cites invalid excerpt #{idx}")
+            continue
+        excerpt = results[idx - 1].content
+        exc_nums = _nums(excerpt)
+        fact_nums = _nums(f.value)
+        bad_nums = fact_nums - exc_nums
+        if bad_nums:
+            issues.append(f"fact '{f.what}' value {f.value!r} has number(s) "
+                          f"{sorted(bad_nums)} not present in its cited "
+                          f"excerpt #{idx}")
+            continue
+        if _norm(f.value) not in _norm(excerpt):
+            issues.append(f"fact '{f.what}' value {f.value!r} is not verbatim "
+                          f"in its cited excerpt #{idx}")
+            continue
+        # This excerpt has now EARNED trust: at least one of its facts verified
+        # verbatim against it. Admit the excerpt's WHOLE number set (not just
+        # the literal fact.value numbers) into cited_nums — this lets the final
+        # answer restate an incidental identifier from that same trusted
+        # excerpt (a runway designator like "18R" in "RWY 18R/36L is longer")
+        # without requiring a separate facts_used line for every digit, while
+        # still refusing any number from an excerpt no fact ever verified
+        # against (that's what CASE 3 / the tampered-PCN case below catch).
+        cited_nums |= exc_nums
 
     computed = set()
     comp = (ans.computation or "").strip()
@@ -95,8 +153,9 @@ def verify_grounded_answer(ans: GroundedAnswer, context: str) -> Tuple[bool, Lis
         for a, op, b, c in found:
             an, bn, cn = a.replace(",", ""), b.replace(",", ""), c.replace(",", "")
             for x in (an, bn):
-                if x not in ctx:
-                    issues.append(f"computation operand {x} not found in source")
+                if x not in cited_nums:
+                    issues.append(f"computation operand {x} not from a "
+                                  f"verified fact")
             try:
                 av, bv, cv = float(an), float(bn), float(cn)
                 o = "*" if op == "x" else op
@@ -110,7 +169,7 @@ def verify_grounded_answer(ans: GroundedAnswer, context: str) -> Tuple[bool, Lis
                 issues.append("computation operands are not numeric")
 
     for n in _nums(ans.answer):
-        if n not in ctx and n not in computed:
+        if n not in cited_nums and n not in computed:
             issues.append(f"answer asserts ungrounded number {n}")
 
     return (not issues, issues)
@@ -185,6 +244,27 @@ _THR_FIELD_RE = re.compile(
     r"\b(elevation|elev|coordinate\w*|position\w*|located)\b.{0,20}\b(threshold|thr)\b|"
     r"\b(elevation|coordinate\w*|position\w*|located)\b.{0,12}\b(rwy|runway)\s*\d", re.I)
 
+# Flight restrictions / authorisation requirements (night flying, altitude or
+# speed limits, curfews, bans). These are frequently ONE item in a numbered or
+# lettered list governed by an introductory clause ("unless authorised by...",
+# "no pilot may operate a VFR flight:"). Free synthesis previously produced
+# exactly the two-fold failure this guards against, confirmed on a real query
+# ("What's the night-flying ban at Lagos?"): (1) it quoted the bare list item
+# "(3) At night" stripped of its governing clause, inverting a condition that
+# REQUIRES ATC authorisation into an apparent outright ban; (2) it cited the
+# wrong section entirely (AD 2.20 Local Regulations) for text that was actually
+# AD 2.22.5.1 (Flight Procedures — VFR within TMA), because the reply's source
+# citation was reconstructed by word-overlap re-ranking rather than tied to the
+# excerpt the claim actually came from. The verifier fix (per-excerpt fact
+# checking, mandatory facts_used) closes the citation half generally; this
+# guard removes the meaning-reversal risk for this field class specifically by
+# never letting the LLM paraphrase/extract a single list item at all — the
+# pilot reads the whole governing sentence themselves.
+_RESTRICTION_RE = re.compile(
+    r"\b(night[\s-]*flying|fly(?:ing)?\s+at\s+night|night\s+operations?|curfew|"
+    r"banned|prohibited|not\s+allowed|restrict(?:ed|ion)s?|requires?\s+authoris|"
+    r"authorisation|authorization)\b", re.I)
+
 
 def synthesize_decision(question: str, results: List[AIPResult]) -> Tuple[str, object]:
     """Decide how to answer a text query. Returns (status, grounded_answer):
@@ -209,13 +289,14 @@ def synthesize_decision(question: str, results: List[AIPResult]) -> Tuple[str, o
         return ("comms", None)         # never synthesize one service's freq -> verbatim
     if _RWY_BEARING_RE.search(question or "") or _THR_FIELD_RE.search(question or ""):
         return ("rwy_char", None)      # asymmetric AD 2.12 field -> verbatim per end
+    if _RESTRICTION_RE.search(question or ""):
+        return ("fallback", None)      # never synthesize a restriction/authorisation rule -> verbatim
     ans = generate_grounded_answer(question, results)
     if ans is None:
         return ("fallback", None)
     if not ans.answerable:
         return ("not_in_aip", None)
-    context = "\n".join(r.content for r in results)
-    ok, issues = verify_grounded_answer(ans, context)
+    ok, issues = verify_grounded_answer(ans, results)
     if ok:
         return ("grounded", ans)
     log.warning("synthesis verification FAILED -> verbatim fallback: %s", issues)

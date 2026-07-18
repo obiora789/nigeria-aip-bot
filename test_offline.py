@@ -337,6 +337,138 @@ def test_rwy_char_guard_does_not_overfire():
         assert synthesize.synthesize_decision(q, [])[0] != "rwy_char", q
 
 
+# --- restriction/authorisation guard: a numbered/lettered list item (e.g.
+#     "(3) At night") quoted without its governing clause ("unless authorised
+#     by...") can reverse the rule's meaning, and the reply can cite the wrong
+#     AD section for it (confirmed on a real DNMM night-flying query, cited as
+#     AD 2.20 when the governing text was AD 2.22.5.1). Never synthesize these.
+
+def test_restriction_query_refuses_synthesis():
+    import synthesize
+    for q in ("what's the night-flying ban at Lagos?", "is Kano under a curfew?",
+              "are VFR flights restricted at night in Abuja?",
+              "does Lagos require authorization for night flights?"):
+        assert synthesize.synthesize_decision(q, [])[0] == "fallback", q
+
+
+def test_restriction_guard_does_not_overfire():
+    import synthesize
+    # ordinary factual questions must still synthesize
+    for q in ("elevation of abuja", "runway length DNAA", "lagos tower frequency"):
+        assert synthesize._RESTRICTION_RE.search(q) is None, q
+
+
+# --- verifier fix for the multi-entity misattribution class: every fact must
+#     verify against the ONE excerpt it declares (source_excerpt), not a
+#     flattened blob of every retrieved chunk — and an answer with zero
+#     facts_used (which let a fabricated-or-cross-cited prose claim through
+#     with no check at all) is now rejected outright.
+
+def test_verify_rejects_answer_with_no_facts_used():
+    import synthesize
+    from schemas import GroundedAnswer
+    ans = GroundedAnswer(answerable=True, answer="No pilot may operate a VFR "
+                         "flight: (3) At night.", facts_used=[], computation="")
+    ok, issues = synthesize.verify_grounded_answer(ans, [])
+    assert ok is False
+    assert any("facts_used" in i for i in issues), issues
+
+
+def test_verify_rejects_cross_excerpt_number_bleed():
+    import synthesize
+    from schemas import GroundedAnswer, GroundedFact
+    from models import AIPResult
+    excerpt_a = AIPResult(content="RWY 04 Threshold elevation: 331 m",
+                          similarity=0.7, aip_section="AD 2.12", reference_tag="DNAA")
+    excerpt_b = AIPResult(content="RWY 22 Threshold elevation: 342 m",
+                          similarity=0.65, aip_section="AD 2.12", reference_tag="DNAA")
+    results = [excerpt_a, excerpt_b]
+    # 331 is real, but it's in excerpt #1 — citing excerpt #2 for it must fail.
+    bad = GroundedAnswer(
+        answerable=True, answer="RWY 22 threshold elevation is 331 m.",
+        facts_used=[GroundedFact(value="331 m", what="RWY 22 threshold elevation",
+                                 source_excerpt=2)],
+        computation="")
+    ok, issues = synthesize.verify_grounded_answer(bad, results)
+    assert ok is False, issues
+    good = GroundedAnswer(
+        answerable=True, answer="RWY 22 threshold elevation is 342 m.",
+        facts_used=[GroundedFact(value="342 m", what="RWY 22 threshold elevation",
+                                 source_excerpt=2)],
+        computation="")
+    ok2, issues2 = synthesize.verify_grounded_answer(good, results)
+    assert ok2, issues2
+
+
+def test_verify_allows_legitimate_multi_excerpt_computation():
+    """B1-style runway comparison: two facts, each citing its OWN excerpt,
+    feeding one computation, must still pass — the fix must not be so strict
+    it breaks legitimate cross-fact arithmetic."""
+    import synthesize
+    from schemas import GroundedAnswer, GroundedFact
+    from models import AIPResult
+    rwy_a = AIPResult(content="RWY 18R/36L Dimensions (m): 3900 x 60",
+                      similarity=0.65, aip_section="AD 2.12", reference_tag="DNMM")
+    rwy_b = AIPResult(content="RWY 18L/36R Dimensions (m): 2745 x 45",
+                      similarity=0.63, aip_section="AD 2.12", reference_tag="DNMM")
+    results = [rwy_a, rwy_b]
+    ans = GroundedAnswer(
+        answerable=True,
+        answer="RWY 18R/36L is 1155 m longer (3900 - 2745 = 1155) and 15 m "
+               "wider (60 - 45 = 15).",
+        facts_used=[
+            GroundedFact(value="3900 x 60", what="RWY 18R/36L length x width",
+                        source_excerpt=1),
+            GroundedFact(value="2745 x 45", what="RWY 18L/36R length x width",
+                        source_excerpt=2),
+        ],
+        computation="3900-2745=1155; 60-45=15")
+    ok, issues = synthesize.verify_grounded_answer(ans, results)
+    assert ok, issues
+    # a third, never-cited number must still be rejected
+    tampered = GroundedAnswer(
+        answerable=True,
+        answer="RWY 18R/36L is 1155 m longer and its PCN is 80.",
+        facts_used=ans.facts_used, computation="3900-2745=1155")
+    ok2, issues2 = synthesize.verify_grounded_answer(tampered, results)
+    assert ok2 is False, issues2
+
+
+def test_source_block_cites_declared_excerpt_not_reranked_guess():
+    """responder._source_block must cite the excerpt the fact actually declared
+    (source_excerpt), not a word-overlap re-guess made after generation — the
+    mechanism that let a real DNMM answer get cited as AD 2.20 when its
+    governing text was actually AD 2.22.5.1."""
+    import responder
+    from schemas import GroundedAnswer, GroundedFact
+    from models import AIPResult, SearchOutcome
+    excerpt_2_20 = AIPResult(
+        content="DNMM AD 2.20 LOCAL AERODROME REGULATIONS 2.20.1 Airport "
+                "regulations None, except where specified in Part 2 - ENR.",
+        similarity=0.57, aip_section="AD 2.20", reference_tag="DNMM")
+    excerpt_2_22 = AIPResult(
+        content="2.22.5.1 VFR flights requiring ATC authorisation Unless "
+                "authorised by the appropriate ATS authority, no pilot may "
+                "operate a VFR flight: (1) Above FL 150; (2) At transonic and "
+                "supersonic speeds; or (3) At night.",
+        similarity=0.61, aip_section="AD 2.22", reference_tag="DNMM")
+    outcome = SearchOutcome(results=[excerpt_2_20, excerpt_2_22], max_similarity=0.61)
+    ans = GroundedAnswer(
+        answerable=True,
+        answer="Unless authorised by ATC, no VFR flight may operate above "
+               "FL 150, at transonic/supersonic speed, or at night.",
+        facts_used=[GroundedFact(
+            value="Unless authorised by the appropriate ATS authority, no "
+                  "pilot may operate a VFR flight: (1) Above FL 150; (2) At "
+                  "transonic and supersonic speeds; or (3) At night.",
+            what="VFR flight authorisation requirement (AD 2.22.5.1)",
+            source_excerpt=2)],
+        computation="")
+    block = responder._source_block(outcome, ans)
+    assert "AD 2.22" in block, block
+    assert "AD 2.20" not in block, block
+
+
 # --- AD 2.2 aerodrome-data path: fetch-by-section then synthesize (fixes the
 #     Kano reference-temperature false abstention).
 

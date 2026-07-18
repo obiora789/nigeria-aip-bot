@@ -13,9 +13,27 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class GroundedFact(BaseModel):
-    """A single AIP value the synthesized answer relies on, quoted verbatim."""
+    """A single AIP value the synthesized answer relies on, quoted verbatim.
+
+    source_excerpt is REQUIRED and is the load-bearing field for the fix to the
+    multi-entity misattribution class: it pins each fact to the ONE excerpt (by
+    its "--- Excerpt N ---" number) it was actually copied from, so the
+    deterministic verifier can check the value against THAT excerpt specifically
+    rather than a flattened blob of every retrieved chunk. Without this, a real
+    value from Excerpt 3 verifies successfully while the reply cites Excerpt 1's
+    section — the exact failure confirmed on a DNMM VFR-restrictions query, whose
+    answer was attributed to AD 2.20 when the governing text was actually AD
+    2.22.5.1. It also applies to prose facts with no numbers at all (a stated
+    rule/restriction), which the old numbers-only verifier could not check at
+    all — that gap let a fabricated-or-cross-cited prose claim through with zero
+    checks, since a claim with no digits triggered no verification step.
+    """
     value: str = Field(description="A value copied EXACTLY from the AIP excerpts, e.g. '3610 m'")
     what: str = Field(description="What this value is, e.g. 'RWY 04 TORA'")
+    source_excerpt: int = Field(
+        description="The excerpt number (the N in '--- Excerpt N [...] ---') "
+                    "this value was copied from. Every fact — numeric or a "
+                    "quoted rule/restriction — needs exactly one.")
 
 
 class GroundedAnswer(BaseModel):

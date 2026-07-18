@@ -121,9 +121,30 @@ def _focus(content: str, needles: list, width: int = 360) -> str:
 
 def _source_block(outcome: SearchOutcome, ans) -> str:
     """The ONE best-supporting AIP excerpt behind a synthesized answer, trimmed to
-    the relevant window. Verifiability without the dump: a computed answer needs a
-    single source line a pilot can check, not several full chunks (some of which
-    only matched incidentally)."""
+    the relevant window.
+
+    Cites deterministically from the fact's own declared source_excerpt — the
+    same index verify_grounded_answer() checked the fact's value against — so
+    the excerpt shown is provably the one the claim came from, not a separate
+    after-the-fact guess. The old version re-ranked ALL retrieved chunks by
+    number/word overlap with the answer AFTER generation, independent of what
+    the model actually read; that heuristic could and did pick the wrong
+    section (confirmed: a DNMM VFR-restrictions answer whose real source was
+    AD 2.22.5.1 was cited as AD 2.20 because an AD 2.20 chunk scored higher on
+    shared vocabulary). The word/number-overlap ranking below is now only a
+    defensive fallback for the (should-be-impossible, since verify_grounded_answer
+    requires it) case where no fact carries a valid source_excerpt.
+    """
+    results = outcome.results
+    for f in ans.facts_used:
+        idx = getattr(f, "source_excerpt", None)
+        if idx and 1 <= idx <= len(results):
+            best = results[idx - 1]
+            values = [v.replace(",", "") for ff in ans.facts_used
+                      for v in re.findall(r"\d[\d,]*(?:\.\d+)?", ff.value)]
+            pct = int(round(best.similarity * 100))
+            return f"[AIP {_cite(best, outcome)} · {pct}% match]\n{_focus(best.content, values)}"
+
     values = [v.replace(",", "") for f in ans.facts_used
               for v in re.findall(r"\d[\d,]*(?:\.\d+)?", f.value)]
 
