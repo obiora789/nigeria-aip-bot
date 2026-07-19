@@ -195,17 +195,113 @@ def get_section_text(icao: str, section_prefix: str = "AD 2.22") -> str:
 
 
 def get_declared_distances(icao: str) -> list:
-    """Structured per-runway declared distances (AD 2.13). Attribution was
-    resolved and validated at ingestion, so each row is exact — no synthesis, no
-    misattribution. Empty list means this aerodrome wasn't parsed cleanly (or is
-    unknown): the caller falls back to the refuse-to-source guard."""
+    """Structured per-runway declared distances (AD 2.13), read from
+    aip_structured — NOT the older aip_declared_distances table.
+
+    Migrated from the old table after a real, confirmed gap: aip_structured
+    (Layer 2's ad213_extractor.py output) had 74 rows for subsection 2.13
+    against the old table's 69 — meaning several aerodromes' worth of more
+    rigorously validated data (including a real thousands-joining bug fixed
+    on DNSO, and a real column-assignment bug fixed on DNKT) was sitting
+    unused while the live bot kept serving the older, less-validated table.
+
+    Field names are remapped (tora_m -> tora, etc.) to match the existing
+    contract declared_distance_reply() and its callers already use, so this
+    is a pure data-source swap — no other file needed to change shape.
+
+    A per-field None is now a genuine, expected case (the DNKT fix: a runway
+    can have 3 of 4 metrics published with the 4th genuinely absent from the
+    source) — unlike the old table, which only ever stored an aerodrome if
+    ALL FOUR metrics parsed cleanly. Callers must handle None per field, not
+    assume all four are always present.
+
+    Empty list means this aerodrome has no aip_structured row for 2.13 (rare
+    — validated at ingestion): the caller falls back to the refuse-to-source
+    guard, same as before."""
     try:
-        resp = (supabase.table("aip_declared_distances")
-                .select("runway, tora, toda, asda, lda")
-                .eq("icao", icao).execute())
-        return resp.data or []
+        resp = (supabase.table("aip_structured")
+                .select("record")
+                .eq("icao_code", icao)
+                .eq("subsection", "2.13")
+                .order("record_index").execute())
     except Exception:  # noqa: BLE001
         log.exception("get_declared_distances failed (icao=%s)", icao)
+        return []
+    out = []
+    for row in (resp.data or []):
+        r = row["record"]
+        out.append({
+            "runway": r.get("runway"),
+            "tora": r.get("tora_m"),
+            "toda": r.get("toda_m"),
+            "asda": r.get("asda_m"),
+            "lda": r.get("lda_m"),
+            "remarks": r.get("remarks"),
+        })
+    return out
+
+
+def get_runway_physical_data(icao: str) -> list:
+    """Structured per-runway physical characteristics (AD 2.12) — designation,
+    length, width, and per-runway-end free text (surface/strength/coordinates/
+    elevation/slope/remarks, kept STRICTLY SEPARATE per end, never merged).
+
+    This is the exact subsection the project's original misattribution incident
+    happened on: a query for "Abuja runway" once returned RWY 04's elevation
+    spliced together with RWY 22's slope data, both pulled from AD 2.12's dense
+    table. Attribution is now resolved ONCE at ingestion (Layer 2's per-entity
+    tracking in ad212_extractor.py — text can only ever attach to the runway end
+    whose own row most recently preceded it), validated 36/36, so this
+    query-time lookup is a plain key fetch, not a similarity search that could
+    rank the wrong table.
+
+    Empty list means this aerodrome has no aip_structured row for 2.12 (rare) —
+    the caller falls back to the existing verbatim/refuse-to-source path, the
+    same way get_declared_distances' callers do."""
+    try:
+        resp = (supabase.table("aip_structured")
+                .select("record")
+                .eq("icao_code", icao)
+                .eq("subsection", "2.12")
+                .order("record_index").execute())
+        return [row["record"] for row in (resp.data or [])]
+    except Exception:  # noqa: BLE001
+        log.exception("get_runway_physical_data failed (icao=%s)", icao)
+        return []
+
+
+def get_lighting_data(icao: str) -> list:
+    """Structured per-runway-end approach/runway lighting (AD 2.14) —
+    designation and per-end free text (APCH LGT, THR LGT, PAPI angle and
+    displacement, TDZ/centreline/edge/end/SWY lighting, remarks).
+
+    This subsection is ENTIRELY per-runway-end — unlike AD 2.12, there is no
+    safe symmetric subset (no shared length/width equivalent): every field
+    here (PAPI angle, lighting type, displacement) can genuinely differ
+    between the two ends of one physical runway, and a vague query has the
+    exact same misattribution exposure the original AD 2.12 incident did.
+    Attribution is resolved ONCE at ingestion via the same "currently active
+    end" tracking ad212_extractor.py uses (ad214_extractor.py reuses it
+    directly), so this query-time lookup is a plain key fetch, never a
+    similarity search that could rank the wrong runway end.
+
+    A record with designation=None and end_detail={'general_notes': ...} is
+    the confirmed genuine case where no runway-end lighting rows exist at
+    all (lighting simply isn't published for this aerodrome) — the caller
+    displays that text as-is rather than treating it as an error.
+
+    Empty list means this aerodrome has no aip_structured row for 2.14 at
+    all (should not happen — validated at ingestion): the caller falls back
+    to the existing verbatim path."""
+    try:
+        resp = (supabase.table("aip_structured")
+                .select("record")
+                .eq("icao_code", icao)
+                .eq("subsection", "2.14")
+                .order("record_index").execute())
+        return [row["record"] for row in (resp.data or [])]
+    except Exception:  # noqa: BLE001
+        log.exception("get_lighting_data failed (icao=%s)", icao)
         return []
 
 

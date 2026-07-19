@@ -23,9 +23,11 @@ import config
 import resolver
 from agent import extract_query_parameters, get_embedding
 from database import (get_aerodrome_data, get_charts, get_charts_smart,
-                      get_declared_distances, get_section_text, search_aip)
+                      get_declared_distances, get_lighting_data,
+                      get_runway_physical_data, get_section_text, search_aip)
 from models import AIPResult, SearchOutcome
 import synthesize
+import subsection_router
 import facts
 import memory
 import clarify
@@ -34,8 +36,9 @@ import procedures
 import toc
 from responder import (ambiguous, answer, chart_intro, chart_not_found,
                        comms_reply, declared_distance_reply, error, grounded_reply,
-                       low_confidence, navaid_reply, not_found, not_in_aip,
-                       rwy_char_reply, unresolved)
+                       info_block_reply, lighting_data_reply, low_confidence,
+                       navaid_reply, not_found, not_in_aip, runway_data_reply,
+                       rwy_char_reply, subsection_reply, unresolved)
 from telegram import (answer_callback, clarify_runway_kb, clarify_type_kb,
                       feedback_kb, send_charts, send_message, verify_secret)
 
@@ -540,8 +543,20 @@ async def process(chat_id: int, text: str) -> None:
         if ex.intent == "chart_retrieval":
             ql = text.lower()
             chart_icao = res.icao
-            if chart_icao is None and (res.reference == "DNKK" or "fir" in ql
-                                       or "en-route" in ql or "enroute" in ql):
+            # AD 2.22 content that is NOT an instrument approach (take-off
+            # minima, PBN coding tables, VFR rules within the TMA) has no
+            # corresponding AD 2.24 plate — showing an arbitrary approach chart
+            # beside such an answer would imply a connection that doesn't
+            # exist. Clearing chart_icao makes the existing `if chart_icao:`
+            # check below skip the chart flow entirely, so the query falls
+            # through to the text path, which routes to AD 2.22
+            # deterministically and answers from that section alone.
+            if (subsection_router.detect_subsection(text) == "AD 2.22"
+                    and not subsection_router.is_approach_query(text)):
+                log.info("AD 2.22 non-approach query — text only, no chart")
+                chart_icao = None
+            elif chart_icao is None and (res.reference == "DNKK" or "fir" in ql
+                                         or "en-route" in ql or "enroute" in ql):
                 chart_icao = "DNKK"
             charts = []
             if chart_icao:
@@ -714,6 +729,100 @@ async def process(chat_id: int, text: str) -> None:
                 else:
                     body = answer(outcome, res, ex.runway, follow_query)
                 await send_info(f"{note}\n\n{body}")
+                return
+            if status == "rwy_data":
+                # General runway-overview query ("Abuja runway", "runways at
+                # Kano") with no specific field asked. AD 2.12 is now fully
+                # structured (Layer 2 / aip_structured) and validated at
+                # ingestion, so this is an exact key lookup, not a similarity
+                # search — closing the exact gap the project's original
+                # misattribution incident was about: a vague runway query
+                # previously fell through to low-confidence vector search and
+                # could surface an unrelated table entirely.
+                rec["path"] = "rwy_data"
+                recs = (await asyncio.to_thread(get_runway_physical_data, res.icao)
+                        if res.icao else [])
+                if recs:
+                    await send_info(runway_data_reply(res, recs, ex.runway,
+                                                       follow_query))
+                else:
+                    # No aip_structured row for this aerodrome (rare — validated
+                    # 36/36 in production) — fall back to the existing verbatim
+                    # path rather than claim there's no runway data at all.
+                    note = ("I don't have structured runway data for this "
+                            "aerodrome, so I won't single out a value — read the "
+                            "exact figures from the AD 2.12 source below:")
+                    await send_info(f"{note}\n\n"
+                                    f"{answer(outcome, res, ex.runway, follow_query)}")
+                return
+            if status == "lighting_data":
+                # AD 2.14 approach/runway lighting — the SAME misattribution
+                # shape as AD 2.12, but with no safe symmetric subset: every
+                # field (PAPI angle, lighting type) can genuinely differ
+                # between a runway's two ends, so ANY lighting query routes
+                # here, not just the asymmetric ones. Structured and
+                # validated at ingestion via the same per-end tracking as
+                # AD 2.12, so this is an exact key lookup.
+                rec["path"] = "lighting_data"
+                recs = (await asyncio.to_thread(get_lighting_data, res.icao)
+                        if res.icao else [])
+                if recs:
+                    await send_info(lighting_data_reply(res, recs, ex.runway,
+                                                         follow_query))
+                else:
+                    note = ("I don't have structured lighting data for this "
+                            "aerodrome, so I won't single out a value — read the "
+                            "exact figures from the AD 2.14 source below:")
+                    await send_info(f"{note}\n\n"
+                                    f"{answer(outcome, res, ex.runway, follow_query)}")
+                return
+            if status == "subsection":
+                # Deterministic AD 2.x routing. `ga` is the exact subsection
+                # id ("AD 2.17"). Because vectorise_aip_v3.py stores one chunk
+                # per (aerodrome, subsection), get_section_text fetches THAT
+                # subsection and nothing else — no similarity ranking, so the
+                # "top chunk was actually a different subsection" failure mode
+                # cannot occur. Synthesis then runs over that single section,
+                # which makes cross-subsection misattribution unrepresentable
+                # rather than merely detectable.
+                section = ga
+                rec["path"] = f"subsection:{section}"
+                sect_text = (await asyncio.to_thread(get_section_text, res.icao, section)
+                             if res.icao else "")
+                if sect_text and section == "AD 2.22":
+                    # Deterministic, zero-LLM slice for AD 2.22's known
+                    # non-approach headings (General, Runway in use, Radar
+                    # Procedures, VFR minima, VFR flights) — tried FIRST,
+                    # since nothing is generated: the answer is either the
+                    # source's own verbatim words or nothing at all. This is
+                    # the safest possible path for these specific headings,
+                    # strictly stronger than an LLM-synthesis round-trip.
+                    # Falls through to synthesis below only when no known
+                    # heading matches this query.
+                    info_body = clarify.info_block_answer(sect_text, follow_query)
+                    if info_body:
+                        rec["path"] = "subsection:AD 2.22:info_block"
+                        await send_info(info_block_reply(res, section, info_body))
+                        return
+                if sect_text:
+                    ok, sans, single = await asyncio.to_thread(
+                        synthesize.synthesize_over_section,
+                        follow_query, sect_text, section, res.icao)
+                    if ok:
+                        sect_outcome = SearchOutcome(
+                            results=[single], max_similarity=1.0,
+                            used_part="AD", used_reference=res.icao, abstained=False)
+                        await send_info(grounded_reply(sans, sect_outcome, res))
+                    else:
+                        # Verification declined — still the RIGHT subsection,
+                        # shown verbatim. A safe fallback, not a degraded one.
+                        await send_info(subsection_reply(res, section, sect_text,
+                                                          follow_query))
+                else:
+                    # No stored chunk for this subsection (should not happen for
+                    # the 36 standard aerodromes) — fall back to the existing
+                    # vector-search answer rather than claim nothing exists.
+                    await send_info(answer(outcome, res, ex.runway, follow_query))
                 return
             rec["path"] = status if status in ("grounded", "not_in_aip") else "answer"
             if status == "grounded":

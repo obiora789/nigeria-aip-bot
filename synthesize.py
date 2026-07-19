@@ -18,6 +18,7 @@ from typing import List, Tuple
 from openai import OpenAI
 
 import config
+import subsection_router
 from retry import retry_call
 from models import AIPResult
 from schemas import GroundedAnswer
@@ -244,6 +245,53 @@ _THR_FIELD_RE = re.compile(
     r"\b(elevation|elev|coordinate\w*|position\w*|located)\b.{0,20}\b(threshold|thr)\b|"
     r"\b(elevation|coordinate\w*|position\w*|located)\b.{0,12}\b(rwy|runway)\s*\d", re.I)
 
+# General runway-data queries ("Abuja runway", "runways at Kano", "runway data
+# for DNAA") have NO specific field asked at all — no bearing, no threshold
+# field, and none of the SYMMETRIC fields (length/width/PCN/strength) that are
+# deliberately left to general synthesis (test_rwy_char_guard_does_not_overfire
+# already locks that in — this must not change that behaviour).
+#
+# Confirmed the actual gap directly: "Abuja runway" matched neither
+# _RWY_BEARING_RE nor _THR_FIELD_RE, so it fell all the way through to
+# generate_grounded_answer() over plain vector search — with nothing specific
+# for the LLM to ground an answer on, the top-scoring chunk was a
+# low-similarity (55%) match against AD 2.22's approach-minima table, shown
+# verbatim as a low-confidence fallback. The runway designation the pilot
+# actually wanted was never surfaced, despite AD 2.12 now being fully
+# populated in aip_structured.
+#
+# _RWY_FIELD_KEYWORDS_RE excludes anything already safely routed elsewhere
+# (symmetric fields still flow to general synthesis, asymmetric fields still
+# hit the check above since it's evaluated first), so this only catches the
+# genuinely-uncovered "just tell me about the runway(s)" case.
+_RWY_FIELD_KEYWORDS_RE = re.compile(
+    r"\b(length|width|dimensions?|pcn|pcr|strength|surface)\b", re.I)
+_RWY_GENERAL_RE = re.compile(r"\brunways?\b", re.I)
+
+# AD 2.14 (approach and runway lighting) — the same misattribution shape as
+# AD 2.12, but with NO safe symmetric subset to exclude. ad214_extractor.py's
+# own docstring confirms every field in this table (APCH LGT type, THR LGT,
+# PAPI angle and displacement, TDZ/centreline/edge/end/SWY lighting) is
+# per-runway-end and can genuinely differ between a runway's two ends — there
+# is no equivalent of AD 2.12's shared length/width that's safe to leave to
+# general synthesis. A vague "Lagos runway lighting" query has the identical
+# exposure "Abuja runway" had before that fix: nothing here routes to a
+# structured lookup, so it would fall through to plain vector search and could
+# surface an unrelated chunk entirely.
+#
+# Deliberately requires "runway"/"approach"/"threshold"/"touchdown"/
+# "centreline"/"stopway" paired with "light(ing)", rather than bare
+# "lighting" alone — AD 2.15 (ABN/IBN beacon, WDI, apron floodlights) and AD
+# 2.9 (taxiway/markings lighting) also use the word "lighting" in a
+# completely different, unrelated context; a bare match would misroute those
+# queries into this guard. PAPI/VASIS are unambiguous on their own — no
+# other subsection uses those terms.
+_LIGHTING_RE = re.compile(
+    r"\b(runway|rwy|approach|threshold|thr|touchdown|tdz|centreline|centerline|"
+    r"stopway|swy)\s*(?:zone\s*)?light(?:ing|s)?\b|"
+    r"\blight(?:ing|s)?\b.{0,15}\b(runway|rwy|approach|threshold|touchdown)\b|"
+    r"\b(papi|vasis)\b", re.I)
+
 # Flight restrictions / authorisation requirements (night flying, altitude or
 # speed limits, curfews, bans). These are frequently ONE item in a numbered or
 # lettered list governed by an introductory clause ("unless authorised by...",
@@ -264,6 +312,50 @@ _RESTRICTION_RE = re.compile(
     r"\b(night[\s-]*flying|fly(?:ing)?\s+at\s+night|night\s+operations?|curfew|"
     r"banned|prohibited|not\s+allowed|restrict(?:ed|ion)s?|requires?\s+authoris|"
     r"authorisation|authorization)\b", re.I)
+
+
+def synthesize_over_section(question: str, section_text: str,
+                            section_name: str, icao: str = "") -> Tuple[bool, object, object]:
+    """Run the EXISTING verified synthesis over exactly ONE subsection's text,
+    fetched deterministically by name (not by similarity ranking).
+
+    Returns (verified_ok, grounded_answer, single_result).
+
+    This is the strongest form of the anti-misattribution guarantee in this
+    codebase, because it removes retrieval error entirely rather than trying
+    to detect it after the fact:
+
+      * RETRIEVAL is exact. database.get_section_text(icao, "AD 2.17") returns
+        that subsection and nothing else — possible only because
+        vectorise_aip_v3.py stores one chunk per (aerodrome, subsection). No
+        similarity score is involved, so there is no "the top chunk was
+        actually AD 2.22's minima table" failure mode (the real, confirmed bug
+        that motivated all of this).
+
+      * VERIFICATION is unchanged, and now strictly stronger. Because the
+        results list has exactly ONE element, every fact's source_excerpt can
+        only be 1, and verify_grounded_answer() checks it against that single
+        correct subsection. Cross-subsection bleed is not merely detected —
+        it is unrepresentable.
+
+    A False return is a genuine safety outcome, not an error: the caller shows
+    the subsection's own verbatim text instead, which is still guaranteed to be
+    the right subsection."""
+    single = AIPResult(
+        content=section_text,
+        similarity=1.0,          # exact section match, not a similarity score
+        chart_url=None,
+        aip_section=section_name,
+        reference_tag=icao or None,
+    )
+    ans = generate_grounded_answer(question, [single])
+    if ans is None or not ans.answerable:
+        return (False, ans, single)
+    ok, issues = verify_grounded_answer(ans, [single])
+    if not ok:
+        log.warning("section synthesis verification FAILED (%s) -> verbatim: %s",
+                    section_name, issues)
+    return (ok, ans, single)
 
 
 def synthesize_decision(question: str, results: List[AIPResult]) -> Tuple[str, object]:
@@ -289,8 +381,23 @@ def synthesize_decision(question: str, results: List[AIPResult]) -> Tuple[str, o
         return ("comms", None)         # never synthesize one service's freq -> verbatim
     if _RWY_BEARING_RE.search(question or "") or _THR_FIELD_RE.search(question or ""):
         return ("rwy_char", None)      # asymmetric AD 2.12 field -> verbatim per end
+    if _LIGHTING_RE.search(question or ""):
+        return ("lighting_data", None)  # AD 2.14 per-end field -> structured lookup
+    if (_RWY_GENERAL_RE.search(question or "")
+            and not _RWY_FIELD_KEYWORDS_RE.search(question or "")):
+        return ("rwy_data", None)      # general runway overview -> structured lookup
     if _RESTRICTION_RE.search(question or ""):
         return ("fallback", None)      # never synthesize a restriction/authorisation rule -> verbatim
+    # Deterministic subsection routing — runs LAST, after every dedicated guard
+    # above has declined. Those guards are more specific and already proven, so
+    # they keep priority; this only claims queries that would otherwise fall
+    # through to undirected vector search (the population that produced the
+    # confirmed "Abuja runway -> AD 2.22 minima table at 55%" failure).
+    # Returning the subsection id as the second element; main.py fetches that
+    # exact section and synthesizes over it alone.
+    sub = subsection_router.detect_subsection(question or "")
+    if sub:
+        return ("subsection", sub)
     ans = generate_grounded_answer(question, results)
     if ans is None:
         return ("fallback", None)

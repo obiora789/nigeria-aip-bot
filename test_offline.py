@@ -301,6 +301,47 @@ def test_declared_reply_per_runway_no_misattribution():
     assert "TORA: 2745 m" in a and "TORA: 3900 m" in b, (a, b)
 
 
+def test_declared_reply_handles_genuine_null_field():
+    """A per-field None is now a real, expected case (the DNKT fix: TODA/ASDA/
+    LDA are published but TORA genuinely isn't) — migrated from
+    aip_declared_distances (which never stored a partial record at all) to
+    aip_structured (which does, correctly, via null-over-guess). Must render
+    as an honest 'not published', never a bare 'None' string."""
+    import responder
+    from models import Resolution
+    res = Resolution(); res.label = "Katsina"; res.icao = "DNKT"
+    recs = [{"runway": "05", "tora": None, "toda": 3500, "asda": 3500, "lda": 3500}]
+    out = responder.declared_distance_reply(res, recs)
+    assert "TORA not published" in out
+    assert "TODA 3500 m" in out
+    assert "None" not in out
+
+
+def test_get_declared_distances_reads_aip_structured():
+    """Confirms the migration off the stale aip_declared_distances table:
+    field names must be remapped from aip_structured's tora_m/toda_m/asda_m/
+    lda_m (the ad213_extractor.py schema) to the tora/toda/asda/lda contract
+    every caller (declared_distance_reply, main.py's dispatch) already
+    expects — a pure data-source swap, not a shape change. Confirmed a real
+    gap this fixes: the old table had 69 rows for AD 2.13 against
+    aip_structured's 74, meaning several aerodromes' more rigorously
+    validated data (including real fixes for DNSO and DNKT) was unused."""
+    import database
+    from unittest.mock import patch, MagicMock
+
+    fake_rows = [{"record": {"runway": "05", "tora_m": None, "toda_m": 3500,
+                             "asda_m": 3500, "lda_m": 3500, "remarks": None}}]
+    mock_resp = MagicMock()
+    mock_resp.data = fake_rows
+    with patch.object(database.supabase, "table") as mock_table:
+        chain = mock_table.return_value
+        chain.select.return_value.eq.return_value.eq.return_value.order.return_value.execute.return_value = mock_resp
+        out = database.get_declared_distances("DNKT")
+    mock_table.assert_called_with("aip_structured")
+    assert out == [{"runway": "05", "tora": None, "toda": 3500,
+                    "asda": 3500, "lda": 3500, "remarks": None}]
+
+
 # --- comms guard (AD 2.18): never synthesize one ATS service's frequency
 
 def test_comms_query_refuses_synthesis():
@@ -335,6 +376,360 @@ def test_rwy_char_guard_does_not_overfire():
     for q in ("elevation of abuja", "aerodrome elevation lagos",
               "runway length DNAA", "width of runway 04", "PCN of runway 22"):
         assert synthesize.synthesize_decision(q, [])[0] != "rwy_char", q
+
+
+# --- rwy_data guard: a general runway query with no specific field asked
+#     ("Abuja runway") must route to the new structured lookup, not fall
+#     through to low-confidence vector search. Confirmed the actual live bug
+#     this fixes: "Abuja runway" matched neither the existing asymmetric-field
+#     guard (_RWY_BEARING_RE/_THR_FIELD_RE) nor any structured-lookup path, so
+#     it fell all the way through to generate_grounded_answer() and returned a
+#     55%-similarity match against AD 2.22's approach minima table instead of
+#     the runway designation the pilot actually asked for.
+
+def test_general_runway_query_routes_to_structured_lookup():
+    import synthesize
+    for q in ("Abuja runway", "runways at Kano", "runway data for DNAA",
+              "what runways does Lagos have", "how many runways in kano"):
+        assert synthesize.synthesize_decision(q, [])[0] == "rwy_data", q
+
+
+def test_rwy_data_guard_does_not_overfire_on_symmetric_fields():
+    """Symmetric AD 2.12 fields (length/width/PCN/strength) are deliberately
+    left to general synthesis — this behaviour already existed and must not
+    regress just because a new, broader 'runway' check was added alongside it."""
+    import synthesize
+    for q in ("runway length DNAA", "width of runway 04", "PCN of runway 22",
+              "runway dimensions lagos", "surface strength of RWY 18L"):
+        assert synthesize.synthesize_decision(q, [])[0] != "rwy_data", q
+
+
+def test_rwy_data_guard_does_not_overfire_on_asymmetric_fields():
+    """Asymmetric fields must still route to the existing rwy_char guard, not
+    the new general one — order in synthesize_decision() matters here."""
+    import synthesize
+    for q in ("true bearing of runway 04", "threshold elevation of RWY 22",
+              "threshold coordinates for RWY 18L"):
+        assert synthesize.synthesize_decision(q, [])[0] == "rwy_char", q
+
+
+def test_runway_data_reply_keeps_ends_separate():
+    """The load-bearing safety property: each runway end's text must appear
+    under its OWN label, never merged into one string — this is the exact
+    subsection the original misattribution incident happened on."""
+    from responder import runway_data_reply
+    from models import Resolution
+    res = Resolution(icao="DNAA", label="Abuja/Nnamdi Azikiwe")
+    records = [{
+        "icao": "DNAA", "designation": "04/22",
+        "length_m": 3610, "width_m": 45,
+        "end_detail": {
+            "04": "THR elevation 331 m, slope 0.5%",
+            "22": "THR elevation 342 m, slope -0.3%",
+        },
+    }]
+    out = runway_data_reply(res, records)
+    assert "RWY 04/22" in out
+    assert "3610 x 45 m" in out
+    assert "[04] THR elevation 331 m" in out
+    assert "[22] THR elevation 342 m" in out
+    # the two ends' data must never appear concatenated into one line
+    assert "331 m, slope -0.3%" not in out
+    assert "AD 2.12" in out
+    assert config.AIRAC_CYCLE in out
+    assert "Reference aid only" in out
+
+
+def test_runway_data_reply_filters_to_requested_runway():
+    from responder import runway_data_reply
+    from models import Resolution
+    res = Resolution(icao="DNMM", label="Lagos/Murtala Muhammed")
+    records = [
+        {"icao": "DNMM", "designation": "18L/36R", "length_m": 3900, "width_m": 60,
+         "end_detail": {"18L": "note A", "36R": "note B"}},
+        {"icao": "DNMM", "designation": "18R/36L", "length_m": 2745, "width_m": 45,
+         "end_detail": {"18R": "note C", "36L": "note D"}},
+    ]
+    out = runway_data_reply(res, records, requested_runway="18R")
+    assert "18R/36L" in out
+    assert "2745 x 45" in out
+    assert "18L/36R" not in out
+    assert "3900" not in out
+
+
+# --- AD 2.14 lighting guard: the SAME misattribution shape as AD 2.12, but
+#     with NO safe symmetric subset — every field (PAPI angle, lighting type)
+#     can genuinely differ between a runway's two ends, so ANY lighting
+#     query must route to structured lookup, not just asymmetric ones.
+#     Confirmed a real ordering bug while building this: "runway lighting"
+#     contains the word "runway", which would be caught by the earlier,
+#     more general rwy_data check first (since "lighting" isn't in its
+#     excluded-keywords list) and never reach the lighting guard at all —
+#     fixed by checking the more specific lighting guard first.
+
+def test_lighting_query_routes_to_structured_lookup():
+    import synthesize
+    for q in ("runway lighting DNAA", "runway lights lagos",
+              "lighting at Lagos runway", "PAPI angle for RWY 04",
+              "approach lighting kano", "touchdown zone lighting",
+              "VASIS at DNMM", "centreline lighting abuja"):
+        assert synthesize.synthesize_decision(q, [])[0] == "lighting_data", q
+
+
+def test_lighting_guard_does_not_overfire_on_other_subsections():
+    """AD 2.15 (beacon/apron/WDI) and AD 2.9 (taxiway markings) also use the
+    word 'lighting' in a completely different context — a bare match would
+    misroute those queries into this guard."""
+    import synthesize
+    for q in ("ABN/IBN lighting characteristics", "apron floodlights DNAA",
+              "WDI lighting", "secondary power supply lighting",
+              "taxiway markings and lighting", "beacon lighting hours"):
+        assert synthesize.synthesize_decision(q, [])[0] != "lighting_data", q
+
+
+def test_lighting_guard_wins_over_general_runway_check():
+    """The actual ordering bug found while building this: a lighting query
+    containing the word 'runway' must NOT be caught by the earlier, more
+    general rwy_data check — the more specific guard must run first."""
+    import synthesize
+    assert synthesize.synthesize_decision("runway lighting DNAA", [])[0] == "lighting_data"
+    # confirm the general runway check still works for genuinely non-lighting queries
+    assert synthesize.synthesize_decision("Abuja runway", [])[0] == "rwy_data"
+
+
+def test_lighting_data_reply_keeps_ends_separate():
+    """The same load-bearing safety property as runway_data_reply: each
+    runway end's text must appear under its OWN label, never merged."""
+    from responder import lighting_data_reply
+    from models import Resolution
+    res = Resolution(icao="DNKN", label="Kano/Mallam Aminu Kano")
+    records = [{
+        "icao": "DNKN", "designation": "06/24",
+        "end_detail": {
+            "06": "PALS PAPI 400m from THR, CAT I angle 3\u00b0",
+            "24": "PALS PAPI 400m from THR, CAT I angle 3\u00b025'",
+        },
+    }]
+    out = lighting_data_reply(res, records)
+    assert "RWY 06/24" in out
+    assert "[06] PALS PAPI 400m from THR, CAT I angle 3\u00b0" in out
+    assert "[24] PALS PAPI 400m from THR, CAT I angle 3\u00b025'" in out
+    assert "AD 2.14" in out
+    assert config.AIRAC_CYCLE in out
+
+
+def test_lighting_data_reply_handles_general_notes_case():
+    """Confirmed genuine case (ad214_extractor.py): some aerodromes have no
+    runway-end lighting rows at all — 'no lighting published' is a real fact,
+    not an extraction failure, and must display as such rather than error."""
+    from responder import lighting_data_reply
+    from models import Resolution
+    res = Resolution(icao="DNBY", label="Amassoma/Bayelsa")
+    records = [{
+        "icao": "DNBY", "designation": None,
+        "end_detail": {"general_notes": "NIL"},
+    }]
+    out = lighting_data_reply(res, records)
+    assert "NIL" in out
+    assert "AD 2.14" in out
+
+
+# --- deterministic AD 2.x subsection routing. vectorise_aip_v3.py stores one
+#     chunk per (aerodrome, subsection), so get_section_text() is an EXACT
+#     fetch — the router identifies which subsection a question is about, and
+#     retrieval stops being a similarity guess. Runs LAST, after every
+#     dedicated guard, so it only claims queries that would otherwise fall
+#     through to undirected vector search (the population that produced the
+#     confirmed "Abuja runway -> AD 2.22 minima table at 55%" failure).
+
+def test_subsection_router_detects_correct_subsection():
+    import subsection_router as sr
+    cases = [
+        ("what is the RFF category at Kano", "AD 2.6"),
+        ("fuel types available at Lagos", "AD 2.4"),
+        ("hotels near Abuja airport", "AD 2.5"),
+        ("transition altitude for DNMM", "AD 2.17"),
+        ("CTR limits for Kano", "AD 2.17"),
+        ("bird hazards at Sokoto", "AD 2.23"),
+        ("obstacles in the approach at DNAA", "AD 2.10"),
+        ("MET office hours at Lagos", "AD 2.11"),
+        ("ABN beacon characteristics DNAA", "AD 2.15"),
+        ("stop bars at Lagos", "AD 2.9"),
+        ("altimeter checkpoint location", "AD 2.8"),
+        ("customs and immigration hours", "AD 2.3"),
+        ("magnetic variation at Kano", "AD 2.2"),
+        ("noise abatement at Lagos", "AD 2.21"),
+        ("TLOF elevation DNCA", "AD 2.16"),
+        ("taxiing limitations at Abuja", "AD 2.20"),
+    ]
+    for q, expected in cases:
+        assert sr.detect_subsection(q) == expected, (q, sr.detect_subsection(q))
+
+
+def test_subsection_router_returns_none_when_not_confident():
+    """The router must only claim a query when a DISTINCTIVE term matched.
+    Returning a subsection for everything would kill general synthesis for
+    questions that legitimately span sections — None is the safe default that
+    preserves existing behaviour."""
+    import subsection_router as sr
+    for q in ("what is the elevation of Abuja", "tell me about Lagos airport",
+              "where is Kano", "DNAA", "hello"):
+        assert sr.detect_subsection(q) is None, (q, sr.detect_subsection(q))
+
+
+def test_transition_altitude_routes_to_ats_airspace_not_flight_procedures():
+    """Real bug caught while building this: 'transition altitude' was in the
+    AD 2.22 pattern, which is checked first, so it hijacked a query that
+    belongs to AD 2.17 (where AD217Extractor defines transition_altitude as a
+    canonical field)."""
+    import subsection_router as sr
+    assert sr.detect_subsection("transition altitude for DNMM") == "AD 2.17"
+
+
+def test_ad222_approach_vs_text_only_split():
+    """AD 2.22 approach queries have a corresponding AD 2.24 plate to show
+    alongside the procedure text. Other AD 2.22 content (take-off minima, PBN
+    coding tables) has NO corresponding plate — showing an arbitrary approach
+    chart beside such an answer would imply a connection that doesn't exist."""
+    import subsection_router as sr
+    for q in ("holding and letdown for sokoto approach",
+              "ILS approach plate for Lagos", "missed approach for RWY 26"):
+        assert sr.detect_subsection(q) == "AD 2.22", q
+        assert sr.is_approach_query(q) is True, q
+    for q in ("take-off minima for DNAA", "PBN requirements at Kano",
+              "circling minima DNMM"):
+        assert sr.detect_subsection(q) == "AD 2.22", q
+        assert sr.is_approach_query(q) is False, q
+
+
+def test_dedicated_guards_still_win_over_router():
+    """Every dedicated guard is more specific and already proven — the router
+    runs last and must never steal a query one of them would have claimed."""
+    import synthesize
+    for q, expected in [
+        ("TORA for rwy 22", "declared_distance"),
+        ("Lagos tower frequency", "comms"),
+        ("runway lighting DNAA", "lighting_data"),
+        ("Abuja runway", "rwy_data"),
+        ("true bearing of runway 04", "rwy_char"),
+    ]:
+        assert synthesize.synthesize_decision(q, [])[0] == expected, q
+
+
+def test_router_status_returns_subsection_id():
+    """The router's status carries the exact subsection id as its second
+    element, which main.py feeds straight to get_section_text()."""
+    import synthesize
+    status, payload = synthesize.synthesize_decision("RFF category at Kano", [])
+    assert status == "subsection"
+    assert payload == "AD 2.6"
+
+
+# --- clarify.py merge (from ad222_respond.py): the deterministic, zero-LLM
+#     info-block slicer for AD 2.22's known non-approach headings. This is
+#     the ONLY piece of ad222_respond.py that was genuinely valuable and not
+#     duplicated elsewhere — everything else in that file operated on raw
+#     PDF words at query time (never possible in the live bot) or duplicated
+#     what main.py's chart-decision path already does correctly.
+
+_SAMPLE_AD222 = """AD 2.22 FLIGHT PROCEDURES — DNSO (source: AIP pages 966-970)
+
+2.22.1 General
+All aircraft shall comply with standard noise abatement procedures.
+Pilots are advised to maintain radio contact at all times.
+
+2.22.2 Runway in use
+RWY 08 is normally used for landing and take-off in calm wind conditions.
+RWY 26 may be used when wind conditions dictate.
+
+2.22.3 Radar Procedures
+Radar vectoring is available for arriving and departing aircraft.
+
+2.22.4 Procedures for VFR flights within CTR
+VFR flights shall remain below 3500 ft within the CTR unless cleared otherwise.
+
+2.22.5 VFR weather minima
+Minimum visibility for VFR flight is 5 km.
+
+2.22.6 Instrument approach procedures for RWY 26 based on VOR/DME
+Holding procedure: as depicted.
+Letdown procedure: descend to MDA.
+Missed approach: climb straight ahead to 3500 ft.
+"""
+
+
+def test_info_block_answer_does_not_leak_into_approach_section():
+    """Real bug found and fixed while merging: the original hardcoded
+    end-boundary (inherited from ad222_respond.py) assumed every aerodrome
+    numbers the section after VFR minima as '2.22.7' — on different
+    numbering, the slice bled straight through the entire Instrument
+    Approach Procedures section (Holding/Letdown/Missed Approach text) into
+    what should have been a short VFR-minima answer."""
+    import clarify
+    out = clarify.info_block_answer(_SAMPLE_AD222, "vfr minima at sokoto")
+    assert out is not None
+    assert "Minimum visibility" in out
+    assert "Holding procedure" not in out
+    assert "Missed approach" not in out
+
+
+def test_info_block_answer_covers_all_five_headings():
+    import clarify
+    cases = [
+        ("general procedure for sokoto", "radio contact"),
+        ("what runway is in use at sokoto", "RWY 08"),
+        ("radar procedures for sokoto", "Radar vectoring"),
+        ("vfr minima at sokoto", "Minimum visibility"),
+    ]
+    for q, expect_text in cases:
+        out = clarify.info_block_answer(_SAMPLE_AD222, q)
+        assert out is not None, q
+        assert expect_text in out, (q, out)
+
+
+def test_info_block_answer_returns_none_for_unrecognized_or_approach_queries():
+    """None means 'no known heading matched' — the caller falls back to LLM
+    synthesis over the whole section rather than guessing which heading was
+    meant. An approach-procedure query must also return None here (it's
+    handled by procedures.py, not this deterministic slicer)."""
+    import clarify
+    assert clarify.info_block_answer(_SAMPLE_AD222, "elevation of sokoto") is None
+    assert clarify.info_block_answer(_SAMPLE_AD222, "holding procedure for sokoto") is None
+
+
+def test_clarify_type_vocabularies_serve_distinct_purposes():
+    """norm_type (display/chart-matching, uppercase) and
+    norm_type_for_procedures (procedures.py's own matching key, lowercase)
+    are deliberately kept separate rather than merged into one, since they
+    feed different consumers with different case conventions."""
+    import clarify
+    assert clarify.norm_type("vor/dme") == "VOR"
+    assert clarify.norm_type_for_procedures("VOR/DME") == "vor"
+    assert clarify.norm_type("rnav (gnss)") == "RNAV"
+    assert clarify.norm_type_for_procedures("GNSS") == "rnav"
+
+
+def test_clarify_decide_unaffected_by_merge():
+    """The merge must not change decide()'s existing, already-proven
+    behaviour — confirmed by re-running its own established cases."""
+    import clarify
+    from types import SimpleNamespace
+    charts = [
+        SimpleNamespace(procedure_type="ILS Approach Chart", runway="26"),
+        SimpleNamespace(procedure_type="VOR Approach Chart", runway="08"),
+        SimpleNamespace(procedure_type="VOR Approach Chart", runway="26"),
+    ]
+    d = clarify.decide(charts)
+    assert d.action == "ask_type"
+    assert set(d.options) == {"ILS", "VOR"}
+
+    d2 = clarify.decide(charts, specified_type="VOR")
+    assert d2.action == "ask_runway"
+    assert set(d2.options) == {"08", "26"}
+
+    d3 = clarify.decide(charts, specified_type="VOR", specified_runway="08")
+    assert d3.action == "send"
+    assert len(d3.charts) == 1
 
 
 # --- restriction/authorisation guard: a numbered/lettered list item (e.g.

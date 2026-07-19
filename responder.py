@@ -259,7 +259,15 @@ def declared_distance_reply(res: Resolution, recs: list, requested_runway=None,
                             query: str = "") -> str:
     """Exact declared-distance answer from STRUCTURED data (validated at ingestion,
     so never misattributed). Answers the specific runway+metric if asked, else
-    lists every runway's TORA/TODA/ASDA/LDA."""
+    lists every runway's TORA/TODA/ASDA/LDA.
+
+    A metric can genuinely be None (a real per-field gap in the source, e.g.
+    DNKT publishes TODA/ASDA/LDA but not TORA) — shown as 'not published',
+    never a bare 'None', so a null-over-guess gap reads as an honest fact
+    about the source, not a formatting bug."""
+    def _fmt(v):
+        return f"{v} m" if v is not None else "not published"
+
     asked = [m for m in _DD_METRICS if re.search(rf"\b{m}\b", query or "", re.I)]
     metrics = asked or list(_DD_METRICS)
     footer = (f"\n\n———\nSource: Nigeria AIP · AD 2.13 · {config.AIRAC_CYCLE}\n"
@@ -269,15 +277,16 @@ def declared_distance_reply(res: Resolution, recs: list, requested_runway=None,
         hits = [r for r in recs if _dd_rwy_match(requested_runway, r["runway"])]
         if len(hits) == 1:
             r = hits[0]
-            vals = "\n".join(f"{m.upper()}: {r[m]} m" for m in metrics)
+            vals = "\n".join(f"{m.upper()}: {_fmt(r[m])}" for m in metrics)
             return f"{res.label} — RWY {r['runway']}\n\n{vals}{footer}"
         if len(hits) > 1:            # e.g. '18' matched 18L and 18R -> show both
             recs = hits
 
     lines = [f"{res.label} — declared distances (AD 2.13)", ""]
     for r in recs:
-        lines.append("RWY {}: TORA {} · TODA {} · ASDA {} · LDA {} (m)".format(
-            r["runway"], r["tora"], r["toda"], r["asda"], r["lda"]))
+        lines.append("RWY {}: TORA {} · TODA {} · ASDA {} · LDA {}".format(
+            r["runway"], _fmt(r["tora"]), _fmt(r["toda"]),
+            _fmt(r["asda"]), _fmt(r["lda"])))
     return "\n".join(lines) + footer
 
 
@@ -319,6 +328,117 @@ def rwy_char_reply(res: Resolution, rc_text: str, query: str = "") -> str:
     needles = re.findall(r"\d{2}[LRC]?|bearing|elevation|elev|threshold|thr|"
                          r"coordinate|position", query or "", re.I)
     return _section_source_reply(res, rc_text, needles, "AD 2.12")
+
+
+def runway_data_reply(res: Resolution, records: list, requested_runway=None,
+                      query: str = "") -> str:
+    """Exact runway-physical-characteristics answer from STRUCTURED data (AD
+    2.12, resolved and validated at ingestion via per-entity tracking — never
+    misattributed). This is the exact subsection the project's original
+    misattribution incident happened on (one runway end's elevation spliced
+    with another's slope data); the structured record keeps each end's data
+    strictly separate, and this reply preserves that separation visually.
+
+    Mirrors declared_distance_reply's established shape: a specific runway
+    filters to just that physical runway if named, else every runway is listed.
+    """
+    footer = (f"\n\n———\nSource: Nigeria AIP · AD 2.12 · {config.AIRAC_CYCLE}\n"
+              f"{config.DISCLAIMER}")
+
+    recs = records
+    if requested_runway:
+        hits = [r for r in records if runway_serves(requested_runway, r.get("designation"))]
+        if hits:
+            recs = hits
+
+    lines = [f"{res.label} — runway data (AD 2.12)", ""]
+    for r in recs:
+        desig = r.get("designation", "?")
+        length = r.get("length_m")
+        width = r.get("width_m")
+        dims = f"{length} x {width} m" if length and width else "dimensions not available"
+        lines.append(f"RWY {desig} — {dims}")
+
+        end_detail = r.get("end_detail") or {}
+        for end, detail in end_detail.items():
+            if detail:
+                lines.append(f"  [{end}] {detail}")
+        lines.append("")
+
+    body = "\n".join(lines).rstrip()
+    return body + footer
+
+
+def lighting_data_reply(res: Resolution, records: list, requested_runway=None,
+                        query: str = "") -> str:
+    """Exact approach/runway lighting answer from STRUCTURED data (AD 2.14,
+    resolved via the same per-runway-end tracking as AD 2.12 — never
+    misattributed). This subsection has NO safe symmetric subset (unlike AD
+    2.12's shared length/width) — every field (PAPI angle, lighting type)
+    can genuinely differ between a runway's two ends, so this is the
+    structured-lookup path for ANY lighting query, not just asymmetric ones.
+
+    A record with designation=None and end_detail={'general_notes': ...} is
+    the confirmed genuine case where no lighting is published for any
+    runway at this aerodrome at all — shown as-is, not treated as an error.
+    """
+    footer = (f"\n\n———\nSource: Nigeria AIP · AD 2.14 · {config.AIRAC_CYCLE}\n"
+              f"{config.DISCLAIMER}")
+
+    recs = records
+    if requested_runway:
+        hits = [r for r in records
+                if r.get("designation") and runway_serves(requested_runway, r["designation"])]
+        if hits:
+            recs = hits
+
+    lines = [f"{res.label} — approach and runway lighting (AD 2.14)", ""]
+    for r in recs:
+        desig = r.get("designation")
+        end_detail = r.get("end_detail") or {}
+        if desig is None:
+            # general_notes case: no runway-end lighting published at all.
+            note = end_detail.get("general_notes", "").strip()
+            lines.append(note or "No lighting information published.")
+            lines.append("")
+            continue
+        lines.append(f"RWY {desig}")
+        for end, detail in end_detail.items():
+            if detail:
+                lines.append(f"  [{end}] {detail}")
+        lines.append("")
+
+    body = "\n".join(lines).rstrip()
+    return body + footer
+
+
+def subsection_reply(res: Resolution, section: str, text: str,
+                     query: str = "") -> str:
+    """Verbatim reply from ONE deterministically-fetched AD 2.x subsection.
+
+    Used when synthesis over that subsection didn't verify — the pilot still
+    gets the RIGHT subsection's own words, focused on the query terms, rather
+    than a vector-search guess that might be a different subsection entirely.
+    That guarantee is what makes this a safe fallback rather than a degraded
+    one: retrieval was exact even though synthesis declined."""
+    needles = (re.findall(r"\d[\d,]*(?:\.\d+)?", query or "")
+               + re.findall(r"[a-z]{4,}", (query or "").lower())[:8])
+    body = _focus(text, needles, width=700) if needles else text[:1400]
+    footer = (f"\n\n———\nSource: Nigeria AIP · {section} · {config.AIRAC_CYCLE}\n"
+              f"{config.DISCLAIMER}")
+    head = f"{res.label} — {section}\n\n"
+    return (head + body)[:_SAFE_LIMIT - len(footer)] + footer
+
+
+def info_block_reply(res: Resolution, section: str, body: str) -> str:
+    """Format clarify.info_block_answer()'s deterministic slice. Deliberately
+    does NOT re-run the text through _focus() — the slice is already bounded
+    to exactly one AD 2.22 heading (General / Runway in use / Radar
+    Procedures / VFR minima / VFR flights), and re-trimming an already-precise
+    answer risks cutting it short for no safety benefit."""
+    footer = (f"\n\n———\nSource: Nigeria AIP · {section} · {config.AIRAC_CYCLE}\n"
+              f"{config.DISCLAIMER}")
+    return f"{res.label} — {section}\n\n{body}"[:_SAFE_LIMIT - len(footer)] + footer
 
 
 def not_found() -> str:
