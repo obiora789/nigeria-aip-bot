@@ -228,6 +228,11 @@ def resolve(ex: AIPQueryExtraction) -> Resolution:
 
     # 1) Airspace / en-route -> ENR, AIRSPACE tag (ignore any aerodrome name;
     #    the embedded query still carries it for the vector search).
+    #    NOTE: main.py narrows this afterwards — when the QUERY TEXT is
+    #    specifically about an aerodrome's OWN AD 2.17 airspace (CTR/TMA
+    #    limits, classification, transition altitude) and an aerodrome is
+    #    named, it re-resolves to that aerodrome. That check needs the raw
+    #    text, which this function does not receive.
     if ex.intent == "airspace_lookup":
         return Resolution(is_national=True, part="ENR", reference="AIRSPACE",
                           label="Airspace / En-route (ENR)",

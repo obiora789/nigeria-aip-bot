@@ -432,53 +432,119 @@ def semantic_subsection(results: List[AIPResult]):
     return top_sec
 
 
-def synthesize_decision(question: str, results: List[AIPResult]) -> Tuple[str, object]:
-    """Decide how to answer a text query. Returns (status, grounded_answer):
-      'grounded'   -> a VERIFIED synthesized answer (show grounded_reply)
-      'not_in_aip' -> the model found no answer in the excerpts (faithful abstain)
-      'fallback'   -> show verbatim chunks (synthesis off / error / FAILED verify /
-                      safety carve-out for approach minima)
-    Fails safe: an unverified answer never returns 'grounded'."""
+# Maps an AD 2.x subsection to the BEST handler for it. Where per-entity
+# structured data exists (aip_structured), use that — it is exact and cannot
+# misattribute. Everything else fetches the subsection whole.
+_SUBSECTION_HANDLER = {
+    "AD 2.12": "rwy_data",           # per-runway structured record
+    "AD 2.13": "declared_distance",  # per-runway TORA/TODA/ASDA/LDA
+    "AD 2.14": "lighting_data",      # per-runway-end lighting
+    "AD 2.18": "comms",              # per-service block, shown verbatim
+    "AD 2.19": "navaid",             # per-navaid block, shown verbatim
+}
+
+_SUB_NUM_RE = re.compile(r"(2\.\d{1,2})")
+
+
+def _normalise_subsection(raw):
+    """'2.12' / 'AD 2.12' / 'ad2.12' / 'AD2.12 ' -> 'AD 2.12'; else None."""
+    if not raw:
+        return None
+    m = _SUB_NUM_RE.search(str(raw))
+    if not m:
+        return None
+    sec = f"AD {m.group(1)}"
+    return sec if 1 <= int(m.group(1).split(".")[1]) <= 24 else None
+
+
+def synthesize_decision(question: str, results: List[AIPResult],
+                        ex=None) -> Tuple[str, object]:
+    """Decide how to answer a text query. Returns (status, payload).
+
+    THREE LAYERS, each doing what it is actually good at:
+
+      1. SAFETY POLICY — deterministic, never overridden. "Never synthesize a
+         decision height" is a RULE, not a guess about what the query means,
+         so it stays regex and stays first.
+
+      2. WHICH SUBSECTION — the LLM extraction already read this query and
+         returned intent/aerodrome/runway; classifying the AD 2.x subsection
+         is the same kind of semantic judgement and it is far better at it
+         than a keyword list. Keyword and embedding routing remain as
+         backstops for when the classifier returns null.
+
+      3. BEST HANDLER — a subsection with per-entity structured data uses that
+         exact path; everything else fetches the subsection whole.
+
+    This ordering is the fix for a whole CLASS of failure, not any one bug:
+    "PCN for Lagos runways" (excluded by a keyword list), "surface strength of
+    RWY 18L" (matched "runway" but not "RWY"), "OCA/H for Lagos" (found its
+    section, then discarded it), "limits for Lagos CTR" (lost the aerodrome).
+    Every one was a phrasing nobody had enumerated. The classifier does not
+    need them enumerated."""
     if not config.SYNTHESIS_ENABLED:
         return ("fallback", None)
-    if _MINIMA_RE.search(question or ""):
-        return ("fallback", None)      # never synthesize a decision height
-    if _PROC_RE.search(question or ""):
+    q = question or ""
+
+    # ---- LAYER 1: safety policy -------------------------------------------
+    if _MINIMA_RE.search(q):
+        # Minima are AD 2.22 content and must NEVER be synthesized. Routing to
+        # the exact section (rather than the old undirected verbatim fallback)
+        # fixes retrieval without touching that rule: "what is the OCA/H for
+        # Lagos" previously returned DNMM's AD 2.17 airspace block at 46%.
+        return ("subsection_verbatim", "AD 2.22")
+    if _PROC_RE.search(q):
         return ("approach_procedure", None)   # never synthesize procedures -> plate
-    if _DECLARED_RE.search(question or ""):
-        return ("declared_distance", None)     # structured lookup, else -> verbatim
-    if _NAVAID_GENERIC_RE.search(question or "") or (
-            _NAVAID_RE.search(question or "") and _NAVAID_VALUE_RE.search(question or "")):
-        return ("navaid", None)        # never synthesize one navaid's value -> verbatim
-    if (_COMMS_SVC_RE.search(question or "")
-            or (_COMMS_AMBIG_RE.search(question or "")
-                and _COMMS_FREQ_RE.search(question or ""))):
-        return ("comms", None)         # never synthesize one service's freq -> verbatim
-    if _RWY_BEARING_RE.search(question or "") or _THR_FIELD_RE.search(question or ""):
-        return ("rwy_char", None)      # asymmetric AD 2.12 field -> verbatim per end
-    if _LIGHTING_RE.search(question or ""):
-        return ("lighting_data", None)  # AD 2.14 per-end field -> structured lookup
-    if _RWY_GENERAL_RE.search(question or ""):
-        return ("rwy_data", None)      # runway query -> exact AD 2.12 structured lookup
-    if _RESTRICTION_RE.search(question or ""):
-        return ("fallback", None)      # never synthesize a restriction/authorisation rule -> verbatim
-    # Deterministic subsection routing — runs LAST, after every dedicated guard
-    # above has declined. Those guards are more specific and already proven, so
-    # they keep priority; this only claims queries that would otherwise fall
-    # through to undirected vector search (the population that produced the
-    # confirmed "Abuja runway -> AD 2.22 minima table at 55%" failure).
-    # Returning the subsection id as the second element; main.py fetches that
-    # exact section and synthesizes over it alone.
-    sub = subsection_router.detect_subsection(question or "")
+    if _RESTRICTION_RE.search(q):
+        return ("fallback", None)             # a list item without its governing clause
+                                              # can reverse the rule -> verbatim
+
+    # ---- LAYER 2: which subsection? ---------------------------------------
+    # Trust order: the CLASSIFIER first (it read this query), then the proven
+    # deterministic guards, then keyword routing, then embeddings last — the
+    # weakest signal, since it reflects only what the retriever ranked.
+    sub = _normalise_subsection(getattr(ex, "ad2_subsection", None))
+
+    # ---- LAYER 3: best handler for that subsection ------------------------
+    if sub:
+        # Asymmetric AD 2.12 fields (true bearing, threshold elevation and
+        # coordinates) differ per runway END, so they take the verbatim
+        # per-end path rather than the structured summary. That is a
+        # distinction WITHIN one subsection, which is why it stays a regex.
+        if sub == "AD 2.12" and (_RWY_BEARING_RE.search(q) or _THR_FIELD_RE.search(q)):
+            return ("rwy_char", None)
+        handler = _SUBSECTION_HANDLER.get(sub)
+        if handler:
+            return (handler, None)
+        return ("subsection", sub)
+
+    # ---- LAYER 4: deterministic guards, when the classifier said nothing ---
+    # These must outrank both keyword and semantic subsection routing: each
+    # protects a value that must never be synthesized, and semantic routing
+    # would otherwise claim them based only on retriever ranking.
+    if _DECLARED_RE.search(q):
+        return ("declared_distance", None)
+    if _NAVAID_GENERIC_RE.search(q) or (_NAVAID_RE.search(q) and _NAVAID_VALUE_RE.search(q)):
+        return ("navaid", None)
+    if (_COMMS_SVC_RE.search(q)
+            or (_COMMS_AMBIG_RE.search(q) and _COMMS_FREQ_RE.search(q))):
+        return ("comms", None)
+    if _RWY_BEARING_RE.search(q) or _THR_FIELD_RE.search(q):
+        return ("rwy_char", None)
+    if _LIGHTING_RE.search(q):
+        return ("lighting_data", None)
+    if _RWY_GENERAL_RE.search(q):
+        return ("rwy_data", None)
+
+    # ---- LAYER 5: keyword, then semantic subsection routing ---------------
+    sub = subsection_router.detect_subsection(q)
     if not sub and config.SEMANTIC_SUBSECTION_ENABLED:
-        # Keyword routing declined. Try semantic subsection routing before
-        # falling through to synthesis over ALL retrieved chunks — it catches
-        # phrasings no keyword list anticipates, and still gives synthesis a
-        # single subsection rather than a mixed context. Returns None on a
-        # weak or near-tied match, in which case behaviour is unchanged.
         sub = semantic_subsection(results)
     if sub:
-        return ("subsection", sub)
+        handler = _SUBSECTION_HANDLER.get(sub)
+        return ((handler, None) if handler else ("subsection", sub))
+
+    # ---- LAYER 6: general synthesis over the retrieved chunks --------------
     ans = generate_grounded_answer(question, results)
     if ans is None:
         return ("fallback", None)

@@ -602,7 +602,7 @@ async def process(chat_id: int, text: str) -> None:
                 ad_out = SearchOutcome(results=[ad_res], max_similarity=1.0,
                                        abstained=False, used_reference=res.icao)
                 status, ga = await asyncio.to_thread(
-                    synthesize.synthesize_decision, follow_query, [ad_res])
+                    synthesize.synthesize_decision, follow_query, [ad_res], ex)
                 if status == "grounded":
                     rec["path"] = "aerodrome_data"
                     await send_info(grounded_reply(ga, ad_out, res))
@@ -642,7 +642,7 @@ async def process(chat_id: int, text: str) -> None:
             await send_info(not_found())
         else:
             status, ga = await asyncio.to_thread(
-                synthesize.synthesize_decision, follow_query, outcome.results)
+                synthesize.synthesize_decision, follow_query, outcome.results, ex)
             if status == "approach_procedure":
                 # Defense-in-depth: synthesis refused to write approach procedures.
                 # Route to the safe approach-chart flow (clarification + plate);
@@ -776,6 +776,19 @@ async def process(chat_id: int, text: str) -> None:
                             "exact figures from the AD 2.14 source below:")
                     await send_info(f"{note}\n\n"
                                     f"{answer(outcome, res, ex.runway, follow_query)}")
+                return
+            if status == "subsection_verbatim":
+                # Minima (AD 2.22). Exact section, shown VERBATIM — synthesis
+                # is never invoked, so the never-synthesize-a-decision-height
+                # rule holds while retrieval stops being a similarity guess.
+                section = ga
+                rec["path"] = f"subsection_verbatim:{section}"
+                sect_text = (await asyncio.to_thread(get_subsection_text, res.icao, section)
+                             if res.icao else "")
+                if sect_text:
+                    await send_info(subsection_reply(res, section, sect_text, follow_query))
+                else:
+                    await send_info(answer(outcome, res, ex.runway, follow_query))
                 return
             if status == "subsection":
                 # Deterministic AD 2.x routing. `ga` is the exact subsection

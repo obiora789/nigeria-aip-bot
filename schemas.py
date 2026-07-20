@@ -96,6 +96,42 @@ class AIPQueryExtraction(BaseModel):
         description="Best guess at the AIP structural area. Treated as a hint only, not a hard constraint.",
     )
 
+    ad2_subsection: Optional[str] = Field(
+        None,
+        description=(
+            "If the question is about a specific aerodrome, which AD 2.x subsection "
+            "holds the answer? Reply with the number only (e.g. '2.12'), or null if "
+            "it isn't aerodrome-specific or you are unsure. Do NOT guess — null is "
+            "always better than a wrong section.\n"
+            "2.1 location indicator/name | 2.2 ARP coordinates, elevation, magnetic "
+            "variation, reference temperature, operator, AFTN | 2.3 operational hours, "
+            "customs, immigration, health, AIS, ARO, MET briefing, fuelling hours | "
+            "2.4 handling services, fuel/oil types, hangars, repairs, cargo, de-icing | "
+            "2.5 passenger facilities, hotels, restaurants, transport, medical, bank | "
+            "2.6 rescue and fire fighting, RFF category, removal of disabled aircraft | "
+            "2.7 seasonal availability, clearing | 2.8 aprons, taxiways, apron/taxiway "
+            "surface and strength, altimeter/VOR/INS check locations | 2.9 surface "
+            "movement guidance, markings, stop bars, stand ID signs | 2.10 aerodrome "
+            "obstacles | 2.11 meteorological information, MET office, TAF, trend "
+            "forecast | 2.12 runway physical characteristics: designation, true "
+            "bearing, dimensions, length, width, surface, strength/PCN, threshold "
+            "coordinates and elevation, slope, stopway, clearway, strip | 2.13 declared "
+            "distances TORA/TODA/ASDA/LDA | 2.14 approach and runway lighting, PAPI, "
+            "threshold/centreline/edge/end lights | 2.15 other lighting, ABN/IBN "
+            "beacon, wind direction indicator, secondary power supply | 2.16 helicopter "
+            "landing area, TLOF, FATO | 2.17 ATS airspace: CTR/TMA lateral and vertical "
+            "limits, airspace classification, ATS unit call sign, transition altitude | "
+            "2.18 ATS communication facilities, tower/ground/approach/ATIS frequencies "
+            "and call signs | 2.19 radio navigation and landing aids: VOR, DME, ILS, "
+            "NDB, localizer, glide path — frequencies, idents, positions | 2.20 local "
+            "aerodrome regulations, taxiing limitations, parking, training flights | "
+            "2.21 noise abatement | 2.22 flight procedures: holding, letdown, missed "
+            "approach, approach and take-off minima, OCA/H, circling, radar procedures, "
+            "VFR procedures, PBN | 2.23 additional information, bird and wildlife "
+            "hazards | 2.24 charts"
+        ),
+    )
+
     @field_validator("icao_code")
     @classmethod
     def _norm_icao(cls, v: Optional[str]) -> Optional[str]:

@@ -842,7 +842,7 @@ def test_keyword_and_safety_guards_outrank_semantic():
     try:
         r = [_res("AD 2.4", 0.62), _res("AD 2.5", 0.41)]
         assert synthesize.synthesize_decision("RFF category Kano", r) == ("subsection", "AD 2.6")
-        assert synthesize.synthesize_decision("approach minima DNAA", r)[0] == "fallback"
+        assert synthesize.synthesize_decision("approach minima DNAA", r)[0] == "subsection_verbatim"
         assert synthesize.synthesize_decision("Lagos tower frequency", r)[0] == "comms"
         # and the genuinely-uncovered phrasing now routes instead of guessing
         assert synthesize.synthesize_decision(
@@ -859,6 +859,87 @@ def test_get_subsection_text_matches_exactly_not_by_prefix():
     src = inspect.getsource(database.get_subsection_text)
     assert '.eq("aip_section", section)' in src
     assert ".like(" not in src
+
+
+# --- LLM subsection classification. 35 regexes were doing SEMANTIC
+#     CLASSIFICATION — deciding what a pilot's question is about — which is
+#     the one job an LLM does better than code, and the extraction call
+#     already reads the same text. Every phrasing failure was that one
+#     mistake repeated: "PCN" excluded by a keyword list, "RWY" missing where
+#     "runway" was present, "OCA/H" finding its section then discarding it.
+#     The classifier needs no phrasing enumerated. Regexes remain for SAFETY
+#     POLICY, which is a rule rather than a guess.
+
+def _ex_sub(sub):
+    from types import SimpleNamespace
+    return SimpleNamespace(ad2_subsection=sub)
+
+
+def test_llm_subsection_fixes_the_real_failures():
+    """The four confirmed live failures, all fixed by classification."""
+    import synthesize
+    for q, sub, want in [
+            ("What is the PCN for Lagos Runways", "2.12", "rwy_data"),
+            ("what is the OCA/H for Lagos", "2.22", "subsection_verbatim"),
+            ("What is the limits for Lagos CTR?", "2.17", "subsection"),
+            ("what is the lateral limit for lagos ctr", "2.17", "subsection")]:
+        assert synthesize.synthesize_decision(q, [], _ex_sub(sub))[0] == want, q
+
+
+def test_llm_subsection_handles_phrasings_no_keyword_list_covers():
+    """The actual point: these match nothing in any keyword list."""
+    import synthesize
+    for q, sub, want in [
+            ("how thick is the tarmac at Lagos", "2.12", "rwy_data"),
+            ("can a 747 land at Sokoto", "2.12", "rwy_data"),
+            ("who do I call on the radio at Kano", "2.18", "comms"),
+            ("what beacons help me find Abuja at night", "2.19", "navaid"),
+            ("is there anywhere to eat at Port Harcourt", "2.5", "subsection"),
+            ("how far can I roll before rotating on 18L", "2.13", "declared_distance")]:
+        assert synthesize.synthesize_decision(q, [], _ex_sub(sub))[0] == want, q
+
+
+def test_safety_policy_overrides_the_classifier():
+    """A wrong or adversarial classification must NEVER unlock something the
+    policy forbids. Minima, procedures and restrictions are rules."""
+    import synthesize
+    for q, sub, want in [
+            ("approach minima for RWY 04 Lagos", "2.12", "subsection_verbatim"),
+            ("decision height at Kano", "2.17", "subsection_verbatim"),
+            ("holding procedure Sokoto", "2.12", "approach_procedure"),
+            ("missed approach RWY 21", "2.14", "approach_procedure"),
+            ("night flying ban at Lagos", "2.20", "fallback"),
+            ("is Kano under curfew", "2.3", "fallback")]:
+        assert synthesize.synthesize_decision(q, [], _ex_sub(sub))[0] == want, q
+
+
+def test_asymmetric_fields_survive_a_coarse_classification():
+    """Per-end fields are a distinction WITHIN AD 2.12 that the classifier
+    won't make, so the regex still applies inside that subsection."""
+    import synthesize
+    for q in ("true bearing of runway 04", "threshold elevation RWY 22",
+              "threshold coordinates for RWY 18L"):
+        assert synthesize.synthesize_decision(q, [], _ex_sub("2.12"))[0] == "rwy_char", q
+
+
+def test_routing_is_backward_compatible_without_extraction():
+    """ex=None (or a null classification) must fall back to keyword routing
+    exactly as before — nothing regresses if the classifier is unavailable."""
+    import synthesize
+    for q, want in [("Lagos tower frequency", "comms"), ("TORA for rwy 22", "declared_distance"),
+                    ("RFF category Kano", "subsection"), ("Abuja runway", "rwy_data"),
+                    ("runway lighting DNAA", "lighting_data")]:
+        assert synthesize.synthesize_decision(q, [])[0] == want, q
+        assert synthesize.synthesize_decision(q, [], _ex_sub(None))[0] == want, q
+
+
+def test_subsection_normalisation():
+    """The classifier may answer '2.12', 'AD 2.12' or 'ad2.12'."""
+    import synthesize as S
+    for raw in ("2.12", "AD 2.12", "ad2.12", " AD  2.12 "):
+        assert S._normalise_subsection(raw) == "AD 2.12", raw
+    for raw in (None, "", "banana", "2.99", "3.1"):
+        assert S._normalise_subsection(raw) is None, raw
 
 
 # --- pilot-phrasing routing coverage. The existing 63-question eval set sent
@@ -889,8 +970,8 @@ _ROUTING_CASES = {
         "approach lights Kano", "runway lights at Lagos"],
     "approach_procedure": ["holding procedure for Sokoto", "letdown for RWY 26",
         "missed approach RWY 21 Lagos"],
-    "fallback": ["approach minima for DNAA", "decision height RWY 18R",
-        "night flying ban at Lagos"],
+    "subsection_verbatim": ["approach minima for DNAA", "decision height RWY 18R"],
+    "fallback": ["night flying ban at Lagos", "is Kano under curfew"],
     "subsection": ["RFF category at Kano", "fuel available at Lagos",
         "transition altitude DNMM", "bird hazards Sokoto", "MET office hours Lagos",
         "ABN beacon DNAA", "magnetic variation Kano", "apron strength DNAA",
