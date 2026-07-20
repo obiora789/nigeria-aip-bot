@@ -62,6 +62,22 @@ CONTEXT_TTL_MIN = int(os.getenv("CONTEXT_TTL_MIN", "10"))   # context expires fa
 # While off, approach requests get the plate-pointer. The plate always follows
 # either way, so this only controls whether the text is shown too.
 PROCEDURES_TEXT_ENABLED = os.getenv("PROCEDURES_TEXT_ENABLED", "0") == "1"
+
+# Semantic subsection routing (AD 2.x). When subsection_router's keyword match
+# declines, fall back to picking the subsection the RETRIEVER ranked highest,
+# and answer from that one section instead of synthesizing over all retrieved
+# chunks. Catches phrasings no keyword list anticipates ("what services are
+# available at Enugu" -> AD 2.4) while keeping synthesis scoped to a single
+# subsection, so a fact cannot be drawn from one section and cited to another.
+#
+# OFF by default: semantic matching can be confidently wrong where keywords
+# simply stay silent, so it should be measured against the eval set before
+# being switched on. The two thresholds are the safety valves — a weak top
+# match or a near-tie between sections both decline, leaving the pre-existing
+# behaviour untouched.
+SEMANTIC_SUBSECTION_ENABLED = os.getenv("SEMANTIC_SUBSECTION_ENABLED", "0") == "1"
+SEMANTIC_SUBSECTION_MIN_SIM = float(os.getenv("SEMANTIC_SUBSECTION_MIN_SIM", "0.35"))
+SEMANTIC_SUBSECTION_MARGIN = float(os.getenv("SEMANTIC_SUBSECTION_MARGIN", "0.03"))
 SYNTHESIS_MODEL = os.getenv("SYNTHESIS_MODEL", "gpt-4o-mini")
 SYNTHESIS_CONTEXT_CHUNKS = int(os.getenv("SYNTHESIS_CONTEXT_CHUNKS", "15"))
 
@@ -97,20 +113,7 @@ SYNTHESIS_SYSTEM = (
     "(reciprocal pairs), not the individual end designators. When asked to LIST "
     "runways, list the paired designators (e.g. 'RWY 06/24, RWY 05/23').\n"
     "9. Be concise and factual. State the AIP fact only — no advice, no reassurance, "
-    "no 'you should'. Do not add a disclaimer (the system adds one).\n"
-    "10. EVERY excerpt is labelled '--- Excerpt N [section] ---'. Every entry in "
-    "facts_used MUST set source_excerpt to the ONE excerpt number it was copied "
-    "from — never merge or average values from two different excerpts into one "
-    "fact. This applies even when your answer has no numbers: if you state a rule, "
-    "restriction, or requirement, add it to facts_used too (value = the rule quoted "
-    "exactly, what = a short label) with its source_excerpt. An answer with no "
-    "facts_used will be rejected regardless of how confident it sounds.\n"
-    "11. If a rule you are quoting is one item in a numbered or lettered list "
-    "(e.g. '(3) At night'), copy the WHOLE governing sentence, including any "
-    "introductory clause ('unless authorised by...', 'no pilot may...'), not just "
-    "the bare list item — a list item copied without its governing clause can "
-    "reverse the rule's meaning (e.g. a condition that REQUIRES authorisation can "
-    "misread as an outright ban when its 'unless authorised' clause is dropped)."
+    "no 'you should'. Do not add a disclaimer (the system adds one)."
 )
 
 # Hard-filter fallback sets (used to neutralise LLM part/reference misclassification).

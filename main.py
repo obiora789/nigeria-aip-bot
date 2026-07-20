@@ -24,7 +24,8 @@ import resolver
 from agent import extract_query_parameters, get_embedding
 from database import (get_aerodrome_data, get_charts, get_charts_smart,
                       get_declared_distances, get_lighting_data,
-                      get_runway_physical_data, get_section_text, search_aip)
+                      get_runway_physical_data, get_section_text,
+                      get_subsection_text, search_aip)
 from models import AIPResult, SearchOutcome
 import synthesize
 import subsection_router
@@ -779,15 +780,18 @@ async def process(chat_id: int, text: str) -> None:
             if status == "subsection":
                 # Deterministic AD 2.x routing. `ga` is the exact subsection
                 # id ("AD 2.17"). Because vectorise_aip_v3.py stores one chunk
-                # per (aerodrome, subsection), get_section_text fetches THAT
-                # subsection and nothing else — no similarity ranking, so the
+                # per (aerodrome, subsection), get_subsection_text fetches
+                # THAT subsection and nothing else — matching on EQUALITY, not
+                # a LIKE prefix (which would make "AD 2.2" also pull AD 2.20
+                # through AD 2.24, including the huge AD 2.22) — and with no
+                # similarity ranking involved, so the
                 # "top chunk was actually a different subsection" failure mode
                 # cannot occur. Synthesis then runs over that single section,
                 # which makes cross-subsection misattribution unrepresentable
                 # rather than merely detectable.
                 section = ga
                 rec["path"] = f"subsection:{section}"
-                sect_text = (await asyncio.to_thread(get_section_text, res.icao, section)
+                sect_text = (await asyncio.to_thread(get_subsection_text, res.icao, section)
                              if res.icao else "")
                 if sect_text and section == "AD 2.22":
                     # Deterministic, zero-LLM slice for AD 2.22's known

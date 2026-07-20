@@ -394,14 +394,51 @@ def test_general_runway_query_routes_to_structured_lookup():
         assert synthesize.synthesize_decision(q, [])[0] == "rwy_data", q
 
 
-def test_rwy_data_guard_does_not_overfire_on_symmetric_fields():
-    """Symmetric AD 2.12 fields (length/width/PCN/strength) are deliberately
-    left to general synthesis — this behaviour already existed and must not
-    regress just because a new, broader 'runway' check was added alongside it."""
+def test_rwy_field_queries_use_structured_lookup():
+    """AD 2.12 field queries (length/width/PCN/strength/surface) must reach the
+    EXACT structured record, not general synthesis.
+
+    These were originally excluded from rwy_data to preserve behaviour that
+    predated the structured lookup existing. That caused a real live failure:
+    "What is the PCN for Lagos Runways" was pushed into general synthesis and
+    abstained, while the PCN sat in the aip_structured 2.12 record the whole
+    time (ad212_extractor puts strength/PCN in each end's detail, and
+    runway_data_reply displays it)."""
     import synthesize
     for q in ("runway length DNAA", "width of runway 04", "PCN of runway 22",
-              "runway dimensions lagos", "surface strength of RWY 18L"):
-        assert synthesize.synthesize_decision(q, [])[0] != "rwy_data", q
+              "runway dimensions lagos", "surface strength of RWY 18L",
+              "What is the PCN for Lagos Runways", "runway surface at Kano"):
+        assert synthesize.synthesize_decision(q, [])[0] == "rwy_data", q
+
+
+def test_rwy_abbreviation_is_covered():
+    """Pilots write "RWY" constantly. The guard originally matched only
+    "runway", so "surface strength of RWY 18L" fell through to general
+    synthesis while "PCN of runway 22" routed correctly — the same query in
+    two spellings behaving differently."""
+    import synthesize
+    for q in ("surface strength of RWY 18L", "PCN for RWY 18R",
+              "RWY 26 dimensions", "what is RWY 04 made of"):
+        assert synthesize.synthesize_decision(q, [])[0] == "rwy_data", q
+
+
+def test_lighting_guard_survives_a_runway_number():
+    """"RWY 26 lighting" put the runway NUMBER between the designator and
+    "lighting", so the pattern missed and the broader runway guard swallowed
+    it. Lighting must keep precedence regardless of where the number sits."""
+    import synthesize
+    for q in ("RWY 26 lighting", "lighting for RWY 26", "runway lighting DNAA",
+              "touchdown zone lighting", "RWY 18L lights"):
+        assert synthesize.synthesize_decision(q, [])[0] == "lighting_data", q
+
+
+def test_asymmetric_fields_still_outrank_the_general_runway_guard():
+    """Per-end fields must still reach the verbatim rwy_char path — that guard
+    is evaluated first and must not be swallowed by the broader check."""
+    import synthesize
+    for q in ("true bearing of runway 04", "threshold elevation of RWY 22",
+              "threshold coordinates for RWY 18L"):
+        assert synthesize.synthesize_decision(q, [])[0] == "rwy_char", q
 
 
 def test_rwy_data_guard_does_not_overfire_on_asymmetric_fields():
@@ -740,6 +777,151 @@ def test_clarify_decide_unaffected_by_merge():
     d3 = clarify.decide(charts, specified_type="VOR", specified_runway="08")
     assert d3.action == "send"
     assert len(d3.charts) == 1
+
+
+# --- semantic subsection routing (flag-gated, default OFF). The keyword
+#     router only fires on terms someone thought to list; this picks the
+#     subsection the RETRIEVER ranked highest, using the results
+#     synthesize_decision already has (no extra DB call), and answers from
+#     that ONE section. Two guards stop it being confidently wrong where
+#     keywords would simply stay silent.
+
+def _res(section, sim):
+    from models import AIPResult
+    return AIPResult(content="x", similarity=sim, chart_url=None,
+                     aip_section=section, reference_tag="DNAA")
+
+
+def test_semantic_subsection_picks_clear_winner():
+    import synthesize
+    assert synthesize.semantic_subsection(
+        [_res("AD 2.4", 0.62), _res("AD 2.5", 0.41), _res("AD 2.3", 0.38)]) == "AD 2.4"
+
+
+def test_semantic_subsection_declines_on_near_tie():
+    """Two subsections near-tied means picking either is a coin flip —
+    decline, and the caller keeps its pre-existing behaviour."""
+    import synthesize
+    assert synthesize.semantic_subsection([_res("AD 2.4", 0.62), _res("AD 2.5", 0.60)]) is None
+
+
+def test_semantic_subsection_declines_on_weak_match():
+    """A weak top score means the retriever has no real opinion — don't
+    manufacture one."""
+    import synthesize
+    assert synthesize.semantic_subsection([_res("AD 2.4", 0.28), _res("AD 2.5", 0.11)]) is None
+
+
+def test_semantic_subsection_ignores_non_ad2_sections():
+    import synthesize
+    assert synthesize.semantic_subsection(
+        [_res("ENR 1.5", 0.90), _res("GEN 2.1", 0.85), _res("AD 2.6", 0.55)]) == "AD 2.6"
+    assert synthesize.semantic_subsection([_res("ENR 1.5", 0.9)]) is None
+    assert synthesize.semantic_subsection([]) is None
+
+
+def test_semantic_subsection_uses_best_chunk_per_section():
+    """A section is scored by its BEST chunk, not its first or its average."""
+    import synthesize
+    assert synthesize.semantic_subsection(
+        [_res("AD 2.4", 0.31), _res("AD 2.4", 0.66), _res("AD 2.9", 0.40)]) == "AD 2.4"
+
+
+def test_semantic_routing_is_off_by_default():
+    """Must change nothing until deliberately enabled and measured."""
+    import config
+    assert config.SEMANTIC_SUBSECTION_ENABLED is False
+
+
+def test_keyword_and_safety_guards_outrank_semantic():
+    """Even with semantic routing on, the proven guards and keyword router
+    must still win — semantic is a FALLBACK, not a replacement."""
+    import synthesize, config
+    orig = config.SEMANTIC_SUBSECTION_ENABLED
+    config.SEMANTIC_SUBSECTION_ENABLED = True
+    try:
+        r = [_res("AD 2.4", 0.62), _res("AD 2.5", 0.41)]
+        assert synthesize.synthesize_decision("RFF category Kano", r) == ("subsection", "AD 2.6")
+        assert synthesize.synthesize_decision("approach minima DNAA", r)[0] == "fallback"
+        assert synthesize.synthesize_decision("Lagos tower frequency", r)[0] == "comms"
+        # and the genuinely-uncovered phrasing now routes instead of guessing
+        assert synthesize.synthesize_decision(
+            "what services are available at Enugu", r) == ("subsection", "AD 2.4")
+    finally:
+        config.SEMANTIC_SUBSECTION_ENABLED = orig
+
+
+def test_get_subsection_text_matches_exactly_not_by_prefix():
+    """A LIKE prefix makes "AD 2.2" also match AD 2.20-2.24 (including the
+    ~55k-char AD 2.22), which would hand synthesis six subsections at once and
+    reintroduce cross-subsection misattribution. Equality is required."""
+    import database, inspect
+    src = inspect.getsource(database.get_subsection_text)
+    assert '.eq("aip_section", section)' in src
+    assert ".like(" not in src
+
+
+# --- pilot-phrasing routing coverage. The existing 63-question eval set sent
+#     33 of 63 queries to "grounded" (plain vector search) and exercised NONE
+#     of the structured-lookup paths, so nothing caught these three real
+#     misroutes. Each was found by testing realistic phrasing variants:
+#       1. _DECLARED_RE matched only the abbreviations, so a pilot writing
+#          "takeoff run available" fell through to general synthesis — the one
+#          path asymmetric per-runway values must never take.
+#       2. _NAVAID_RE had a plural bug ("navaid\b" never matched "navaids")
+#          and required a value word, so "what navaids are at Abuja" missed.
+#       3. _COMMS_SVC_RE fired on bare apron/ramp/ground, hijacking AD 2.8
+#          (apron strength), AD 2.4 (ground handling), AD 2.9 (apron
+#          markings), AD 2.15 (apron floodlights) and AD 2.20 (parking) —
+#          8 of 8 real phrasings went to comms.
+
+_ROUTING_CASES = {
+    "declared_distance": ["TORA for rwy 22 Lagos", "what is the LDA at DNAA",
+        "how long is the takeoff run available on 18L",
+        "landing distance available RWY 26", "accelerate stop distance Kano"],
+    "comms": ["Lagos tower frequency", "what freq is Kano ground",
+        "ATIS frequency for DNAA", "apron frequency Lagos", "contact ground Kano"],
+    "navaid": ["VOR frequency at Kano", "what navaids are at Abuja",
+        "DME channel for Sokoto", "navaid list DNAA"],
+    "rwy_char": ["true bearing of runway 04", "threshold elevation of RWY 22"],
+    "rwy_data": ["Abuja runway", "runways at Kano", "how many runways in Enugu"],
+    "lighting_data": ["runway lighting DNAA", "PAPI angle for RWY 04",
+        "approach lights Kano", "runway lights at Lagos"],
+    "approach_procedure": ["holding procedure for Sokoto", "letdown for RWY 26",
+        "missed approach RWY 21 Lagos"],
+    "fallback": ["approach minima for DNAA", "decision height RWY 18R",
+        "night flying ban at Lagos"],
+    "subsection": ["RFF category at Kano", "fuel available at Lagos",
+        "transition altitude DNMM", "bird hazards Sokoto", "MET office hours Lagos",
+        "ABN beacon DNAA", "magnetic variation Kano", "apron strength DNAA",
+        "ground handling at Kano", "apron surface Lagos", "apron floodlights DNAA"],
+}
+
+
+def test_pilot_phrasing_routes_correctly():
+    """Every realistic phrasing must reach its intended path. A miss here means
+    the query silently falls through to plain vector search."""
+    import synthesize
+    bad = []
+    for want, queries in _ROUTING_CASES.items():
+        for q in queries:
+            got = synthesize.synthesize_decision(q, [])[0]
+            if got != want:
+                bad.append(f"{q!r}: want {want}, got {got}")
+    assert not bad, "misrouted:\n  " + "\n  ".join(bad)
+
+
+def test_comms_guard_does_not_hijack_shared_vocabulary():
+    """apron/ramp/ground name AD 2.8/2.4/2.9/2.15/2.20 fields too — they must
+    not route to comms without an explicit frequency word."""
+    import synthesize
+    for q in ("apron strength DNAA", "ground handling at Kano", "apron surface Lagos",
+              "apron floodlights DNAA", "taxiway and apron markings Kano",
+              "ramp surface strength"):
+        assert synthesize.synthesize_decision(q, [])[0] != "comms", q
+    # ...but WITH a frequency word they still must
+    for q in ("apron frequency Lagos", "what freq is Kano ground", "contact ground Kano"):
+        assert synthesize.synthesize_decision(q, [])[0] == "comms", q
 
 
 # --- restriction/authorisation guard: a numbered/lettered list item (e.g.

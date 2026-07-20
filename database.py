@@ -194,6 +194,34 @@ def get_section_text(icao: str, section_prefix: str = "AD 2.22") -> str:
     return "\n".join(r.get("content", "") for r in rows)
 
 
+def get_subsection_text(icao: str, section: str) -> str:
+    """EXACTLY one subsection's text (all its chunks, in order).
+
+    Distinct from get_section_text(), which matches on a LIKE prefix. That is
+    right for its original caller (AD 2.22, where no other section starts with
+    that string) but WRONG for the subsection router: "AD 2.2" as a prefix also
+    matches AD 2.20, 2.21, 2.22, 2.23 and 2.24, so a query about magnetic
+    variation would pull six subsections — including the ~55k-character
+    AD 2.22 — into a single synthesis context, reintroducing exactly the
+    cross-subsection misattribution that routing to one exact section exists
+    to make impossible.
+
+    Equality matching is also correct for AD 2.22 itself: vectorise_aip_v3.py
+    splits it into several chunks for embedding length, but they all carry
+    aip_section = "AD 2.22" and differ only by source_chunk."""
+    try:
+        resp = (supabase.table("aip_knowledge_base")
+                .select("content, source_page, source_chunk")
+                .eq("reference_tag", icao)
+                .eq("aip_section", section).execute())
+    except Exception:  # noqa: BLE001
+        log.exception("get_subsection_text failed (icao=%s section=%s)", icao, section)
+        return ""
+    rows = sorted((resp.data or []),
+                  key=lambda r: (r.get("source_page") or 0, r.get("source_chunk") or 0))
+    return "\n".join(r.get("content", "") for r in rows)
+
+
 def get_declared_distances(icao: str) -> list:
     """Structured per-runway declared distances (AD 2.13), read from
     aip_structured — NOT the older aip_declared_distances table.

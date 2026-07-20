@@ -206,7 +206,13 @@ _PROC_RE = re.compile(
 # the exact row.
 _NAVAID_RE = re.compile(
     r"\b(d?vor|dme|ils|llz|localiz\w*|glide\s?path|glide\s?slope|\bgp\b|ndb|"
-    r"tacan|nav\s?aid|navaid)\b", re.I)
+    r"tacan|nav\s?aids?|navaids?)\b", re.I)
+# "navaid(s)" is unambiguous — it names no other AD 2.x field — so a general
+# "what navaids are at Abuja" is a legitimate AD 2.19 request and fires on its
+# own. The specific type words above still require a value word, because VOR/
+# ILS/NDB also name approach TYPES (handled earlier by the procedure guard).
+# The old pattern also had a plural bug: 'navaid\b' never matched "navaids".
+_NAVAID_GENERIC_RE = re.compile(r"\bnav\s?aids?\b", re.I)
 _NAVAID_VALUE_RE = re.compile(
     r"\b(distance|how far|frequenc\w+|\bfreq\b|position|coordinate\w*|located|"
     r"\bident\b|channel|elevation|bearing)\b", re.I)
@@ -215,7 +221,10 @@ _NAVAID_VALUE_RE = re.compile(
 # "3610 3610" / "893.1 871.15" cells — which misattributes at asymmetric fields
 # (Lagos 18L=2745 vs 18R=3900, Kano, DNFD…). The caller looks up the exact value;
 # if the aerodrome has no structured row, it refuses to source (AD 2.13 verbatim).
-_DECLARED_RE = re.compile(r"\b(tora|toda|asda|lda|declared distance)", re.I)
+_DECLARED_RE = re.compile(
+    r"\b(tora|toda|asda|lda|declared distance|"
+    r"take-?off run available|take-?off distance available|"
+    r"accelerate[\s-]?stop distance|landing distance available)", re.I)
 
 # ATS communications (AD 2.18). Tower/Ground/Approach/ATIS frequencies are stacked
 # in one block (with primary+secondary per service and misaligned counts, like
@@ -225,11 +234,16 @@ _DECLARED_RE = re.compile(r"\b(tora|toda|asda|lda|declared distance)", re.I)
 # on their own; 'approach'/'departure' (which also mean charts/procedures, handled
 # before synthesis) only fire alongside an explicit frequency word.
 _COMMS_SVC_RE = re.compile(
-    r"\b(tower|twr|ground|gnd|atis|clearance|delivery|apron|ramp|ground control)\b",
+    r"\b(tower|twr|atis|clearance|delivery)\b",
     re.I)
+# apron/ramp/ground are SHARED vocabulary, not comms-only: they also name
+# AD 2.8 (apron surface/strength), AD 2.4 (ground handling), AD 2.9 (apron
+# markings), AD 2.15 (apron floodlights) and AD 2.20 (parking area). Firing on
+# them alone hijacked all five to comms — confirmed on 8 of 8 real phrasings.
+# They now need an explicit frequency word, exactly like approach/departure.
 _COMMS_AMBIG_RE = re.compile(
     r"\b(approach|\bapp\b|departure|\bdep\b|radar|director|\bfis\b|information|"
-    r"centre|center)\b", re.I)
+    r"centre|center|apron|ramp|ground|gnd)\b", re.I)
 _COMMS_FREQ_RE = re.compile(r"\b(frequenc\w+|\bfreq\b|\bmhz\b|contact|call)\b", re.I)
 
 # AD 2.12 runway physical characteristics split two ways. SYMMETRIC fields
@@ -259,14 +273,21 @@ _THR_FIELD_RE = re.compile(
 # verbatim as a low-confidence fallback. The runway designation the pilot
 # actually wanted was never surfaced, despite AD 2.12 now being fully
 # populated in aip_structured.
+# Runway queries (AD 2.12) -> the exact structured record, which carries
+# designation, length, width AND each end's own free text (surface, strength/
+# PCN, coordinates, elevation, slope). Confirmed the original gap: "Abuja
+# runway" matched no guard at all and fell through to plain vector search,
+# returning a 55%-similarity match against AD 2.22's approach-minima table.
 #
-# _RWY_FIELD_KEYWORDS_RE excludes anything already safely routed elsewhere
-# (symmetric fields still flow to general synthesis, asymmetric fields still
-# hit the check above since it's evaluated first), so this only catches the
-# genuinely-uncovered "just tell me about the runway(s)" case.
-_RWY_FIELD_KEYWORDS_RE = re.compile(
-    r"\b(length|width|dimensions?|pcn|pcr|strength|surface)\b", re.I)
-_RWY_GENERAL_RE = re.compile(r"\brunways?\b", re.I)
+# This deliberately no longer excludes "symmetric" field words (length, width,
+# PCN, strength, surface). That exclusion was written to preserve behaviour
+# from before the structured AD 2.12 lookup existed, and it caused a real live
+# failure: "What is the PCN for Lagos Runways" was pushed away from the exact
+# data and into general synthesis, which abstained — while the PCN sat in the
+# aip_structured record the whole time. The asymmetric guard
+# (_RWY_BEARING_RE / _THR_FIELD_RE) is evaluated BEFORE this one, so
+# per-end fields still route to the verbatim path unchanged.
+_RWY_GENERAL_RE = re.compile(r"\b(runways?|rwys?)\b", re.I)
 
 # AD 2.14 (approach and runway lighting) — the same misattribution shape as
 # AD 2.12, but with NO safe symmetric subset to exclude. ad214_extractor.py's
@@ -288,7 +309,7 @@ _RWY_GENERAL_RE = re.compile(r"\brunways?\b", re.I)
 # other subsection uses those terms.
 _LIGHTING_RE = re.compile(
     r"\b(runway|rwy|approach|threshold|thr|touchdown|tdz|centreline|centerline|"
-    r"stopway|swy)\s*(?:zone\s*)?light(?:ing|s)?\b|"
+    r"stopway|swy)(?:\s*\d{1,2}[LRC]?)?\s*(?:zone\s*)?light(?:ing|s)?\b|"
     r"\blight(?:ing|s)?\b.{0,15}\b(runway|rwy|approach|threshold|touchdown)\b|"
     r"\b(papi|vasis)\b", re.I)
 
@@ -358,6 +379,59 @@ def synthesize_over_section(question: str, section_text: str,
     return (ok, ans, single)
 
 
+_AD2_SECTION_RE = re.compile(r"^AD\s*2\.\d{1,2}$", re.I)
+
+
+def semantic_subsection(results: List[AIPResult]):
+    """Which AD 2.x subsection did the RETRIEVER rank highest for this query?
+
+    This is the semantic counterpart to subsection_router's keyword matching,
+    and it needs no extra database call: because vectorise_aip_v3.py stores one
+    chunk per (aerodrome, subsection), every result already carries the
+    aip_section it came from, and its own similarity score. Grouping by section
+    and taking the best score per section turns ordinary chunk-level similarity
+    search into subsection-level routing.
+
+    Why bother, when the results are already ranked? Because acting on the
+    section rather than the chunks changes what synthesis SEES. Passing all
+    results in lets a fact be drawn from one section while the answer cites
+    another — the confirmed AD 2.20 / AD 2.22.5.1 misattribution. Routing to
+    the winning section and fetching it whole means synthesis sees exactly one
+    subsection, so source_excerpt can only ever be 1.
+
+    It handles phrasings no keyword list anticipates ("what services are
+    available at Enugu" -> AD 2.4) — but semantic matching can be confidently
+    wrong in ways keywords cannot, so two guards apply:
+
+      * a similarity FLOOR — a weak top match means the retriever has no real
+        opinion, so don't manufacture one;
+      * a MARGIN over the runner-up SECTION — if two subsections are near-tied,
+        picking either is a coin flip. Declining returns None, and the caller
+        falls through to ordinary synthesis over all results, which is the
+        pre-existing behaviour rather than a degradation.
+
+    Returns "AD 2.NN" or None."""
+    if not results:
+        return None
+    best = {}
+    for r in results:
+        sec = (getattr(r, "aip_section", "") or "").strip()
+        if not _AD2_SECTION_RE.match(sec):
+            continue
+        sim = float(getattr(r, "similarity", 0.0) or 0.0)
+        if sim > best.get(sec, -1.0):
+            best[sec] = sim
+    if not best:
+        return None
+    ranked = sorted(best.items(), key=lambda kv: kv[1], reverse=True)
+    top_sec, top_sim = ranked[0]
+    if top_sim < config.SEMANTIC_SUBSECTION_MIN_SIM:
+        return None
+    if len(ranked) > 1 and (top_sim - ranked[1][1]) < config.SEMANTIC_SUBSECTION_MARGIN:
+        return None
+    return top_sec
+
+
 def synthesize_decision(question: str, results: List[AIPResult]) -> Tuple[str, object]:
     """Decide how to answer a text query. Returns (status, grounded_answer):
       'grounded'   -> a VERIFIED synthesized answer (show grounded_reply)
@@ -373,7 +447,8 @@ def synthesize_decision(question: str, results: List[AIPResult]) -> Tuple[str, o
         return ("approach_procedure", None)   # never synthesize procedures -> plate
     if _DECLARED_RE.search(question or ""):
         return ("declared_distance", None)     # structured lookup, else -> verbatim
-    if _NAVAID_RE.search(question or "") and _NAVAID_VALUE_RE.search(question or ""):
+    if _NAVAID_GENERIC_RE.search(question or "") or (
+            _NAVAID_RE.search(question or "") and _NAVAID_VALUE_RE.search(question or "")):
         return ("navaid", None)        # never synthesize one navaid's value -> verbatim
     if (_COMMS_SVC_RE.search(question or "")
             or (_COMMS_AMBIG_RE.search(question or "")
@@ -383,9 +458,8 @@ def synthesize_decision(question: str, results: List[AIPResult]) -> Tuple[str, o
         return ("rwy_char", None)      # asymmetric AD 2.12 field -> verbatim per end
     if _LIGHTING_RE.search(question or ""):
         return ("lighting_data", None)  # AD 2.14 per-end field -> structured lookup
-    if (_RWY_GENERAL_RE.search(question or "")
-            and not _RWY_FIELD_KEYWORDS_RE.search(question or "")):
-        return ("rwy_data", None)      # general runway overview -> structured lookup
+    if _RWY_GENERAL_RE.search(question or ""):
+        return ("rwy_data", None)      # runway query -> exact AD 2.12 structured lookup
     if _RESTRICTION_RE.search(question or ""):
         return ("fallback", None)      # never synthesize a restriction/authorisation rule -> verbatim
     # Deterministic subsection routing — runs LAST, after every dedicated guard
@@ -396,6 +470,13 @@ def synthesize_decision(question: str, results: List[AIPResult]) -> Tuple[str, o
     # Returning the subsection id as the second element; main.py fetches that
     # exact section and synthesizes over it alone.
     sub = subsection_router.detect_subsection(question or "")
+    if not sub and config.SEMANTIC_SUBSECTION_ENABLED:
+        # Keyword routing declined. Try semantic subsection routing before
+        # falling through to synthesis over ALL retrieved chunks — it catches
+        # phrasings no keyword list anticipates, and still gives synthesis a
+        # single subsection rather than a mixed context. Returns None on a
+        # weak or near-tied match, in which case behaviour is unchanged.
+        sub = semantic_subsection(results)
     if sub:
         return ("subsection", sub)
     ans = generate_grounded_answer(question, results)
