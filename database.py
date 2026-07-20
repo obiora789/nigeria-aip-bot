@@ -194,6 +194,41 @@ def get_section_text(icao: str, section_prefix: str = "AD 2.22") -> str:
     return "\n".join(r.get("content", "") for r in rows)
 
 
+def search_facts(embedding: list, icao: str, subsection: str = "",
+                 limit: int = 8) -> list:
+    """Field-level semantic retrieval for AD 2.x (see sql/11_aip_facts.sql).
+
+    Returns atomic, self-describing facts ordered by similarity:
+        {subsection, entity, label, value, text, similarity}
+
+    This is the counterpart to search_aip(), at a granularity that actually
+    works. search_aip() ranks (aerodrome, subsection) chunks — DNMM's AD 2.22
+    is 79,871 characters behind ONE vector, so nothing scores decisively and
+    the top hit is frequently the wrong subsection entirely ("lateral limit
+    for lagos ctr" -> ENR 3.1 @ 59%). A fact row embeds a single field as a
+    sentence close to how a pilot would ask for it, so the match is direct.
+
+    Always scoped to one ICAO at the database boundary, so a fact can never
+    surface for a different aerodrome. `subsection` narrows further when the
+    classifier already identified one.
+
+    Empty list means no facts indexed for this aerodrome — the caller keeps
+    its existing behaviour rather than treating it as 'not published'."""
+    if not icao:
+        return []
+    try:
+        resp = supabase.rpc("match_aip_facts", {
+            "query_embedding": embedding,
+            "p_icao": icao,
+            "p_subsection": subsection or None,
+            "match_limit": limit,
+        }).execute()
+        return resp.data or []
+    except Exception:  # noqa: BLE001
+        log.exception("match_aip_facts failed (icao=%s sub=%s)", icao, subsection)
+        return []
+
+
 def get_subsection_text(icao: str, section: str) -> str:
     """EXACTLY one subsection's text (all its chunks, in order).
 
