@@ -590,10 +590,20 @@ def test_ad222_approach_vs_text_only_split():
     """AD 2.22 approach queries have a corresponding AD 2.24 plate to show
     alongside the procedure text. Other AD 2.22 content (take-off minima, PBN
     coding tables) has NO corresponding plate — showing an arbitrary approach
-    chart beside such an answer would imply a connection that doesn't exist."""
+    chart beside such an answer would imply a connection that doesn't exist.
+
+    Scope note (a real CI failure caught this): these test queries must be
+    genuine TEXT-intent approach questions, not chart/plate requests. A query
+    like "ILS approach plate for Lagos" never reaches detect_subsection() in
+    the live pipeline at all — it's classified as intent="chart_retrieval" by
+    the LLM extraction and intercepted by main.py's chart-handling path
+    (_wants_chart -> _run_chart_decision -> clarify.decide) well before
+    synthesize_decision() is ever called. _AD222_RE deliberately has no bare
+    "approach"/"plate" term, specifically so it doesn't try to claim queries
+    that a different, earlier mechanism already owns correctly."""
     import subsection_router as sr
     for q in ("holding and letdown for sokoto approach",
-              "ILS approach plate for Lagos", "missed approach for RWY 26"):
+              "ILS holding procedure for Lagos", "missed approach for RWY 26"):
         assert sr.detect_subsection(q) == "AD 2.22", q
         assert sr.is_approach_query(q) is True, q
     for q in ("take-off minima for DNAA", "PBN requirements at Kano",
