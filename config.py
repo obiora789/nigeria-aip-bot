@@ -75,6 +75,22 @@ PROCEDURES_TEXT_ENABLED = os.getenv("PROCEDURES_TEXT_ENABLED", "0") == "1"
 # being switched on. The two thresholds are the safety valves — a weak top
 # match or a near-tie between sections both decline, leaving the pre-existing
 # behaviour untouched.
+# Field-level fact retrieval (aip_facts). One embedding per FIELD instead of
+# one per subsection — DNMM's AD 2.22 was 79,871 characters behind a single
+# vector, which is measurably why the top chunk was so often the wrong
+# section. A fact embeds a sentence close to how a pilot would ask for it.
+#
+# Facts are shown VERBATIM (responder.facts_reply), never synthesized, so
+# this path has no hallucination surface: each line is a stored value with
+# its own entity and label.
+#
+# MIN_SIM is the confidence floor — below it the retriever has no real
+# opinion and we fall through to the existing behaviour rather than answer
+# from a weak match. MAX is how many facts to show.
+FACTS_ENABLED = os.getenv("FACTS_ENABLED", "0") == "1"
+FACTS_MIN_SIM = float(os.getenv("FACTS_MIN_SIM", "0.42"))
+FACTS_MAX = int(os.getenv("FACTS_MAX", "6"))
+
 SEMANTIC_SUBSECTION_ENABLED = os.getenv("SEMANTIC_SUBSECTION_ENABLED", "0") == "1"
 SEMANTIC_SUBSECTION_MIN_SIM = float(os.getenv("SEMANTIC_SUBSECTION_MIN_SIM", "0.35"))
 SEMANTIC_SUBSECTION_MARGIN = float(os.getenv("SEMANTIC_SUBSECTION_MARGIN", "0.03"))

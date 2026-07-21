@@ -59,6 +59,7 @@ USAGE
 """
 import argparse
 import json
+import time
 import os
 import sys
 
@@ -115,9 +116,9 @@ def facts_from_record(icao, aero_name, subsection, rec):
         value = _clean(rec.get("detail"))
         if value:
             out.append({
-                "entity": None, "label": label,
-                "value": value,
-                "text": f"{frame} {label}: {value}",
+                "entity": "", "label": label,
+                "fact_value": value,
+                "fact_text": f"{frame} {label}: {value}",
             })
         return out
 
@@ -130,15 +131,15 @@ def facts_from_record(icao, aero_name, subsection, rec):
             if v is not None:
                 out.append({
                     "entity": f"RWY {rwy}", "label": name,
-                    "value": f"{v} m",
-                    "text": f"{frame} RWY {rwy}. {name} "
+                    "fact_value": f"{v} m",
+                    "fact_text": f"{frame} RWY {rwy}. {name} "
                             f"({_DD_LONG[name]}): {v} m",
                 })
         if _clean(rec.get("remarks")):
             out.append({
                 "entity": f"RWY {rwy}", "label": "Remarks",
-                "value": _clean(rec["remarks"]),
-                "text": f"{frame} RWY {rwy}. Remarks: {_clean(rec['remarks'])}",
+                "fact_value": _clean(rec["remarks"]),
+                "fact_text": f"{frame} RWY {rwy}. Remarks: {_clean(rec['remarks'])}",
             })
         return out
 
@@ -151,8 +152,8 @@ def facts_from_record(icao, aero_name, subsection, rec):
                 dims = f"{rec['length_m']} x {rec['width_m']} m"
                 out.append({
                     "entity": f"RWY {desig}", "label": "Dimensions",
-                    "value": dims,
-                    "text": f"{frame} RWY {desig}. Dimensions "
+                    "fact_value": dims,
+                    "fact_text": f"{frame} RWY {desig}. Dimensions "
                             f"(length x width): {dims}",
                 })
             for end, detail in (rec.get("end_detail") or {}).items():
@@ -162,15 +163,15 @@ def facts_from_record(icao, aero_name, subsection, rec):
                 ent = "general" if end == "general_notes" else f"RWY {end}"
                 out.append({
                     "entity": ent, "label": "Details",
-                    "value": d,
-                    "text": f"{frame} {ent}. {d}",
+                    "fact_value": d,
+                    "fact_text": f"{frame} {ent}. {d}",
                 })
         else:
             for end, detail in (rec.get("end_detail") or {}).items():
                 d = _clean(detail)
                 if d:
-                    out.append({"entity": None, "label": "Notes", "value": d,
-                                "text": f"{frame} {d}"})
+                    out.append({"entity": "", "label": "Notes", "fact_value": d,
+                                "fact_text": f"{frame} {d}"})
         return out
 
     # --- shape D: per-service comms (2.18) ---
@@ -181,15 +182,15 @@ def facts_from_record(icao, aero_name, subsection, rec):
             joined = ", ".join(f"{f.get('value')}{f.get('unit','')}" for f in freqs)
             out.append({
                 "entity": svc, "label": "Frequency",
-                "value": joined,
-                "text": f"{frame} {svc}. Frequency / channel to contact "
+                "fact_value": joined,
+                "fact_text": f"{frame} {svc}. Frequency / channel to contact "
                         f"{svc}: {joined}",
             })
         if _clean(rec.get("raw_text")):
             out.append({
                 "entity": svc, "label": "Full entry",
-                "value": _clean(rec["raw_text"]),
-                "text": f"{frame} {svc}. {_clean(rec['raw_text'])}",
+                "fact_value": _clean(rec["raw_text"]),
+                "fact_text": f"{frame} {svc}. {_clean(rec['raw_text'])}",
             })
         return out
 
@@ -203,8 +204,8 @@ def facts_from_record(icao, aero_name, subsection, rec):
         if freq:
             out.append({
                 "entity": head, "label": "Frequency",
-                "value": f"{freq} {unit}".strip(),
-                "text": f"{frame} {head}. Frequency: {freq} {unit}".strip(),
+                "fact_value": f"{freq} {unit}".strip(),
+                "fact_text": f"{frame} {head}. Frequency: {freq} {unit}".strip(),
             })
         for key, name in (("hours", "Hours of operation"),
                           ("lat", "Latitude"), ("lon", "Longitude"),
@@ -212,8 +213,8 @@ def facts_from_record(icao, aero_name, subsection, rec):
             v = _clean(rec.get(key))
             if v:
                 out.append({
-                    "entity": head, "label": name, "value": v,
-                    "text": f"{frame} {head}. {name}: {v}",
+                    "entity": head, "label": name, "fact_value": v,
+                    "fact_text": f"{frame} {head}. {name}: {v}",
                 })
         return out
 
@@ -224,8 +225,8 @@ def facts_from_record(icao, aero_name, subsection, rec):
         val = _clean(v)
         if val and not isinstance(v, (dict, list)):
             label = k.replace("_", " ")
-            out.append({"entity": None, "label": label, "value": val,
-                        "text": f"{frame} {label}: {val}"})
+            out.append({"entity": "", "label": label, "fact_value": val,
+                        "fact_text": f"{frame} {label}: {val}"})
     return out
 
 
@@ -237,6 +238,82 @@ _DD_LONG = {
 }
 
 
+_CLIENT = None
+
+
+def _client_ref():
+    """Current Supabase client. Held indirectly so _reset_client() can swap it
+    out mid-run without every call site caring."""
+    global _CLIENT
+    if _CLIENT is None:
+        import database
+        _CLIENT = database.supabase
+    return _CLIENT
+
+
+def _reset_client():
+    """Rebuild the client after a TLS/connection failure.
+
+    A broken SSL socket stays broken: retrying the same request on the same
+    client reproduces "bad record mac" or "EOF in violation of protocol"
+    every time. Only a fresh connection recovers, which is why simply
+    retrying was not enough on a flaky link."""
+    global _CLIENT
+    try:
+        from supabase import create_client
+        import config
+        _CLIENT = create_client(config.SUPABASE_URL, config.SUPABASE_KEY)
+        print("      (connection rebuilt after TLS error)")
+    except Exception as exc:  # noqa: BLE001
+        print(f"      (could not rebuild connection: {exc})")
+
+
+def _dedupe_keys(facts):
+    """Make (subsection, entity, label) unique within an aerodrome.
+
+    Subsections that repeat a record shape emit facts sharing a key — AD 2.10
+    is the clearest case, where every obstacle carries the same field labels
+    and there is no natural entity to separate them:
+
+        ('2.10', '', 'Obstacle type') = 'Mast 120m'
+        ('2.10', '', 'Obstacle type') = 'Building 80m'
+
+    Two consequences, both bad. Postgres rejects the whole batch with
+    21000 ("ON CONFLICT DO UPDATE command cannot affect row a second time"),
+    and if it did not, the second obstacle would silently OVERWRITE the
+    first — losing real data with no error at all.
+
+    So: identical key AND identical value collapse to one row (a genuine
+    duplicate). Identical key with DIFFERENT values get a numbered entity
+    ('obstacle 1', 'obstacle 2'), so every value survives and stays
+    individually addressable."""
+    by_key = {}
+    for f in facts:
+        by_key.setdefault((f["subsection"], f["entity"], f["label"]), []).append(f)
+
+    out = []
+    for (sub, entity, label), group in by_key.items():
+        if len(group) == 1:
+            out.append(group[0])
+            continue
+        seen_values, distinct = set(), []
+        for f in group:
+            if f["fact_value"] not in seen_values:
+                seen_values.add(f["fact_value"])
+                distinct.append(f)
+        if len(distinct) == 1:
+            out.append(distinct[0])          # true duplicate
+            continue
+        for n, f in enumerate(distinct, 1):
+            base = entity or "item"
+            f["entity"] = f"{base} {n}"
+            # keep the embedded sentence honest about which one this is
+            f["fact_text"] = f["fact_text"].replace(
+                f". {label}:", f". {base.title()} {n}. {label}:", 1)
+            out.append(f)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--icao", nargs="*", help="limit to these aerodromes")
@@ -244,6 +321,8 @@ def main():
                     help="print the facts that WOULD be indexed; write nothing")
     ap.add_argument("--limit", type=int, default=40,
                     help="rows to show per aerodrome in --dry-run")
+    ap.add_argument("--force", action="store_true",
+                    help="re-embed and rewrite even aerodromes already indexed")
     args = ap.parse_args()
 
     from database import supabase
@@ -255,7 +334,9 @@ def main():
         want = {i.upper() for i in args.icao}
         targets = [i for i in targets if i in want]
 
+    print("build_fact_index v5  (resumable; de-duplicated keys; rebuilds connection on TLS error)")
     total = 0
+    any_error = False
     for icao in targets:
         resp = (supabase.table("aip_structured")
                 .select("subsection, record")
@@ -273,30 +354,131 @@ def main():
                 for f in facts_from_record(icao, names.get(icao, icao), sub, rec)
             ])
 
+        raw_count = len(facts)
+        facts = _dedupe_keys(facts)
         total += len(facts)
-        print(f"\n{icao} ({names.get(icao,'')}) — {len(rows)} records -> {len(facts)} facts")
+        dedup_note = (f"  ({raw_count - len(facts)} duplicate key(s) merged)"
+                      if raw_count != len(facts) else "")
+        print(f"\n{icao} ({names.get(icao,'')}) — {len(rows)} records "
+              f"-> {len(facts)} facts{dedup_note}")
         if args.dry_run:
             for f in facts[:args.limit]:
                 print(f"    [{f['subsection']:>5}] {(f['entity'] or '-'):<12} "
-                      f"{f['label'][:26]:<26} | {f['text'][:96]}")
+                      f"{f['label'][:26]:<26} | {f['fact_text'][:96]}")
             if len(facts) > args.limit:
                 print(f"    ... +{len(facts)-args.limit} more")
             continue
 
+        # RESUME: skip aerodromes already fully indexed, BEFORE spending any
+        # embedding calls. On a 36-aerodrome run over a flaky link a failure
+        # partway through would otherwise mean re-embedding everything already
+        # done. Upserts are idempotent, so re-running is always safe — this
+        # just makes it cheap and fast.
+        if not args.force:
+            try:
+                existing = (_client_ref().table("aip_facts")
+                            .select("id", count="exact")
+                            .eq("icao_code", icao).execute())
+                have = existing.count or 0
+                if have >= len(facts):
+                    print(f"    already indexed ({have} facts) — skipping. "
+                          f"Use --force to rebuild.")
+                    continue
+                if have:
+                    print(f"    {have} already present, filling in the rest")
+            except Exception:  # noqa: BLE001
+                pass          # can't check -> just proceed and upsert
+
         # --- embed + upsert -------------------------------------------------
-        from agent import embed_text            # existing embedding helper
-        for f in facts:
-            f["embedding"] = embed_text(f["text"])
+        # The embeddings endpoint accepts arrays, so batch: one call per 100
+        # facts instead of one per fact (~4,500 round-trips across all 36).
+        import config as _cfg
+        from agent import client as _client
+        from retry import retry_call as _retry
+
+        embedded, failed = [], 0
         for i in range(0, len(facts), 100):
             batch = facts[i:i + 100]
-            supabase.table("aip_facts").upsert(
-                batch, on_conflict="icao_code,subsection,entity,label").execute()
-        print(f"    indexed {len(facts)} facts")
+            texts = [f["fact_text"].strip().replace("\n", " ") for f in batch]
+            try:
+                resp = _retry(_client.embeddings.create,
+                              input=texts, model=_cfg.EMBEDDING_MODEL)
+                for f, item in zip(batch, resp.data):
+                    f["embedding"] = item.embedding
+                    embedded.append(f)
+            except Exception as exc:  # noqa: BLE001
+                # Never store a fact without an embedding: it would be
+                # invisible to vector search while still looking indexed.
+                failed += len(batch)
+                print(f"    embedding batch {i//100} FAILED ({exc}) — "
+                      f"{len(batch)} facts skipped")
+
+        written = 0
+        upsert_errors = []
+        lost = []
+        # 10, not 100: each row carries a 1536-float embedding (~30KB as JSON),
+        # so a 100-row upsert is a ~3MB request — large enough to trigger
+        # "SSL: EOF occurred in violation of protocol" mid-transfer.
+        UPSERT_BATCH = 10
+        for i in range(0, len(embedded), UPSERT_BATCH):
+            chunk = embedded[i:i + UPSERT_BATCH]
+            for attempt in range(4):
+                try:
+                    _client_ref().table("aip_facts").upsert(
+                        chunk, on_conflict="icao_code,subsection,entity,label").execute()
+                    written += len(chunk)
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    msg = str(exc)
+                    if "PGRST204" in msg or "Could not find" in msg:
+                        upsert_errors.append(f"SCHEMA MISMATCH — {msg[:120]}")
+                        lost.extend(chunk)
+                        break
+                    if attempt == 3:
+                        upsert_errors.append(msg[:160])
+                        lost.extend(chunk)
+                        break
+                    # A TLS/connection failure leaves the socket unusable —
+                    # retrying on the SAME client fails identically. Rebuild it.
+                    if any(k in msg for k in ("SSL", "EOF", "record mac",
+                                              "Connection", "timed out", "reset")):
+                        _reset_client()
+                    time.sleep(2 * (attempt + 1))
+
+        # Report what was actually WRITTEN, never what was merely embedded —
+        # an earlier version printed "indexed 125 facts" after every upsert
+        # had failed, which made a completely broken run look successful.
+        status = f"    wrote {written}/{len(facts)} facts"
+        if failed:
+            status += f"  ({failed} embedding failures)"
+        print(status)
+        for e in dict.fromkeys(upsert_errors):
+            print(f"      upsert error: {e}")
+        for f in lost[:10]:
+            print(f"      NOT WRITTEN: [{f['subsection']}] "
+                  f"{f.get('entity') or '-'} / {f['label']}")
+        if len(lost) > 10:
+            print(f"      ... +{len(lost)-10} more not written")
+        if lost:
+            print("      -> re-run the same command; upserts are idempotent, "
+                  "so only the missing rows are added.")
+        if upsert_errors or failed:
+            any_error = True
 
     print(f"\n{'DRY RUN — nothing written. ' if args.dry_run else ''}"
           f"{total} facts across {len(targets)} aerodrome(s)")
     if args.dry_run:
         print("\nRun without --dry-run to embed and upsert into aip_facts.")
+    elif not any_error:
+        print("\nAll aerodromes indexed. Verify:")
+        print("    select icao_code, count(*) from aip_facts "
+              "group by icao_code order by icao_code;")
+    if any_error:
+        print("\nSOME FACTS WERE NOT WRITTEN — see the errors above. "
+              "If you see PGRST204 / 'could not find the column', your "
+              "aip_facts table predates the current sql/11_aip_facts.sql: "
+              "drop and recreate it, then re-run.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

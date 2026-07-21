@@ -861,6 +861,129 @@ def test_get_subsection_text_matches_exactly_not_by_prefix():
     assert ".like(" not in src
 
 
+def test_airspace_redirect_survives_a_null_aerodrome_name():
+    """The redirect must not depend on the extractor populating
+    aerodrome_name. For "lagos control zone" the LLM can read the whole
+    phrase as an airspace NAME and leave that field null, which silently
+    disabled the redirect and sent the query to ENR 1.1 @ 63%.
+
+    resolver.match_name() scans free text and returns ICAO CODES — so the
+    rescue path must feed the result back as icao_code, not aerodrome_name
+    ('DNMM' is not an alias of itself)."""
+    import resolver
+    _seed_index()          # deterministic: only the seeded aerodromes exist here
+    for q, want in (
+            ("what is the lateral limit for lagos control zone", "DNMM"),
+            ("vertical limits of the kano control zone", "DNKN"),
+            ("airspace classification for abuja TMA", "DNAA"),
+            ("transition altitude for port harcourt", "DNPO")):
+        hits = resolver.match_name(q)
+        assert hits == {want}, (q, hits)
+
+
+def test_main_redirect_feeds_scan_result_as_icao_code():
+    """Guard the exact bug above: assigning match_name()'s output to
+    aerodrome_name silently fails to resolve."""
+    import inspect, main
+    src = inspect.getsource(main)
+    assert "resolver.match_name(" in src, "text-scan rescue missing from main.py"
+    assert "_ex2.icao_code = _scan_icao" in src, "scan result must be fed back as icao_code"
+
+
+def test_main_has_the_ad217_airspace_redirect():
+    """GUARD AGAINST SILENT LOSS. This redirect has been dropped once already
+    by a rebuild that started from a copy without it, putting the bug straight
+    back into production. It lives in main.py's request path, which the
+    offline tests otherwise never execute, so assert its presence directly.
+
+    Fixes: "what is the lateral limit for lagos ctr" -> ENR 3.1 @ 59% and
+    "what is the lateral limit for maiduguri ctr" -> ENR 3.1 @ 54%, when both
+    aerodromes' own AD 2.17 held the exact answer."""
+    import inspect, main
+    src = inspect.getsource(main)
+    assert 'res.reference == "AIRSPACE"' in src, "AD 2.17 airspace redirect is MISSING from main.py"
+    assert "_normalise_subsection" in src, "redirect no longer consults the classifier"
+    assert "aerodrome_fact" in src, "redirect no longer re-resolves to the aerodrome"
+
+
+def test_ad217_redirect_is_narrow_enough():
+    """It must fire for an aerodrome's own airspace and NOT for genuine
+    en-route content, otherwise real ENR queries get pinned to an AD section
+    where they will never be found."""
+    import subsection_router as sr, synthesize as sy
+    for q in ("what is the lateral limit for lagos ctr",
+              "what is the lateral limit for maiduguri ctr",
+              "What is the limits for Lagos CTR?", "CTR vertical limits Kano"):
+        assert sr.detect_subsection(q) == "AD 2.17" or sy._normalise_subsection("2.17"), q
+    for q in ("airways through the Kano FIR", "waypoints on UL433",
+              "what are the restricted areas in Nigeria"):
+        assert sr.detect_subsection(q) != "AD 2.17", q
+
+
+# --- field-level fact retrieval. One embedding per FIELD instead of one per
+#     subsection. DNMM's AD 2.22 was 79,871 characters behind a single vector,
+#     which is measurably why the top chunk was so often the wrong section
+#     ("lateral limit for lagos ctr" -> ENR 3.1 @ 59%). Facts are shown
+#     VERBATIM — no synthesis, so no hallucination surface.
+
+def test_facts_reply_groups_by_entity_and_never_merges():
+    """Each line is a stored value under its OWN entity. Two runways' values
+    must never appear on one line — the entity is part of the retrieved unit,
+    not reconstructed at display time."""
+    from responder import facts_reply
+    from models import Resolution
+    res = Resolution(); res.label = "Lagos"; res.icao = "DNMM"
+    facts = [
+        {"subsection": "2.13", "entity": "RWY 18L", "label": "TORA",
+         "fact_value": "2745 m", "similarity": 0.77},
+        {"subsection": "2.13", "entity": "RWY 18R", "label": "TORA",
+         "fact_value": "3900 m", "similarity": 0.63},
+    ]
+    out = facts_reply(res, facts)
+    assert "RWY 18L:" in out and "RWY 18R:" in out
+    assert "2745 m" in out and "3900 m" in out
+    # the two runways' values must be on separate lines under separate headings
+    for line in out.splitlines():
+        assert not ("2745" in line and "3900" in line), line
+    assert "AD 2.13" in out
+    assert config.AIRAC_CYCLE in out
+
+
+def test_facts_reply_cites_the_single_subsection():
+    from responder import facts_reply
+    from models import Resolution
+    res = Resolution(); res.label = "Lagos"; res.icao = "DNMM"
+    facts = [{"subsection": "2.17", "entity": "", "label": "Designation and lateral limits",
+              "fact_value": "CTR. A circle radius 20NM", "similarity": 0.71}]
+    out = facts_reply(res, facts)
+    assert "AD 2.17" in out
+    assert "CTR. A circle radius 20NM" in out
+
+
+def test_facts_reply_abstains_on_empty():
+    from responder import facts_reply, not_in_aip
+    from models import Resolution
+    res = Resolution(); res.label = "Lagos"; res.icao = "DNMM"
+    assert facts_reply(res, []) == not_in_aip(res)
+
+
+def test_facts_path_is_off_by_default():
+    """Must change nothing until deliberately enabled and measured."""
+    import config
+    assert config.FACTS_ENABLED is False
+
+
+def test_facts_path_is_wired_into_main():
+    """GUARD: this lives in main.py's request path, which the offline tests
+    never execute, so assert its presence directly — the AD 2.17 redirect was
+    silently lost once by a rebuild and put a live bug straight back."""
+    import inspect, main
+    src = inspect.getsource(main)
+    assert "search_facts" in src, "facts retrieval not wired into main.py"
+    assert "facts_reply" in src, "facts reply not wired into main.py"
+    assert "config.FACTS_MIN_SIM" in src, "confidence floor not applied"
+
+
 # --- LLM subsection classification. 35 regexes were doing SEMANTIC
 #     CLASSIFICATION — deciding what a pilot's question is about — which is
 #     the one job an LLM does better than code, and the extraction call

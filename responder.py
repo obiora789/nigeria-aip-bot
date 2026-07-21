@@ -441,6 +441,44 @@ def info_block_reply(res: Resolution, section: str, body: str) -> str:
     return f"{res.label} — {section}\n\n{body}"[:_SAFE_LIMIT - len(footer)] + footer
 
 
+def facts_reply(res: Resolution, facts: list, query: str = "") -> str:
+    """Answer from field-level facts (aip_facts), shown VERBATIM.
+
+    No synthesis is involved: each line is a stored value with its own entity
+    and label, so there is no hallucination surface at all — the bot can only
+    show what was extracted and validated at ingestion.
+
+    Facts are grouped by entity (runway end, ATS service, navaid) so a
+    multi-runway answer reads correctly and two runways' values can never be
+    merged into one line — the entity is part of the retrieved unit, not
+    something reconstructed here."""
+    if not facts:
+        return not_in_aip(res)
+
+    sections = sorted({f.get("subsection") for f in facts if f.get("subsection")})
+    cite = f"AD {sections[0]}" if len(sections) == 1 else "AD 2"
+
+    grouped = {}
+    for f in facts:
+        grouped.setdefault((f.get("entity") or "").strip(), []).append(f)
+
+    lines = [f"{res.label} — {cite}", ""]
+    for entity, items in grouped.items():
+        if entity:
+            lines.append(f"{entity}:")
+            for f in items:
+                lines.append(f"  {f['label']}: {f['fact_value']}")
+        else:
+            for f in items:
+                lines.append(f"{f['label']}: {f['fact_value']}")
+        lines.append("")
+
+    body = "\n".join(lines).rstrip()
+    footer = (f"\n\n———\nSource: Nigeria AIP · {cite} · {config.AIRAC_CYCLE}\n"
+              f"{config.DISCLAIMER}")
+    return body[:_SAFE_LIMIT - len(footer)] + footer
+
+
 def not_found() -> str:
     return (
         "I couldn't find anything matching that in the published AIP. Please "

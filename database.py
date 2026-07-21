@@ -199,7 +199,7 @@ def search_facts(embedding: list, icao: str, subsection: str = "",
     """Field-level semantic retrieval for AD 2.x (see sql/11_aip_facts.sql).
 
     Returns atomic, self-describing facts ordered by similarity:
-        {subsection, entity, label, value, text, similarity}
+        {subsection, entity, label, fact_value, fact_text, similarity}
 
     This is the counterpart to search_aip(), at a granularity that actually
     works. search_aip() ranks (aerodrome, subsection) chunks — DNMM's AD 2.22

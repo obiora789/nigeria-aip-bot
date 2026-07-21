@@ -25,18 +25,23 @@ create table if not exists aip_facts (
     id           bigserial primary key,
     icao_code    text        not null,
     subsection   text        not null,          -- '2.12', '2.17', ...
-    entity       text,                          -- 'RWY 18L', 'Lagos Tower', NULL
+    entity       text        not null default '',  -- 'RWY 18L', 'Lagos Tower', ''
     label        text        not null,          -- 'Strength (PCN) and surface'
-    value        text        not null,          -- the answer itself
-    text         text        not null,          -- the embedded sentence
+    fact_value   text        not null,          -- the answer itself
+    fact_text    text        not null,          -- the embedded sentence
     embedding    vector(1536),
     created_at   timestamptz not null default now()
 );
 
 -- One row per (aerodrome, subsection, entity, label) — makes re-runs
 -- idempotent and lets build_fact_index.py upsert safely.
+--
+-- NOTE: this must be a PLAIN unique index on exactly these four columns.
+-- A functional index (e.g. coalesce(entity,'')) would not satisfy
+-- PostgREST's on_conflict=..., and every upsert would fail. That is why
+-- `entity` is NOT NULL DEFAULT '' rather than nullable.
 create unique index if not exists uq_aip_facts_key
-    on aip_facts (icao_code, subsection, coalesce(entity, ''), label);
+    on aip_facts (icao_code, subsection, entity, label);
 
 create index if not exists ix_aip_facts_icao on aip_facts (icao_code);
 create index if not exists ix_aip_facts_sub  on aip_facts (icao_code, subsection);
@@ -59,13 +64,13 @@ returns table (
     subsection text,
     entity     text,
     label      text,
-    value      text,
-    text       text,
+    fact_value text,
+    fact_text  text,
     similarity float
 )
 language sql stable
 as $$
-    select f.subsection, f.entity, f.label, f.value, f.text,
+    select f.subsection, f.entity, f.label, f.fact_value, f.fact_text,
            1 - (f.embedding <=> query_embedding) as similarity
     from aip_facts f
     where f.icao_code = p_icao

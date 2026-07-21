@@ -10,6 +10,7 @@ The heavy work runs in a background task so we acknowledge Telegram within
 milliseconds; otherwise Telegram retries the update and we'd pay twice.
 """
 import asyncio
+import copy
 import logging
 import re
 import uuid
@@ -25,7 +26,7 @@ from agent import extract_query_parameters, get_embedding
 from database import (get_aerodrome_data, get_charts, get_charts_smart,
                       get_declared_distances, get_lighting_data,
                       get_runway_physical_data, get_section_text,
-                      get_subsection_text, search_aip)
+                      get_subsection_text, search_aip, search_facts)
 from models import AIPResult, SearchOutcome
 import synthesize
 import subsection_router
@@ -37,7 +38,7 @@ import procedures
 import toc
 from responder import (ambiguous, answer, chart_intro, chart_not_found,
                        comms_reply, declared_distance_reply, error, grounded_reply,
-                       info_block_reply, lighting_data_reply, low_confidence,
+                       facts_reply, info_block_reply, lighting_data_reply, low_confidence,
                        navaid_reply, not_found, not_in_aip, runway_data_reply,
                        rwy_char_reply, subsection_reply, unresolved)
 from telegram import (answer_callback, clarify_runway_kb, clarify_type_kb,
@@ -510,6 +511,56 @@ async def process(chat_id: int, text: str) -> None:
                 follow_query = f"{ctx.get('last_query') or ''} {text}".strip()
                 ctx_note = f"Using your last aerodrome, {res.label}:"
 
+        # An aerodrome's OWN airspace — CTR/TMA lateral and vertical limits,
+        # classification, ATS call sign, transition altitude — is published in
+        # ITS AD 2.17, NOT in ENR. resolver.resolve() cannot make this call:
+        # it never sees the query text, so it can't tell "Maiduguri CTR
+        # lateral limits" (AD 2.17) from "airways through the Lagos TMA"
+        # (genuinely ENR), and so sends every airspace_lookup national.
+        #
+        # Here the text and the classifier ARE available, so narrow it:
+        # redirect only when the query is identifiably about one aerodrome's
+        # own AD 2.x content. Everything else stays national, leaving real
+        # en-route queries untouched.
+        #
+        # Confirmed live failures this fixes: "what is the lateral limit for
+        # lagos ctr" returned ENR 3.1 at 59% and "what is the lateral limit
+        # for maiduguri ctr" returned ENR 3.1 at 54% — while DNMM's and
+        # DNMA's own AD 2.17 held the exact answers.
+        if res.is_national and res.reference == "AIRSPACE":
+            _sub = synthesize._normalise_subsection(getattr(ex, "ad2_subsection", None))
+            _kw = subsection_router.detect_subsection(follow_query or text)
+            if _sub or _kw:
+                # Prefer what the LLM extracted, but fall back to scanning the
+                # RAW QUERY for any known aerodrome name or alias. Depending on
+                # ex.aerodrome_name alone is fragile: for "lagos control zone"
+                # the extractor can read the whole phrase as an airspace NAME
+                # and leave aerodrome_name null, which silently disabled this
+                # redirect and sent the query to ENR 1.1 at 63%.
+                _hint = res.aerodrome_hint or ex.aerodrome_name
+                _scan_icao = None
+                if not _hint:
+                    # match_name() returns ICAO CODES, so feed it back as
+                    # icao_code — assigning it to aerodrome_name would fail,
+                    # since 'DNMM' is not an alias of itself.
+                    _scan = resolver.match_name(follow_query or text)
+                    if len(_scan) == 1:
+                        _scan_icao = next(iter(_scan))
+                if _hint or _scan_icao:
+                    _ex2 = ex.model_copy() if hasattr(ex, "model_copy") else copy.copy(ex)
+                    _ex2.intent = "aerodrome_fact"
+                    if _scan_icao:
+                        _ex2.icao_code = _scan_icao
+                        _ex2.aerodrome_name = None
+                    else:
+                        _ex2.aerodrome_name = _hint
+                    _redirect = await asyncio.to_thread(resolver.resolve, _ex2)
+                    if _redirect.icao:
+                        log.info("airspace query is about %s's own %s -> %s",
+                                 _hint or _scan_icao, _sub or _kw, _redirect.icao)
+                        res = _redirect
+                        rec["icao"] = res.icao
+
         if res.ambiguous:
             rec["path"] = "ambiguous"
             await send_message(chat_id, ambiguous(res))
@@ -643,6 +694,34 @@ async def process(chat_id: int, text: str) -> None:
         else:
             status, ga = await asyncio.to_thread(
                 synthesize.synthesize_decision, follow_query, outcome.results, ex)
+
+            # FIELD-LEVEL FACTS. Tried once the safety guards and structured
+            # handlers have declined — i.e. exactly where the old code fell
+            # through to synthesis over whole retrieved chunks, which is the
+            # population that produced "lateral limit for lagos ctr" -> ENR
+            # 3.1 @ 59%.
+            #
+            # A fact is a single field embedded as a sentence close to how a
+            # pilot asks for it, so retrieval lands on the answer rather than
+            # on a 79,871-character subsection average. Shown VERBATIM, never
+            # synthesized, so this path cannot hallucinate.
+            #
+            # Below FACTS_MIN_SIM the retriever has no real opinion, so we
+            # leave the existing behaviour untouched rather than answer from
+            # a weak match.
+            if (config.FACTS_ENABLED and res.icao
+                    and status in ("subsection", "grounded", "not_in_aip", "fallback")):
+                _sub = ga if status == "subsection" else ""
+                _sub_num = (_sub or "").replace("AD ", "").strip()
+                _facts = await asyncio.to_thread(
+                    search_facts, embedding, res.icao, _sub_num, config.FACTS_MAX)
+                _top = _facts[0]["similarity"] if _facts else 0.0
+                if _facts and _top >= config.FACTS_MIN_SIM:
+                    rec["path"] = f"facts:{_sub_num or 'any'}"
+                    rec["similarity"] = _top
+                    log.info("facts path: %s top=%.2f n=%d", res.icao, _top, len(_facts))
+                    await send_info(facts_reply(res, _facts, follow_query))
+                    return
             if status == "approach_procedure":
                 # Defense-in-depth: synthesis refused to write approach procedures.
                 # Route to the safe approach-chart flow (clarification + plate);
