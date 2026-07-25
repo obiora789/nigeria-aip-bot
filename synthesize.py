@@ -371,6 +371,16 @@ def synthesize_over_section(question: str, section_text: str,
         reference_tag=icao or None,
     )
 
+    # Exact retrieval does NOT make synthesis over AD 2.22 safe. Fetching the
+    # right section removes cross-SECTION error, but a single correct AD 2.22
+    # chunk still holds every runway's procedures at once — which is precisely
+    # the Maiduguri splice (RWY 05's letdown merged with RWY 23's figures, with
+    # every number genuinely present in the source, so the verifier passed it).
+    # Refusing here costs nothing: main.py falls through to subsection_reply,
+    # which shows this same section verbatim, focused on the query terms.
+    if entity_scope.is_never_synthesize(section_name):
+        return (False, None, single)
+
     ans = generate_grounded_answer(question, [single])
     if ans is None or not ans.answerable:
         return (False, ans, single)
@@ -547,8 +557,16 @@ def synthesize_decision(question: str, results: List[AIPResult],
         return ((handler, None) if handler else ("subsection", sub))
 
     # ---- LAYER 6: general synthesis over the retrieved chunks --------------
-    if entity_scope.blocks_free_synthesis(results):
-        return ("approach_procedure", None)
+    # AD 2.22 content must never be free-synthesized (see entity_scope). Route
+    # to that SECTION verbatim, NOT to the approach plate: holding, letdown and
+    # missed approach are only the three procedures that appear ON a plate,
+    # while AD 2.22 also publishes departure procedures (DNIL: RWY 05 turns
+    # right, RWY 23 turns left), emergency, radar, VFR, PBN and minima content
+    # that no plate covers. Genuine approach-plate requests already left at
+    # LAYER 1 via _PROC_RE, so whatever reaches here is by definition not one.
+    sec = entity_scope.blocking_section(results)
+    if sec:
+        return ("subsection_verbatim", sec)
     ans = generate_grounded_answer(question, results)
     if ans is None:
         return ("fallback", None)

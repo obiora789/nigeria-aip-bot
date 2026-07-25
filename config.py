@@ -62,7 +62,7 @@ CONTEXT_TTL_MIN = int(os.getenv("CONTEXT_TTL_MIN", "10"))   # context expires fa
 # While off, approach requests get the plate-pointer. The plate always follows
 # either way, so this only controls whether the text is shown too.
 PROCEDURES_TEXT_ENABLED = os.getenv("PROCEDURES_TEXT_ENABLED", "0") == "1"
-
+AIP_PDF = os.getenv("PDF_PATH")
 # Semantic subsection routing (AD 2.x). When subsection_router's keyword match
 # declines, fall back to picking the subsection the RETRIEVER ranked highest,
 # and answer from that one section instead of synthesizing over all retrieved
