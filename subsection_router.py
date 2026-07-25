@@ -147,7 +147,7 @@ AD2_ROUTES = [
 # Including it routed "transition altitude for DNMM" to AD 2.22, since this
 # pattern is checked before the AD2_ROUTES list. Caught by testing.
 _AD222_RE = re.compile(
-    r"\b(flight\s+procedures?|holding\s+procedure|letdown|let[\s-]?down|"
+    r"\b(flight\s+procedures?|holding\s+procedure|letdown|let-?down|"
     r"missed\s+approach|circling|approach\s+minima|take-?off\s+minima|"
     r"oca\b|och\b|pbn\b|rnp\s+ar)\b", re.I)
 
@@ -157,7 +157,7 @@ _AD222_RE = re.compile(
 # only genuine approach terms, so "take-off minima" is NOT treated as an approach.
 _AD222_APPROACH_RE = re.compile(
     r"\b(approach\s+procedure|instrument\s+approach|holding\s+procedure|"
-    r"letdown|let[\s-]?down|missed\s+approach|approach\s+plate|approach\s+chart|"
+    r"letdown|let-?down|missed\s+approach|approach\s+plate|approach\s+chart|"
     r"\bils\b|\brnav\b|\bgnss\b|\brnp\b|\bvor\b|\bndb\b|\bloc\b)\b", re.I)
 
 
