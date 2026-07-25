@@ -316,6 +316,26 @@ async def _run_chart_decision(chat_id, res, chart_icao, ptype, runway, send_info
         await send_info(chart_not_found(res, shim))
         return "not_found"
     # send: intro -> procedures (verbatim/pointer) -> the narrowed plate(s)
+    #
+    # The shim must describe what was DECIDED, not what the pilot happened to
+    # type. When decide() resolves to exactly ONE plate without needing to ask,
+    # the runway and approach type are fully determined by that plate — but
+    # `runway`/`ptype` still hold the original, often EMPTY, request. Passing
+    # those through handed procedures.extract() an empty req_rwy, which returns
+    # None on its first line, so the reply silently degraded to the plate
+    # pointer plus the chart, with no Holding/Letdown/Missed text at all.
+    #
+    # That is precisely why procedures appeared after a TAP (the callback
+    # supplies the runway) but never on a direct send: same code path, one
+    # missing value. Confirmed against clarify.decide() — e.g. an aerodrome
+    # publishing a single ILS approach for RWY 05 returns action="send" with
+    # that chart, while the shim carried runway=None.
+    if len(d.charts) == 1:
+        _only = d.charts[0]
+        ptype = ptype or clarify.approach_label(
+            getattr(_only, "procedure_type", "") or "") or ""
+        runway = runway or (getattr(_only, "runway", "") or "")
+        shim = SimpleNamespace(procedure_type=ptype or None, runway=runway or None)
     await send_info(chart_intro(res, shim))
     await _send_approach_procedures(chat_id, shim, res, send_info)
     await send_charts(chat_id, d.charts, requested_runway=runway or None)
