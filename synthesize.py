@@ -458,6 +458,47 @@ _SUBSECTION_HANDLER = {
 _SUB_NUM_RE = re.compile(r"(2\.\d{1,2})")
 
 
+def _ad222_destination(question: str, section: str):
+    """Where a blocked AD 2.22 query should go. Never free synthesis; the only
+    question is WHICH safe destination.
+
+    Confirmed live, twice, from two Lagos queries that differed by one word:
+
+      "Approach PLATE for Lagos"          -> agent._CHART_NOUN_RE matched
+                                             "plate", forced chart_retrieval,
+                                             clarify asked ILS/RNAV/VOR then
+                                             18L/18R, and procedures.py
+                                             returned RWY 18R's VOR/DME block,
+                                             correctly scoped. This is right.
+
+      "What is the ILS approach for Lagos" -> no chart noun, no display verb,
+                                             so nothing forced the chart flow.
+                                             It fell to AD 2.22 verbatim, and
+                                             responder._focus assembled
+                                             DISJOINT fragments: 2.22.3.5.2's
+                                             letdown ("MAPt: Threshold 18L")
+                                             printed directly above 2.22.3.3's
+                                             "approach procedure for RWY 18 R".
+                                             Every character real, the
+                                             juxtaposition wrong.
+
+    So verbatim is NOT unconditionally safe: a focus window over a section that
+    holds several runways is a splice made of real text, assembled by the
+    window rather than by the model. An underspecified approach question has
+    exactly one correct answer -- ASK which runway and type -- and that is what
+    "approach_procedure" triggers.
+
+    subsection_router.is_approach_query() makes that call. It is intentionally
+    broad (it matches a bare "ILS"/"VOR"/"RNAV"), which is why it is only ever
+    consulted once AD 2.22 content is already established -- exactly the
+    situation here. Non-approach AD 2.22 content (departure, emergency, radar,
+    VFR, PBN) answers False and correctly keeps the verbatim destination, since
+    no approach plate covers it."""
+    if subsection_router.is_approach_query(question or ""):
+        return ("approach_procedure", None)
+    return ("subsection_verbatim", section)
+
+
 def _normalise_subsection(raw):
     """'2.12' / 'AD 2.12' / 'ad2.12' / 'AD2.12 ' -> 'AD 2.12'; else None."""
     if not raw:
@@ -528,6 +569,11 @@ def synthesize_decision(question: str, results: List[AIPResult],
         handler = _SUBSECTION_HANDLER.get(sub)
         if handler:
             return (handler, None)
+        if entity_scope.is_never_synthesize(sub):
+            # Same reasoning as LAYER 6 — see _ad222_destination(). Reached when
+            # the LLM classifier names 2.22 without any safety keyword firing,
+            # which is the "What is the ILS approach for Lagos" case.
+            return _ad222_destination(question, sub)
         return ("subsection", sub)
 
     # ---- LAYER 4: deterministic guards, when the classifier said nothing ---
@@ -554,7 +600,11 @@ def synthesize_decision(question: str, results: List[AIPResult],
         sub = semantic_subsection(results)
     if sub:
         handler = _SUBSECTION_HANDLER.get(sub)
-        return ((handler, None) if handler else ("subsection", sub))
+        if handler:
+            return (handler, None)
+        if entity_scope.is_never_synthesize(sub):
+            return _ad222_destination(question, sub)   # see _ad222_destination()
+        return ("subsection", sub)
 
     # ---- LAYER 6: general synthesis over the retrieved chunks --------------
     # AD 2.22 content must never be free-synthesized (see entity_scope). Route
@@ -566,7 +616,7 @@ def synthesize_decision(question: str, results: List[AIPResult],
     # LAYER 1 via _PROC_RE, so whatever reaches here is by definition not one.
     sec = entity_scope.blocking_section(results)
     if sec:
-        return ("subsection_verbatim", sec)
+        return _ad222_destination(question, sec)
     ans = generate_grounded_answer(question, results)
     if ans is None:
         return ("fallback", None)
