@@ -46,7 +46,7 @@ _RWY_INV_RE = re.compile(
 # synthesis over an unscoped AD 2.22 chunk — which can splice one approach's holding
 # onto another's letdown and assert values that don't match the source.
 _APPROACH_PROC_RE = re.compile(
-    r"\b(holding|letdown|let-down|missed[\s-]*approach|approach procedure)\b", re.I)
+    r"\b(holding|letdown|let[\s-]?down|missed[\s-]*approach|approach procedure)\b", re.I)
 # A genuine greeting/smalltalk — the ONLY thing that should get the canned reply.
 _REAL_GREETING_RE = re.compile(
     r"^\s*(hi|hello|hey|yo|howdy|good (morning|afternoon|evening)|greetings|"

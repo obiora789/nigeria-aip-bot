@@ -59,6 +59,7 @@ USAGE
 """
 import argparse
 import json
+import re
 import time
 import os
 import sys
@@ -113,7 +114,15 @@ def facts_from_record(icao, aero_name, subsection, rec):
     # --- shape A: canonical label/value (2.1-2.11, 2.15-2.17, 2.20, 2.21) ---
     if "field" in rec or "raw_label" in rec:
         label = _clean(rec.get("raw_label")) or _clean(rec.get("field")) or ""
-        value = _clean(rec.get("detail"))
+        # Extractors name the value column differently: AD 2.3 uses "hours",
+        # most others use "detail". Looking only for "detail" silently
+        # dropped EVERY AD 2.3 fact — the subsection was missing from the
+        # index entirely, with no error to notice.
+        value = None
+        for key in ("detail", "hours", "value", "text", "content", "remarks"):
+            value = _clean(rec.get(key))
+            if value:
+                break
         if value:
             out.append({
                 "entity": "", "label": label,
@@ -268,6 +277,164 @@ def _reset_client():
         print(f"      (could not rebuild connection: {exc})")
 
 
+# Subsections whose extractor is kind="text": they emit NO structured records,
+# so they produce no facts from aip_structured and were entirely absent from
+# the index. They exist only as whole-subsection chunks — AD 2.22 being the
+# worst case, ~80,000 characters behind one vector, which is exactly the
+# granularity problem the fact index exists to fix.
+TEXT_SUBSECTIONS = {"2.10", "2.22", "2.23"}
+
+# Their own numbered headings ("2.22.3.1.1 Holding procedure") are the natural
+# unit boundary — the same structure procedures.py already relies on.
+_HEADING_RE = re.compile(
+    r"(?m)^\s*(\d\.\d+(?:\.\d+)+)\s+([A-Z][^\n]{0,80}?)\s*$")
+
+
+# An obstacle row carries a coordinate — that is what distinguishes a real
+# row from a table header or a wrapped continuation line.
+_OBST_ROW_RE = re.compile(r"\d{6}(?:\.\d+)?[NS]\s")
+
+
+def _obstacle_facts(frame, text):
+    """One fact per OBSTACLE (AD 2.10), not one per heading."""
+    out = []
+    for line in text.splitlines():
+        line = re.sub(r"[ \t]{2,}", " ", line).strip()
+        if not _OBST_ROW_RE.search(line) or len(line) < 20:
+            continue
+        name = re.split(r"\s+\d{6}", line)[0].strip(" .;:")
+        if not name or len(name) > 60:
+            name = line[:40]
+        out.append({
+            "entity": name,
+            "label": "Obstacle",
+            "fact_value": line,
+            "fact_text": f"{frame} Obstacle {name}: {line}",
+        })
+    return out
+
+
+def facts_from_text(icao, aero_name, subsection, text):
+    """Split a text-kind subsection into one fact per numbered heading.
+
+    AD 2.22's own structure does the work: every procedure already sits under
+    a heading like "2.22.3.1.1 Holding procedure". Splitting there turns one
+    80,000-character vector into ~40-80 focused units, each of which reads
+    close to how a pilot would ask for it.
+
+    Headings with no body are skipped (a heading alone answers nothing), and
+    very long bodies are truncated for embedding — the fact_value keeps
+    enough to be useful while staying a sensible unit to match against."""
+    out = []
+    sub_name = SUBSECTION_NAME.get(subsection, "")
+    frame = f"{aero_name} ({icao}) AD {subsection} {sub_name}."
+    if not text or not text.strip():
+        return out
+
+    # AD 2.10 is the exception: many obstacles sit under ONE heading
+    # ("2.10.1 In approach and take-off areas"), so heading-splitting
+    # collapsed every obstacle at an aerodrome into a single fact — a mast, a
+    # building and a billboard all sharing one embedding, and only 8 of 36
+    # aerodromes represented at all. Each obstacle is its own hazard and must
+    # be retrievable on its own.
+    if subsection == "2.10":
+        rows = _obstacle_facts(frame, text)
+        if rows:
+            return rows
+
+    marks = list(_HEADING_RE.finditer(text))
+
+    parent = ""      # nearest ancestor heading, e.g. the approach a hold belongs to
+    for i, m in enumerate(marks):
+        num = m.group(1)
+        # PDF column extraction leaves runs of spaces inside headings
+        # ("Instrument     approach      procedures"). No pilot types that,
+        # and it would be embedded verbatim, so collapse it.
+        title = re.sub(r"\s+", " ", m.group(2)).strip()
+        start = m.end()
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+        body = re.sub(r"[ \t]{2,}", " ", text[start:end]).strip()
+        body = re.sub(r"\n{2,}", "\n", body)
+
+        # A heading like "2.22.3.1" ("Instrument approach procedures based on
+        # VOR/DME") is the parent of "2.22.3.1.1 Holding procedure". Without
+        # carrying it down, EVERY approach contributes an identical
+        # "Holding procedure" fact and a query for the ILS hold cannot be
+        # told apart from the VOR one — the same misattribution risk the
+        # structured extractors solve with per-entity tracking.
+        depth = num.count(".")
+        if depth <= 2:
+            parent = ""
+        elif depth == 3:
+            head_line = body.split("\n", 1)[0][:70].strip(" .:")
+            parent = f"{title} {head_line}".strip()
+
+        if len(body) < 12:            # a heading with no real content
+            continue
+        if len(body) > 1200:          # keep each unit a sensible size
+            body = body[:1200].rsplit(" ", 1)[0] + " …"
+
+        context = f" {parent}." if (parent and depth > 3) else ""
+        out.append({
+            "entity": num,
+            "label": title[:120],
+            "fact_value": body,
+            "fact_text": f"{frame}{context} {title}: {body}",
+        })
+
+    if not out:
+        # No heading matched anything. Index the whole subsection as ONE
+        # coarse fact rather than none: zero facts makes it INVISIBLE to
+        # retrieval, which is exactly how AD 2.23 ended up absent from the
+        # index entirely. Coarse but findable beats missing.
+        body = re.sub(r"[ \t]{2,}", " ", text).strip()
+        body = re.sub(r"\n{2,}", "\n", body)
+        if len(body) >= 12:
+            out.append({
+                "entity": "",
+                "label": (sub_name or f"AD {subsection}").title(),
+                "fact_value": body[:1200],
+                "fact_text": f"{frame} {body[:1200]}",
+            })
+    return out
+
+
+def _db(build, attempts=4):
+    """Run a Supabase call with retry + reconnect.
+
+    `build` receives the current client and returns the finished query, e.g.
+
+        _db(lambda c: c.table("aip_facts").select("id").eq("icao_code", i))
+
+    Every database call goes through this. Earlier only the UPSERT was
+    protected, so a TLS failure on a READ crashed the whole run with an
+    unhandled traceback — the connection to Supabase is the flakiest part of
+    this job and reads are just as exposed as writes.
+
+    A broken SSL socket stays broken, so on a connection-level error the
+    client is rebuilt before retrying; retrying on the same one reproduces
+    "bad record mac" every time.
+
+    Raises the last exception if every attempt fails, so callers can decide
+    whether that is fatal or skippable."""
+    last = None
+    for attempt in range(attempts):
+        try:
+            return build(_client_ref()).execute()
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            msg = str(exc)
+            if "PGRST" in msg or "Could not find" in msg:
+                raise                      # schema errors never recover
+            if attempt == attempts - 1:
+                break
+            if any(k in msg for k in ("SSL", "EOF", "record mac", "Connect",
+                                      "timed out", "reset", "decryption")):
+                _reset_client()
+            time.sleep(2 * (attempt + 1))
+    raise last
+
+
 def _dedupe_keys(facts):
     """Make (subsection, entity, label) unique within an aerodrome.
 
@@ -334,14 +501,22 @@ def main():
         want = {i.upper() for i in args.icao}
         targets = [i for i in targets if i in want]
 
-    print("build_fact_index v5  (resumable; de-duplicated keys; rebuilds connection on TLS error)")
+    print("build_fact_index v8  (fixes AD 2.3/2.10/2.23 gaps; retries all db calls)")
     total = 0
     any_error = False
     for icao in targets:
-        resp = (supabase.table("aip_structured")
-                .select("subsection, record")
-                .eq("icao_code", icao)
-                .order("subsection").execute())
+        try:
+            resp = _db(lambda c: c.table("aip_structured")
+                       .select("subsection, record")
+                       .eq("icao_code", icao)
+                       .order("subsection"))
+        except Exception as exc:  # noqa: BLE001
+            # One aerodrome's read failing must not abort the whole run —
+            # the remaining 35 are independent, and resume makes a re-run
+            # cheap. This previously crashed with a raw traceback.
+            print(f"\n{icao}: READ FAILED after retries — skipping ({str(exc)[:90]})")
+            any_error = True
+            continue
         rows = resp.data or []
         facts = []
         for row in rows:
@@ -353,6 +528,29 @@ def main():
                 dict(f, icao_code=icao, subsection=sub)
                 for f in facts_from_record(icao, names.get(icao, icao), sub, rec)
             ])
+
+        # The text-kind subsections (2.10, 2.22, 2.23) have no structured
+        # records, so they contribute nothing above. Pull their text from
+        # aip_knowledge_base and split it on its own numbered headings.
+        try:
+            kb = _db(lambda c: c.table("aip_knowledge_base")
+                     .select("aip_section, content, source_page, source_chunk")
+                     .eq("reference_tag", icao))
+            by_sec = {}
+            for r in (kb.data or []):
+                sec = (r.get("aip_section") or "").replace("AD ", "").strip()
+                if sec in TEXT_SUBSECTIONS:
+                    by_sec.setdefault(sec, []).append(r)
+            for sec, chunks in by_sec.items():
+                chunks.sort(key=lambda r: (r.get("source_page") or 0,
+                                           r.get("source_chunk") or 0))
+                blob = "\n".join(c.get("content", "") for c in chunks)
+                facts.extend([
+                    dict(f, icao_code=icao, subsection=sec)
+                    for f in facts_from_text(icao, names.get(icao, icao), sec, blob)
+                ])
+        except Exception as exc:  # noqa: BLE001
+            print(f"    (could not read text subsections: {exc})")
 
         raw_count = len(facts)
         facts = _dedupe_keys(facts)
@@ -376,9 +574,9 @@ def main():
         # just makes it cheap and fast.
         if not args.force:
             try:
-                existing = (_client_ref().table("aip_facts")
-                            .select("id", count="exact")
-                            .eq("icao_code", icao).execute())
+                existing = _db(lambda c: c.table("aip_facts")
+                               .select("id", count="exact")
+                               .eq("icao_code", icao), attempts=2)
                 have = existing.count or 0
                 if have >= len(facts):
                     print(f"    already indexed ({have} facts) — skipping. "
@@ -425,7 +623,8 @@ def main():
             for attempt in range(4):
                 try:
                     _client_ref().table("aip_facts").upsert(
-                        chunk, on_conflict="icao_code,subsection,entity,label").execute()
+                        chunk, on_conflict="icao_code,subsection,entity,label"
+                    ).execute()
                     written += len(chunk)
                     break
                 except Exception as exc:  # noqa: BLE001
