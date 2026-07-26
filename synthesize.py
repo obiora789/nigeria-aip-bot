@@ -494,7 +494,7 @@ def _ad222_destination(question: str, section: str):
     situation here. Non-approach AD 2.22 content (departure, emergency, radar,
     VFR, PBN) answers False and correctly keeps the verbatim destination, since
     no approach plate covers it."""
-    if subsection_router.is_approach_query(question or ""):
+    if entity_scope.has_plates(section) and subsection_router.is_approach_query(question or ""):
         return ("approach_procedure", None)
     return ("subsection_verbatim", section)
 

@@ -1004,8 +1004,12 @@ def test_llm_subsection_fixes_the_real_failures():
     for q, sub, want in [
             ("What is the PCN for Lagos Runways", "2.12", "rwy_data"),
             ("what is the OCA/H for Lagos", "2.22", "subsection_verbatim"),
-            ("What is the limits for Lagos CTR?", "2.17", "subsection"),
-            ("what is the lateral limit for lagos ctr", "2.17", "subsection")]:
+            # Still AD 2.17 -- the point of these cases. Delivery is now
+            # verbatim because CTR and TMA carry different limits on the same
+            # row (Lagos: CTR 20NM / TMA 65NM), so synthesising "the limit"
+            # could return the other entity's figure.
+            ("What is the limits for Lagos CTR?", "2.17", "subsection_verbatim"),
+            ("what is the lateral limit for lagos ctr", "2.17", "subsection_verbatim")]:
         assert synthesize.synthesize_decision(q, [], _ex_sub(sub))[0] == want, q
 
 
@@ -1093,10 +1097,15 @@ _ROUTING_CASES = {
         "approach lights Kano", "runway lights at Lagos"],
     "approach_procedure": ["holding procedure for Sokoto", "letdown for RWY 26",
         "missed approach RWY 21 Lagos"],
-    "subsection_verbatim": ["approach minima for DNAA", "decision height RWY 18R"],
+    "subsection_verbatim": ["approach minima for DNAA", "decision height RWY 18R",
+        "transition altitude DNMM"],
     "fallback": ["night flying ban at Lagos", "is Kano under curfew"],
+    # AD 2.17 is now a never-synthesize section (CTR vs TMA differ on fields
+    # 1-4 at the seven busiest aerodromes), so its queries land on the same
+    # section VERBATIM rather than being synthesized. The routing target is
+    # unchanged -- which is what this table exists to protect.
     "subsection": ["RFF category at Kano", "fuel available at Lagos",
-        "transition altitude DNMM", "bird hazards Sokoto", "MET office hours Lagos",
+        "bird hazards Sokoto", "MET office hours Lagos",
         "ABN beacon DNAA", "magnetic variation Kano", "apron strength DNAA",
         "ground handling at Kano", "apron surface Lagos", "apron floodlights DNAA"],
 }
@@ -1266,12 +1275,19 @@ def test_source_block_cites_declared_excerpt_not_reranked_guess():
 def test_aerodrome_data_query_detected():
     import main
     for q in ("aerodrome reference temperature of Kano", "magnetic variation lagos",
-              "ARP coordinates for kano", "transition altitude DNAA"):
+              "ARP coordinates for kano"):
         assert main._AERODROME_DATA_RE.search(q), q
 
 
 def test_aerodrome_data_does_not_catch_other_fields():
     import main
     for q in ("tower frequency", "TORA for rwy 22", "threshold elevation of rwy 04",
-              "how many runways in kano"):
+              "how many runways in kano",
+              # AD 2.17 fields, NOT AD 2.2 -- verified against the AIP:
+              # DNAA "5 Transition altitude 5 000 ft/1 500 m AMSL" and
+              # "7 Remarks Transition level: FL 65", both in the ATS airspace
+              # table. This test previously asserted the OPPOSITE, which is why
+              # "transition level for Abuja" returned the aerodrome elevation.
+              "transition altitude DNAA", "what is the transition level for Abuja",
+              "what is Lagos transition altitude"):
         assert not main._AERODROME_DATA_RE.search(q), q

@@ -86,12 +86,34 @@ from typing import List
 # procedure tied to a specific runway, approach type or aircraft category --
 # see the module docstring for the measured evidence.
 #
+# AD 2.17 (ATS airspace) is here because fields 1-4 are PER-AIRSPACE-ENTITY and
+# differ sharply between the CTR and the TMA. Measured on the real AIP, DNAA,
+# DNCA, DNKA, DNKN, DNMA, DNMM and DNPO all publish both -- the seven busiest
+# aerodromes. Lagos, for example:
+#     1 lateral limits   CTR circle 20NM   /  TMA circle 65NM
+#     2 vertical limit   CTR 1 500FT/GND   /  TMA FL 145/1 500FT
+#     3 classification   CTR: D            /  TMA: B
+# Synthesising "the vertical limit for Lagos" over that can return the TMA's
+# figure for a CTR question with every digit genuinely present in the source --
+# the misattribution already recorded live as "lateral limit for lagos ctr"
+# landing on ENR 3.1 at 59%.
+#
+# Fields 5-7 (transition altitude, hours, remarks/transition level) are single-
+# valued, so verbatim answers them exactly. And unlike AD 2.22, AD 2.17 labels
+# every entity INLINE ("CTR:", "TMA:") on every row, so a verbatim slice is
+# genuinely self-attributing rather than a set of juxtaposed fragments.
+#
 # Other misattribution-prone sections (AD 2.12 asymmetric fields, AD 2.13
 # declared distances, AD 2.18 comms, AD 2.19 navaids) are deliberately NOT
 # listed: each already has a dedicated, battle-tested guard in synthesize.py
 # that routes to a structured per-entity lookup, which is a better answer than
 # refusing. This set is for sections with no such structured path.
-NEVER_SYNTHESIZE_SECTIONS = ("AD 2.22",)
+NEVER_SYNTHESIZE_SECTIONS = ("AD 2.22", "AD 2.17")
+
+# Of the never-synthesize sections, only AD 2.22 has approach plates. AD 2.17
+# is an airspace table -- offering a plate for "vertical limits of the Lagos
+# TMA" would be the departure-procedure mistake all over again.
+PLATE_BACKED_SECTIONS = ("AD 2.22",)
 
 _SECTION_RE = re.compile(r"^\s*(AD\s*\d+\.\d+)", re.I)
 
@@ -116,6 +138,16 @@ def is_ad222(section: str) -> bool:
 def is_never_synthesize(section: str) -> bool:
     """True if this section must never be free-synthesized over."""
     return _canon(section) in NEVER_SYNTHESIZE_SECTIONS
+
+
+def has_plates(section: str) -> bool:
+    """True if this section's content has corresponding approach plates.
+
+    Callers use this to decide whether an underspecified query may be sent to
+    the clarify/plate flow. Only AD 2.22 qualifies: routing an AD 2.17 airspace
+    question to an approach plate would answer a different question with a
+    confident artifact."""
+    return _canon(section) in PLATE_BACKED_SECTIONS
 
 
 def blocks_free_synthesis(results) -> bool:

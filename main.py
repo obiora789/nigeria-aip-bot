@@ -372,10 +372,28 @@ _BARE_CLAR_RE = re.compile(r"^(ILS|VOR|RNAV|GNSS|RNP|NDB|\d{2}[LRC]?)$", re.I)
 # AD 2.2 aerodrome geographic/admin fields — routed to a fetch-by-section then
 # synthesize, because the general vector search under-retrieves the secondary
 # paired values (e.g. reference temperature sits behind elevation in one field).
+# Fields that genuinely live in AD 2.2 (aerodrome geographical/administrative
+# data), answerable from the structured get_aerodrome_data() record.
+#
+# "transition altitude|level" was REMOVED from this list. Both are AD 2.17
+# fields, verified directly against the AIP:
+#   DNAA — "5 Transition altitude 5 000 ft/1 500 m AMSL" ... "7 Remarks
+#          Transition level: FL 65"
+#   DNMM — "5 Transition altitude 3 500 ft/1 067 m AMSL" ... "7 Remarks
+#          Transition level: FL 50"
+# both sitting in the ATS airspace table alongside "ATS unit call sign",
+# "CTR/TMA" and "Hours of applicability". AD 2.2 has never held either value,
+# so this branch could only ever fall through to whatever AD 2.2 DID have --
+# which is why "what is the transition level for Abuja" answered "DNAA
+# elevation 342.0m/1122.0ft" at a confident 100% match.
+#
+# subsection_router.detect_subsection() already returns "AD 2.17" for all of
+# "transition level/altitude" phrasings, so removing them here is sufficient:
+# the query now flows to the AD 2.17 path that owns the data.
 _AERODROME_DATA_RE = re.compile(
     r"\b(reference temp\w*|ref\.?\s?temp\w*|magnetic variation|mag\.?\s?var\w*|"
     r"annual change|aerodrome reference point|\barp\b|geoid|"
-    r"transition (altitude|level)|aerodrome elevation|elevation of the aerodrome)\b",
+    r"aerodrome elevation|elevation of the aerodrome)\b",
     re.I)
 
 
