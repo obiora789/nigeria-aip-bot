@@ -38,6 +38,7 @@ def main():
     failed = []
     suspicious = []
     all_warnings = []
+    header_leaks = []
     for icao, name, start, end in std_entries:
         page_words = {}
         for p in range(start, min(start + 8, end + 1)):
@@ -56,6 +57,21 @@ def main():
             failed.append(icao)
         if result.warnings:
             all_warnings.extend(f"{icao}: {w}" for w in result.warnings)
+
+        # GUARD: the AIP reprints the lighting table's column-header row when
+        # the table spans a page, and it must never survive into a stored
+        # value. It did, in 8 of 36 aerodromes — as the entire value for five
+        # of them, and appended to real lighting data for Lagos, DNBB and
+        # DNFB, so a pilot read correct PALS/PAPI detail trailing off into
+        # column titles. Without this check the extractor could regress to
+        # that silently: nothing else here inspects the value text, and the
+        # run still reported "clean: 36/36" throughout.
+        for r in result.records:
+            for endk, val in (r.get("end_detail") or {}).items():
+                if re.search(r"\bRWY\s+APCH\s+LGT\b", val or "", re.I):
+                    header_leaks.append(
+                        f"{icao} [{endk}]: column header in stored value — "
+                        f"{(val or '')[:60]!r}")
 
         rwy_str = "; ".join(r["designation"] or "general_notes" for r in result.records)
         # sanity check: a runway designation number should never exceed 36
@@ -81,12 +97,18 @@ def main():
         print(f"\nSUSPICIOUS designations (possible false-positive end-markers):")
         for s in suspicious:
             print(f"  {s}")
+    if header_leaks:
+        print(f"\nHEADER LEAKS ({len(header_leaks)}) — table furniture stored as data:")
+        for h in header_leaks:
+            print(f"  {h}")
+        print("  Fix ad214_extractor._strip_table_furniture() before ingesting.")
+
     if all_warnings:
         print(f"\nWarnings:")
         for w in all_warnings:
             print(f"  {w}")
     print("=" * 80)
-    sys.exit(1 if failed else 0)
+    sys.exit(1 if (failed or header_leaks) else 0)
 
 
 if __name__ == "__main__":

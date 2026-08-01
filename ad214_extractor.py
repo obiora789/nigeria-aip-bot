@@ -37,6 +37,51 @@ END_START_RE = re.compile(r"^(\d{1,2}[LRC]?)\s+(?=[A-Z])")
 # positive shapes (a degree symbol, a decimal point, or another digit).
 
 
+# The AD 2.14 COLUMN-HEADER row. It is table furniture, not data, and the AIP
+# repeats it whenever the table spans a page. Confirmed present in 8 of 36
+# aerodromes' stored values, in two different forms:
+#
+#   * as the ENTIRE value (DNAN, DNBY, DNGO, DNMK, DNSU) — the general_notes
+#     fallback captured the header and nothing else, producing an aip_facts row
+#     labelled "Notes" whose value is a list of column titles. A pilot asking
+#     "notes at Umueri" got that, and the stress set scored AD 2.14 at zero.
+#   * APPENDED to real data (DNBB, DNFB, DNMM) — e.g. DNMM's 18L value carries
+#     correct PALS/PAPI detail and then trails off into
+#     "RWY APCH LGT THR LGT VASIS TDZ LGT ... 1 2 3 4 5 6 7 8 9 10".
+#
+# The header always opens with "RWY APCH LGT" and runs to the end of the
+# captured text, so one cut handles every variant (the column ORDER differs
+# between aerodromes, which is why matching the whole header verbatim would
+# not work). Real values never contain that phrase: they open with the runway
+# designator and describe equipment, e.g. "22 PALS Available PAPI /Left ...".
+# The header runs from "RWY APCH LGT" up to and including the AIP's column-
+# NUMBER row ("1 2 3 4 5 6 7 8 9 10"), which is what terminates every variant.
+# It does NOT run to the end of the captured text: real data follows it.
+# Confirmed the hard way — an earlier version used ".*$" and deleted DNMK's
+# "05 23 Note: PAPI RWY 23 U/S", DNAN's "06 24" and DNGO's "05 23", turning a
+# formatting defect into data loss and five validator failures. Cut the header
+# only; keep everything after the column numbers.
+_COL_HEADER_RE = re.compile(
+    r"\bRWY\s+APCH\s+LGT\b.*?\b1\s+2\s+3\s+4\s+5\s+6\s+7\s+8\s+9(?:\s+10)?\b",
+    re.S | re.I)
+
+# The section title, which the general_notes fallback also picks up.
+_SECTION_TITLE_RE = re.compile(
+    r"\bDN[A-Z]{2}\s+AD\s*2\.14\s+APPROACH\s+AND\s+RUNWAY\s+LIGHTING\b", re.I)
+
+
+def _strip_table_furniture(text: str) -> str:
+    """Remove the section title and the repeated column-header row.
+
+    Deliberately NOT a general cleaner: it removes two specific, structurally
+    identifiable pieces of table markup and leaves everything else untouched,
+    so a genuine published value like DNAK's "Not available." survives intact.
+    """
+    t = _SECTION_TITLE_RE.sub(" ", text or "")
+    t = _COL_HEADER_RE.sub(" ", t)
+    return re.sub(r"\s{2,}", " ", t).strip(" ,;.")
+
+
 class AD214Extractor(SubsectionExtractor):
     subsection = "2.14"
     kind = "tabular"
@@ -73,6 +118,13 @@ class AD214Extractor(SubsectionExtractor):
             full_text = self.clean_text(" ".join(w[4] for w in all_words))
             warnings.append("no runway-end lighting rows found — "
                              "captured whole segment as general_notes")
+            # Strip the section title and the repeated column-header row. What
+            # remains is whatever the table actually carried — for DNMK that is
+            # "05 23 Note: PAPI RWY 23 U/S", a live PAPI serviceability note.
+            # Validated across all 36: every aerodrome that reaches this branch
+            # still has content after the header, so there is deliberately NO
+            # "emit nothing" case here.
+            full_text = _strip_table_furniture(full_text)
             runways = [{
                 "icao": icao, "designation": None,
                 "end_detail": {"general_notes": full_text},
@@ -101,7 +153,11 @@ class AD214Extractor(SubsectionExtractor):
                 "icao": icao,
                 "designation": designation,
                 "end_detail": {
-                    e: self.clean_text(" ".join(end_text.get(e, [])))
+                    # Strip the repeated column header that the AIP prints when
+                    # this table spans a page; without it DNMM's 18L value ends
+                    # in "RWY APCH LGT ... 1 2 3 4 5 6 7 8 9 10".
+                    e: _strip_table_furniture(
+                        self.clean_text(" ".join(end_text.get(e, []))))
                     for e in ends_sorted
                 },
             })

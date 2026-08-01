@@ -412,6 +412,202 @@ def lighting_data_reply(res: Resolution, records: list, requested_runway=None,
     return body + footer
 
 
+# A stored AD 2.x subsection is often a FLATTENED FIELD TABLE:
+#   "DNMM AD 2.17 ATS airspace: Designation and lateral limits=CTR. A circle
+#    radius 20NM...; Vertical limit=CTR: 1 500FT GND TMA: FL 145...;
+#    Transition altitude=3 500 ft/1 067 m AMSL; Remarks=Transition level: FL 50"
+#
+# Shown raw that is one unreadable run-on line: confirmed live, a pilot asking
+# "what is Lagos transition altitude" got all seven AD 2.17 fields in a single
+# paragraph with the answer buried sixth. Worse, it invites MISREADING -- the
+# CTR and TMA values sit adjacent with nothing separating them, which is the
+# same juxtaposition hazard that made the AD 2.22 focus window unsafe.
+#
+# Splitting on the table's own "label=value;" structure and giving each field
+# its own line is pure re-formatting: no value is altered, merged, rounded or
+# synthesised, and each value stays welded to its own label. It is strictly
+# safer than the run-on form as well as far more readable.
+# A LABEL is a short run with no sentence punctuation, ending in '='. Digits
+# and lowercase are allowed because different subsections label differently --
+# AD 2.17 uses "Transition altitude", AD 2.13 uses "RWY 18L", AD 2.3 uses
+# "customs and immigration". An earlier, narrower pattern required an initial
+# capital and no digits, so it parsed AD 2.17 and silently fell back on both of
+# the others.
+#
+# It stays conservative in the ways that matter: no '.' ',' ';' or ':' inside a
+# label, a length bound, and _parse_field_table requires at least TWO pairs --
+# so prose containing an incidental "x = y" is not mistaken for a table. A
+# value may itself contain ';' or '=' (AD 2.4's "Jet A-1; AVGAS 100LL",
+# AD 2.2's "ARP = midpoint of RWY 04/22"), because the split only fires before
+# something that looks like a label.
+_LABEL = r"[A-Za-z0-9][A-Za-z0-9 /()'\-]{2,60}"
+_FIELD_SPLIT_RE = re.compile(rf";\s*(?={_LABEL}=)")
+_FIELD_KV_RE = re.compile(rf"^\s*({_LABEL})=(.*)$", re.S)
+
+
+# A chunk can carry an ENTITY prefix followed by several key=value pairs:
+#   "36R TORA=2745 TODA=2745 ASDA=2805 LDA=2745"
+# (confirmed: DNMM's real stored AD 2.13). Treating that as one label/value
+# gave label "36R TORA" with value "2745 TODA=2745 ASDA=2805 LDA=2745" --
+# three declared distances stranded inside a fourth's value, and a label that
+# claims to be TORA while the text beside it also states TODA, ASDA and LDA.
+# A pilot reading that could take any of the four numbers as the TORA.
+# Expanding it into one field per pair keeps every value welded to its own
+# label, which is the invariant the whole reply format exists to preserve.
+_INNER_KV_RE = re.compile(r"([A-Za-z][A-Za-z0-9/()'\-]{1,20})=\s*([^=]*?)"
+                          r"(?=\s+[A-Za-z][A-Za-z0-9/()'\-]{1,20}=|$)")
+
+
+def _expand_entity_chunk(label: str, value: str):
+    """[(label, value)] — expanded if `value` holds further key=value pairs."""
+    inner = _INNER_KV_RE.findall(value or "")
+    if len(inner) < 1 or "=" not in (value or ""):
+        return [(label, value)]
+    parts = label.rsplit(" ", 1)
+    entity, first_key = (parts[0], parts[1]) if len(parts) == 2 else ("", label)
+    out = [(f"{entity} {first_key}".strip(), inner[0][1].strip() if inner else value)]
+    # The first pair's value is the text before the first inner key, which the
+    # split above already captured as `value`'s head.
+    head = value.split(inner[0][0] + "=", 1)[0].strip() if inner else value
+    out = [(f"{entity} {first_key}".strip(), head or value)]
+    for k, v in inner:
+        out.append((f"{entity} {k}".strip(), v.strip().rstrip(";")))
+    return out
+
+
+def _parse_field_table(text: str):
+    """[(label, value)] if `text` is a flattened field table, else None."""
+    body = text or ""
+    head = ""
+    m = re.match(r"^([^:]{0,80}?:)\s*(.*)$", body, re.S)
+    if m and "=" in m.group(2):
+        head, body = m.group(1).strip(), m.group(2)
+    pairs = []
+    for chunk in _FIELD_SPLIT_RE.split(body):
+        kv = _FIELD_KV_RE.match(chunk.strip())
+        if kv:
+            label = re.sub(r"\s+", " ", kv.group(1)).strip()
+            value = re.sub(r"\s+", " ", kv.group(2)).strip().rstrip(";")
+            if label and value:
+                pairs.extend(_expand_entity_chunk(label, value))
+    return (head, pairs) if len(pairs) >= 2 else None
+
+
+def _rank_fields(pairs, query: str, place: str = ""):
+    """Order fields by overlap with the pilot's words. Ranking only changes the
+    ORDER things are shown in -- every field is still shown, so a bad ranking
+    costs readability, never an omitted or wrong value."""
+    def _stem(w):
+        """Crude singularisation so "limits" matches the AIP's "limit".
+        Bounded on purpose -- it normalises plurals, it is not a vocabulary."""
+        if len(w) > 4 and w.endswith("ies"):
+            return w[:-3] + "y"
+        if len(w) > 3 and w.endswith("es") and not w.endswith("ses"):
+            return w[:-2]
+        if len(w) > 3 and w.endswith("s") and not w.endswith("ss"):
+            return w[:-1]
+        return w
+
+    def _words(t):
+        return {_stem(w) for w in re.findall(r"[a-z]{3,}", (t or "").lower())}
+
+    # Drop the aerodrome's own name from the ranking terms. It appears in the
+    # published DATA as well as the question -- Lagos's AD 2.17 call-sign field
+    # reads "Lagos Tower/EN, Lagos Approach/EN" -- so leaving it in made every
+    # question mentioning Lagos rank the call-sign field top, whatever it was
+    # actually about. Confirmed: five unrelated queries all led with call signs.
+    # This is not a stop-word list; `place` is the aerodrome this reply is
+    # already resolved to, so it stays correct for any aerodrome and any
+    # question.
+    _skip = {_stem(w) for w in re.findall(r"[a-z]{3,}", (place or "").lower())}
+    qwords = [_stem(w) for w in re.findall(r"[a-z]{3,}", (query or "").lower())
+              if _stem(w) not in _skip]
+    # Runway/entity designators ("18R", "04", "18L") are alphanumeric and short,
+    # so the word pattern above drops them entirely. That made "TORA for RWY
+    # 18R" tie between the RWY 18L and RWY 18R fields and lead with 18L --
+    # promoting one runway's declared distances under a question about the
+    # other, which is the misattribution this project exists to prevent.
+    designators = {d.upper() for d in re.findall(r"\b\d{2}[LRC]?\b", (query or "").upper())}
+    terms = set(qwords)
+    # Consecutive word pairs from the query. A PHRASE hit outranks any number
+    # of single-word hits, because single words are ambiguous in exactly the
+    # place it matters: "transition level" and "transition altitude" share the
+    # word "transition", and the LEVEL is published under the generic label
+    # "Remarks". Word-only scoring therefore led a "transition level" question
+    # with the transition ALTITUDE -- a different value, and one a pilot could
+    # act on. Phrase matching pins it to the field whose text actually says
+    # "transition level".
+    bigrams = {f"{a} {b}" for a, b in zip(qwords, qwords[1:])}
+
+    def score(lbl_val):
+        lbl, val = lbl_val
+        hay = " ".join(_stem(w) for w in
+                       re.findall(r"[a-z]{3,}", f"{lbl} {val}".lower()))
+        phrase = sum(8 for bg in bigrams if bg in hay)
+        lbl_desig = {d.upper() for d in re.findall(r"\b\d{2}[LRC]?\b", lbl.upper())}
+        # A designator match is decisive: it names WHICH entity was asked about.
+        desig = 20 * len(designators & lbl_desig)
+        # ...and a designator MISMATCH is disqualifying. If the pilot said 18R,
+        # the 18L field must never lead, however many other words it shares.
+        if designators and lbl_desig and not (designators & lbl_desig):
+            return -1
+        lw, vw = _words(lbl), _words(val)
+        return desig + phrase + (len(terms & lw) * 3) + len(terms & vw)
+
+    ranked = sorted(pairs, key=score, reverse=True)
+    if not ranked:
+        return ranked, 0
+    top = score(ranked[0])
+    # A TIE means the question does not distinguish these fields. Promoting
+    # either would assert a choice the pilot never made, so show no lead and
+    # let them read the labelled list. Same principle as asking rather than
+    # guessing -- applied to ordering.
+    if len(ranked) > 1 and score(ranked[1]) == top:
+        return ranked, 0
+    return ranked, top
+
+
+def _render_field_table(head, pairs, query: str, place: str = "") -> str:
+    # DUPLICATE LABELS mean the section publishes several entries the stored
+    # text does not distinguish. Confirmed in DNAA's real AD 2.19: "LLZ" twice
+    # (109.3 and 111.9 MHz) and "GP ILS/DME" twice (332.0 and 331.1) -- one per
+    # runway, with nothing saying which. Promoting either under "what is the
+    # LLZ frequency at Abuja" would assert a runway the source never states,
+    # which is the documented AD 2.19 misattribution hazard. So: never lead,
+    # show every entry, and say plainly why.
+    counts = {}
+    for lbl, _ in pairs:
+        counts[lbl] = counts.get(lbl, 0) + 1
+    dupes = sorted(l for l, n in counts.items() if n > 1)
+
+    ranked, top = _rank_fields(pairs, query, place)
+    if dupes and any(l in dupes for l, _ in ranked[:1]):
+        top = 0
+    lines = []
+    if head:
+        lines.append(head.rstrip(":"))
+        lines.append("")
+    if top > 0:
+        lbl, val = ranked[0]
+        lines.append(f"▸ {lbl}")
+        lines.append(f"   {val}")
+        rest = [p for p in pairs if p != ranked[0]]
+        if rest:
+            lines.append("")
+            lines.append("Also published in this section:")
+            for lbl, val in rest:
+                lines.append(f"• {lbl}: {val}")
+    else:
+        for lbl, val in pairs:
+            lines.append(f"• {lbl}: {val}")
+    if dupes:
+        lines.append("")
+        lines.append(f"Note: this aerodrome publishes more than one entry for "
+                     f"{', '.join(dupes)} in one AIP table. Check the plate or "
+                     f"the official AIP for which applies to your runway.")
+    return "\n".join(lines)
+
+
 def subsection_reply(res: Resolution, section: str, text: str,
                      query: str = "") -> str:
     """Verbatim reply from ONE deterministically-fetched AD 2.x subsection.
@@ -421,9 +617,16 @@ def subsection_reply(res: Resolution, section: str, text: str,
     than a vector-search guess that might be a different subsection entirely.
     That guarantee is what makes this a safe fallback rather than a degraded
     one: retrieval was exact even though synthesis declined."""
-    needles = (re.findall(r"\d[\d,]*(?:\.\d+)?", query or "")
-               + re.findall(r"[a-z]{4,}", (query or "").lower())[:8])
-    body = _focus(text, needles, width=700) if needles else text[:1400]
+    table = _parse_field_table(text)
+    if table:
+        # A field table is rendered whole and structured. _focus() is for prose:
+        # applied to a table it cuts mid-field and strands a value under the
+        # wrong label.
+        body = _render_field_table(table[0], table[1], query, res.label or "")
+    else:
+        needles = (re.findall(r"\d[\d,]*(?:\.\d+)?", query or "")
+                   + re.findall(r"[a-z]{4,}", (query or "").lower())[:8])
+        body = _focus(text, needles, width=700) if needles else text[:1400]
     footer = (f"\n\n———\nSource: Nigeria AIP · {section} · {config.AIRAC_CYCLE}\n"
               f"{config.DISCLAIMER}")
     head = f"{res.label} — {section}\n\n"

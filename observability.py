@@ -33,10 +33,36 @@ REVIEW_PATHS = {
 }
 
 
+_PEPPER_WARNED = False
+
+
 def _hash_chat(chat_id) -> str | None:
+    """Pseudonymise a Telegram chat ID for the query log.
+
+    The old form hashed with the literal prefix "vannie:", which is public
+    knowledge sitting in this file. Telegram chat IDs are sequential integers,
+    so the entire plausible keyspace can be hashed in seconds and the mapping
+    recovered — the hash provided no real protection at all, only the
+    appearance of it, which is worse because it invites treating the log as
+    anonymised when it is not.
+
+    config.CHAT_HASH_PEPPER is a secret the holder of a leaked log does not
+    have, which is what makes pre-computation infeasible. If it is unset the
+    ID is NOT logged: an empty column is honest, while a reversible hash in a
+    column labelled chat_hash is a false assurance. Warned once, not fatal —
+    query logging is not worth grounding the bot for."""
+    global _PEPPER_WARNED
     if chat_id is None:
         return None
-    return hashlib.sha256(f"vannie:{chat_id}".encode()).hexdigest()[:16]
+    pepper = getattr(config, "CHAT_HASH_PEPPER", "") or ""
+    if not pepper:
+        if not _PEPPER_WARNED:
+            log.warning(
+                "CHAT_HASH_PEPPER is not set — chat IDs will NOT be logged. "
+                "Set it (openssl rand -hex 32) to enable pseudonymised logging.")
+            _PEPPER_WARNED = True
+        return None
+    return hashlib.sha256(f"{pepper}:{chat_id}".encode()).hexdigest()[:16]
 
 
 def log_query(*, chat_id=None, query="", intent=None, icao=None, path="unknown",
@@ -229,6 +255,12 @@ def _esc(s) -> str:
 
 
 def render_dashboard(rows: list, days: int, token: str = "") -> str:
+    # `token` is retained for signature compatibility but MUST NOT be emitted
+    # into any URL. Links are relative and authenticate via the HttpOnly
+    # dashboard cookie instead. Putting the token in hrefs leaked it into
+    # browser history, proxy logs and the Referer header of every outbound
+    # request the page made.
+    token = ""
     """Self-contained HTML dashboard (inline CSS, no external deps, no third-party
     data egress). Read-only apart from an age-based prune; a full wipe is CLI-only."""
     s = summarize(rows)
@@ -288,7 +320,7 @@ def render_dashboard(rows: list, days: int, token: str = "") -> str:
     # time-range toggle (carries the token) — daily / weekly / monthly / quarter
     def rng(label, d):
         cls = "on" if d == days else ""
-        return f'<a class="rng {cls}" href="?token={_esc(token)}&amp;days={d}">{label}</a>'
+        return f'<a class="rng {cls}" href="?days={d}">{label}</a>'
     ranges = (rng("Today", 1) + rng("Week", 7) + rng("Month", 30) + rng("90 days", 90))
 
     return f"""<!doctype html><html><head><meta charset="utf-8">
@@ -319,7 +351,7 @@ border-radius:8px;padding:6px 10px;font-size:13px}}
 <h1>Vannie — query dashboard</h1>
 <div class="muted">last {days} days · generated live from vannie_query_log</div>
 <div class="rangebar">{ranges}
-<a class="rng" href="/dashboard/export.csv?token={_esc(token)}&amp;days={days}">⬇ Export CSV</a></div>
+<a class="rng" href="/dashboard/export.csv?days={days}">⬇ Export CSV</a></div>
 <div class="cards">{cards}</div>
 <h2>👎 Flagged wrong by pilots</h2><table>
 <tr><th class="id">id</th><th>path</th><th>icao</th><th>query</th><th class="id">when</th></tr>
@@ -334,7 +366,6 @@ border-radius:8px;padding:6px 10px;font-size:13px}}
 <div class="tools">
   <form method="post" action="/dashboard/prune"
         onsubmit="return confirm('Delete log entries older than the selected age? This cannot be undone.');">
-    <input type="hidden" name="token" value="{_esc(token)}">
     Clear entries older than
     <select name="before_days"><option value="30">30</option><option value="90" selected>90</option></select>
     days <button type="submit">Clear old logs</button>

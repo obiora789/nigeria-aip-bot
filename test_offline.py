@@ -984,6 +984,79 @@ def test_facts_path_is_wired_into_main():
     assert "config.FACTS_MIN_SIM" in src, "confidence floor not applied"
 
 
+def test_bare_aerodrome_is_structural_not_intent_based():
+    """A bare place name answering "which aerodrome?" must complete the pending
+    request, whatever intent the extraction LLM assigned to that single word.
+
+    Confirmed live: "Show me ILS approach for RWY 18L" -> "Which aerodrome?"
+    -> "Lagos" -> the bot replied with Lagos's AD 2.1 city and aerodrome name.
+    The intent, procedure_type and runway were all stored in `pending`
+    correctly; the merge never ran because _bare_aerodrome() demanded
+    intent == "icao_lookup" and the model had returned aerodrome_fact.
+
+    The safety property is unchanged and asserted below: a message carrying a
+    field of its own ("elevation of Abuja") is a NEW query, never a slot-fill."""
+    import main
+    from types import SimpleNamespace as N
+
+    def ex(intent="aerodrome_fact", name=None, icao=None, pt=None, rwy=None):
+        return N(intent=intent, aerodrome_name=name, icao_code=icao,
+                 procedure_type=pt, runway=rwy)
+
+    # Bare place names — must slot-fill regardless of the assigned intent.
+    assert main._bare_aerodrome(ex(name="Lagos"), "Lagos")
+    assert main._bare_aerodrome(ex("icao_lookup", name="Lagos"), "Lagos")
+    assert main._bare_aerodrome(ex(icao="DNMM"), "DNMM")
+    assert main._bare_aerodrome(ex(name="Kano"), "it's Kano")
+    assert main._bare_aerodrome(ex(name="Abuja"), "Abuja airport")
+
+    # Carries its own field -> a new query, NOT a slot-fill answer.
+    assert not main._bare_aerodrome(ex(name="Abuja"), "elevation of Abuja")
+    assert not main._bare_aerodrome(ex(name="Kano"), "what is the PCN for Kano")
+    assert not main._bare_aerodrome(ex(name="Lagos", pt="ILS"), "ILS for Lagos")
+    assert not main._bare_aerodrome(ex(name="Lagos", rwy="18R"), "Lagos RWY 18R")
+
+
+def test_facts_path_covers_the_section_dump_statuses():
+    """GUARD: the statuses whose fallback is a whole-section dump from
+    aip_knowledge_base MUST be able to reach aip_facts first.
+
+    Measured over 286 stress cases: the facts path passed 74% while
+    subsection_verbatim (54%), comms (50%) and navaid fell back to
+    get_section_text/get_subsection_text against a far thinner store — DNAA's
+    entire AD 2.8 chunk there is the string "DNAA AD 2.8 aprons/taxiways",
+    while aip_facts carries the taxiway width, shoulder, surface and strength.
+    126 of 286 rows sat on paths the gate excluded.
+
+    Narrowing this list again would silently re-thin those three answers, and
+    nothing else in the suite would notice — which is why it is asserted here
+    rather than left to a comment."""
+    import inspect, main
+    src = inspect.getsource(main)
+    for status in ("subsection_verbatim", "comms", "navaid"):
+        assert f'"{status}"' in src.split("_FACTS_STATUSES")[1][:400], (
+            f"{status} dropped from the facts gate — it will fall back to the "
+            f"thin aip_knowledge_base store")
+    # comms/navaid carry no subsection in `ga`, so they must be scoped
+    # explicitly or the search runs unscoped across all 23 subsections.
+    assert "_FACTS_SUBSECTION" in src, "comms/navaid facts lookup is unscoped"
+    assert '"2.18"' in src and '"2.19"' in src, "comms/navaid subsections missing"
+
+
+def test_structured_handlers_stay_off_the_facts_path():
+    """GUARD: rwy_data and declared_distance must NOT be added to the facts
+    gate. They read per-entity records from aip_structured and measured 81% and
+    80% — better than the facts path's 74%. This is a note-to-future-self with
+    teeth: widening the gate is usually right, and was right for the three
+    above, but not for these two."""
+    import inspect, main
+    src = inspect.getsource(main)
+    window = src.split("_FACTS_STATUSES")[1][:400]
+    for status in ("rwy_data", "declared_distance"):
+        assert f'"{status}"' not in window, (
+            f"{status} added to the facts gate — it already outperforms it")
+
+
 # --- LLM subsection classification. 35 regexes were doing SEMANTIC
 #     CLASSIFICATION — deciding what a pilot's question is about — which is
 #     the one job an LLM does better than code, and the extraction call

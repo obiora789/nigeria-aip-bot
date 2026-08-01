@@ -21,7 +21,18 @@ import csv
 import re
 import sys
 
-from e2e import PLATE_MARKERS, run_pipeline
+from e2e import PLATE_MARKERS
+# Capture mode, NOT e2e.run_pipeline. That mirror of the decision flow drifted
+# silently: main.py handles 11 statuses (approach_procedure, subsection_verbatim,
+# subsection, rwy_data, declared_distance, comms, navaid, lighting_data,
+# rwy_char, grounded, not_in_aip); e2e.run_pipeline handles 2, and the other
+# nine collapse into a generic verbatim answer. e2e also never passes `ex`, so
+# the LLM subsection classifier never runs. Every PASS scored through it was
+# measuring a pipeline that does not exist in production.
+#
+# run_stress_set.run_pipeline drives main.process() itself with the Telegram
+# sends captured in memory -- no second copy of the flow, so nothing to drift.
+from run_stress_set import run_pipeline
 
 NUM = re.compile(r"\d+(?:\.\d+)?")
 SECTIONS = re.compile(r"\b(?:AD|ENR|GEN)\s?\d+(?:\.\d+)?\b", re.I)

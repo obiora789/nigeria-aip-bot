@@ -46,6 +46,22 @@ SYNTHESIS_ENABLED = os.getenv("SYNTHESIS_ENABLED", "1") == "1"
 QUERY_LOG_ENABLED = os.getenv("QUERY_LOG_ENABLED", "1") == "1"
 DASHBOARD_TOKEN = os.getenv("DASHBOARD_TOKEN", "")   # empty -> /dashboard disabled
 
+# Secret pepper for the query log's chat-ID hash. WITHOUT THIS THE HASH IS
+# COSMETIC: Telegram chat IDs are sequential integers in a small, enumerable
+# space, so anyone who obtains the log can hash every plausible ID and recover
+# exactly who asked what — pilots' identities against their queries. A pepper
+# the attacker does not have makes that pre-computation impossible.
+#
+# Set it to a long random value (e.g. `openssl rand -hex 32`) and NEVER rotate
+# it casually: hashes are the join key, so a new pepper orphans every existing
+# log row from its successors. Rotate only alongside a log prune.
+#
+# Deliberately not defaulted to a constant — a shared default is the same as no
+# pepper at all. Blank means the operator has not set it, and observability
+# warns once at import rather than failing the boot (query logging is
+# non-essential; the bot must still fly).
+CHAT_HASH_PEPPER = os.getenv("CHAT_HASH_PEPPER", "")
+
 # --- Alerting: ping the operator when a credential/infra check degrades --------
 ALERT_ENABLED = os.getenv("ALERT_ENABLED", "1") == "1"
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "")       # Telegram chat to alert; blank -> off

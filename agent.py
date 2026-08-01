@@ -46,11 +46,54 @@ _RWY_INV_RE = re.compile(
 # synthesis over an unscoped AD 2.22 chunk — which can splice one approach's holding
 # onto another's letdown and assert values that don't match the source.
 _APPROACH_PROC_RE = re.compile(
-    r"\b(holding|letdown|let-down|missed[\s-]*approach|approach procedure)\b", re.I)
+    r"\b(holding|letdown|let[\s-]?down|missed[\s-]*approach|approach procedure)\b", re.I)
 # A genuine greeting/smalltalk — the ONLY thing that should get the canned reply.
 _REAL_GREETING_RE = re.compile(
     r"^\s*(hi|hello|hey|yo|howdy|good (morning|afternoon|evening)|greetings|"
     r"thanks?|thank you|help|start|what can you do|who are you)\b[\s!.?]*$", re.I)
+
+
+
+# --- out_of_scope backstop ---------------------------------------------------
+# The prompt already said out_of_scope was ONLY for live/commercial/foreign, and
+# the model ignored it: 16 of 198 published fields were refused, and adding
+# in-scope examples fixed 0 of them. That is not fixable by more examples,
+# because "is this in scope?" is an UNBOUNDED question — 23 subsections times
+# every field name the AIP contains, including tourist offices and bus
+# services. No list covers it.
+#
+# "Is this live, priced, or foreign?" is bounded. It is a question about TIME
+# and MONEY, not about AIP content, so it can be enumerated and stays
+# enumerated as the AIP grows. That asymmetry is the whole reason this guard
+# is written this way round.
+#
+# Deliberately NARROW, because each pattern must not catch its static
+# counterpart — the confusions are real, from measured failures:
+#     "landing FORECAST for Zaria"      AD 2.11 type/interval   -> in scope
+#     "current METAR for Zaria"         observation now         -> out
+#     "CLEARANCE PRIORITIES for Minna"  AD 2.7 snow/rain        -> in scope
+#     "clearance to land at Minna"      ATC                     -> out
+# So "forecast" and bare "clearance" are NOT markers; the time words are.
+_LIVE_RE = re.compile(
+    r"\b(current(ly)?|right now|at the moment|as of now|this (morning|afternoon|"
+    r"evening)|tonight|today'?s?|live|latest|active\s+notams?|\bnotams?\b|"
+    r"in\s+use\s+(today|now)?)\b|"
+    r"\bclearance\s+to\s+(land|take\s?off|taxi|enter)\b|"
+    r"\b(slots?\b|runway\s+in\s+use)\b|"
+    # A future-time word is as much a "not published in the AIP" signal as a
+    # present one: the AIP is a static document, so "tomorrow"/"next week" can
+    # only be asking about an operational state it does not carry.
+    r"\b(tomorrow|tonight|next\s+(week|month)|this\s+week)\b", re.I)
+# "charges"/"fees" are NOT here: GEN publishes aerodrome charges, so those are a
+# national_lookup, not out of scope.
+_PRICE_RE = re.compile(
+    r"\b(price[sd]?|cost[s]?|how much (does|is|to)|tariff)\b", re.I)
+
+
+def _is_genuinely_out_of_scope(raw: str) -> bool:
+    """True only if the query is about NOW or about MONEY. Foreign airports are
+    handled separately by resolver.resolve(), which fails to match them."""
+    return bool(_LIVE_RE.search(raw or "") or _PRICE_RE.search(raw or ""))
 
 
 def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
@@ -108,6 +151,24 @@ def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
             ex.intent = "chart_retrieval"
             if not ex.icao_code and len(cands) == 1:
                 ex.icao_code = next(iter(cands))
+    # 6c) A REFUSAL needs positive evidence. If the model said out_of_scope but
+    #     the query resolves to exactly one Nigerian aerodrome and contains no
+    #     time or money marker, the refusal has no basis and is overridden.
+    #     Measured: 16 of 198 published fields were refused this way —
+    #     "tourist office at Escravos", "Kashimbila health and sanitation",
+    #     "direction distance from city at Makurdi" — every one of them static,
+    #     Nigerian and published.
+    #
+    #     This cannot rescue a genuinely out-of-scope query: live and priced
+    #     ones are caught by _is_genuinely_out_of_scope, and a foreign airport
+    #     never resolves to a DN aerodrome, so the condition below fails.
+    if ex.intent == "out_of_scope" and not _is_genuinely_out_of_scope(raw):
+        cands = resolver.match_name(raw)
+        if ex.icao_code in resolver.VALID_ICAO or len(cands) == 1:
+            ex.intent = "aerodrome_fact"
+            if not ex.icao_code and len(cands) == 1:
+                ex.icao_code = next(iter(cands))
+
     # 7) the model sometimes tags a follow-up ("can you list them?") as a greeting.
     #    Only a REAL greeting gets the canned reply; otherwise treat it as a normal
     #    query so conversation-context carry can resolve it.
@@ -155,10 +216,29 @@ _SYSTEM = (
     "de-icing and repair facilities, taxiway widths, hours of operation. Casual or "
     "terse phrasing ('abuja twr freq', 'how high is abuja', 'longest rwy lagos') is "
     "still IN SCOPE — classify it normally.\n\n"
-    "OUT OF SCOPE -> out_of_scope ONLY for: live/real-time info (current weather, "
-    "active NOTAMs, today's runway-in-use, ATC clearances, slots), commercial info "
-    "the AIP does not publish (fuel PRICES), and any airport OUTSIDE Nigeria. When "
-    "unsure but a Nigerian aerodrome or AIP topic is named, DO NOT use out_of_scope.\n\n"
+    "OUT OF SCOPE is a POSITIVE classification, not a leftover bucket. Before you "
+    "may answer out_of_scope, one of these three must be true. Check them "
+    "explicitly:\n"
+    "  (a) TIME — the user wants the state of something RIGHT NOW: current "
+    "weather/wind/METAR observation, active NOTAMs, the runway in use today, an "
+    "ATC clearance, a slot, a flight's status.\n"
+    "  (b) MONEY — the user wants a price: fuel price, what something costs, how "
+    "much to land.\n"
+    "  (c) PLACE — the airport is OUTSIDE Nigeria.\n"
+    "If all three are NO, you MUST NOT answer out_of_scope, however "
+    "un-aeronautical the topic sounds. The AIP publishes a great deal that does "
+    "not sound like aviation, and all of it is IN SCOPE: bus and taxi "
+    "transportation (AD 2.5), tourist offices, hotels, restaurants and banks "
+    "(AD 2.5), health and sanitation (AD 2.3), direction and distance from the "
+    "city (AD 2.2), snow/rain clearance priorities and seasonal availability "
+    "(AD 2.7), landing-forecast type and issuance interval (AD 2.11), medical "
+    "facilities (AD 2.5). Asking WHICH of these a Nigerian aerodrome publishes "
+    "is always an aerodrome_fact.\n"
+    "Note the difference TIME makes: 'landing forecast for Zaria' is the "
+    "published forecast TYPE (AD 2.11, in scope); 'current METAR for Zaria' is "
+    "an observation happening now (out of scope). 'Clearance priorities for "
+    "Minna' is AD 2.7 snow/rain clearance (in scope); 'clearance to land at "
+    "Minna' is ATC (out of scope).\n\n"
     "ICAO: only set icao_code if the user literally typed a 4-letter 'DN' code; never "
     "infer a code from a name — put the name verbatim in aerodrome_name.\n\n"
     "filter_part is a coarse hint: AD for aerodrome data, ENR for airspace, GEN for "

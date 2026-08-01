@@ -11,12 +11,13 @@ milliseconds; otherwise Telegram retries the update and we'd pay twice.
 """
 import asyncio
 import copy
+import hmac
 import logging
 import re
 import uuid
 from types import SimpleNamespace
 
-from fastapi import BackgroundTasks, FastAPI, Form, Header, Request, Response
+from fastapi import Cookie, BackgroundTasks, FastAPI, Form, Header, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 import cache
@@ -84,6 +85,49 @@ async def _health_monitor() -> None:
             log.exception("periodic healthcheck errored")
 
 
+
+# --- dashboard auth ---------------------------------------------------------
+# The token was previously read from the QUERY STRING and echoed back into
+# redirect URLs and every rendered link. URLs leak: browser history, proxy and
+# CDN access logs, and the Referer header sent to any external resource the
+# page loads. Anyone holding that token reads every pilot query in the log.
+#
+# It now travels in an HttpOnly cookie set by a POST login, so it is never in a
+# URL and JavaScript cannot read it. The query parameter is still ACCEPTED for
+# one purpose only — the initial login link — and when used it is immediately
+# exchanged for a cookie via a redirect that carries no token.
+#
+# Comparison is constant-time: `!=` on a secret leaks length and prefix
+# information through timing, which is exactly the primitive an attacker needs
+# to recover a token byte by byte.
+_DASH_COOKIE = "vannie_dash"
+
+
+def _dash_ok(cookie_token: str | None, query_token: str = "") -> bool:
+    """True if either credential matches. Constant-time; empty config = closed."""
+    expected = config.DASHBOARD_TOKEN or ""
+    if not expected:
+        return False
+    for candidate in (cookie_token or "", query_token or ""):
+        if candidate and hmac.compare_digest(candidate, expected):
+            return True
+    return False
+
+
+def _dash_denied() -> Response:
+    """404, not 401 — do not confirm the endpoint exists to an unauthenticated
+    caller."""
+    return Response("not found", status_code=404)
+
+
+def _set_dash_cookie(resp):
+    """HttpOnly + SameSite=Strict blocks JS access and cross-site submission;
+    Secure keeps it off plaintext HTTP. 12h expiry bounds a leaked cookie."""
+    resp.set_cookie(_DASH_COOKIE, config.DASHBOARD_TOKEN, max_age=12 * 3600,
+                    httponly=True, secure=True, samesite="strict", path="/")
+    return resp
+
+
 @app.get("/health")
 def health() -> dict:
     """Cheap liveness — no external calls, safe for frequent Render pings."""
@@ -91,44 +135,55 @@ def health() -> dict:
 
 
 @app.get("/health/deep")
-def health_deep(token: str = ""):
+def health_deep(token: str = "", vannie_dash: str | None = Cookie(default=None)):
     """Deep check (OpenAI + Supabase). Token-gated because it makes API calls."""
-    if not config.DASHBOARD_TOKEN or token != config.DASHBOARD_TOKEN:
-        return Response("not found", status_code=404)
+    if not _dash_ok(vannie_dash, token):
+        return _dash_denied()
     ok, fails = observability.healthcheck()
     return {"status": "ok" if ok else "degraded", "failed": fails,
             "airac": config.AIRAC_CYCLE}
 
 
 @app.get("/dashboard")
-def dashboard(token: str = "", days: int = 30):
+def dashboard(token: str = "", days: int = 30,
+              vannie_dash: str | None = Cookie(default=None)):
     """Read-only observability dashboard. Token-gated; disabled unless
     DASHBOARD_TOKEN is set. Renders live from the query log — no third-party
     egress, mutations only via the triage CLI."""
-    if not config.DASHBOARD_TOKEN or token != config.DASHBOARD_TOKEN:
-        return Response("not found", status_code=404)
+    if not _dash_ok(vannie_dash, token):
+        return _dash_denied()
     days = max(1, min(int(days), 90))
+    # Arriving with ?token=... is the LOGIN path: set the cookie and bounce to
+    # a clean URL, so the secret leaves the address bar (and history) at once.
+    if token and not vannie_dash:
+        return _set_dash_cookie(
+            RedirectResponse(f"/dashboard?days={days}", status_code=303))
     rows = observability.fetch_log(days=days)
-    return HTMLResponse(observability.render_dashboard(rows, days, config.DASHBOARD_TOKEN))
+    # No token passed to the renderer: links are relative and carry the cookie.
+    return HTMLResponse(observability.render_dashboard(rows, days))
 
 
 @app.post("/dashboard/prune")
-def dashboard_prune(token: str = Form(""), before_days: int = Form(90)):
+def dashboard_prune(token: str = Form(""), before_days: int = Form(90),
+                    vannie_dash: str | None = Cookie(default=None)):
     """Age-based prune from the dashboard. Token-gated; floored at 7 days in
-    prune_logs so recent data can't be wiped. A full wipe is CLI-only."""
-    if not config.DASHBOARD_TOKEN or token != config.DASHBOARD_TOKEN:
-        return Response("not found", status_code=404)
+    prune_logs so recent data can't be wiped. A full wipe is CLI-only.
+
+    SameSite=Strict on the cookie is what stops a cross-site POST here: this
+    endpoint mutates the log, so a forged submission from another origin would
+    otherwise be able to prune it."""
+    if not _dash_ok(vannie_dash, token):
+        return _dash_denied()
     observability.prune_logs(before_days)
-    # back to the dashboard (month view)
-    return RedirectResponse(f"/dashboard?token={config.DASHBOARD_TOKEN}&days=30",
-                            status_code=303)
+    return RedirectResponse("/dashboard?days=30", status_code=303)
 
 
 @app.get("/dashboard/export.csv")
-def dashboard_export(token: str = "", days: int = 30):
+def dashboard_export(token: str = "", days: int = 30,
+                     vannie_dash: str | None = Cookie(default=None)):
     """Download the query log for the window as CSV (offline analysis / audit)."""
-    if not config.DASHBOARD_TOKEN or token != config.DASHBOARD_TOKEN:
-        return Response("not found", status_code=404)
+    if not _dash_ok(vannie_dash, token):
+        return _dash_denied()
     days = max(1, min(int(days), 90))
     rows = observability.fetch_log(days=days)
     csv_text = observability.export_csv(rows)
@@ -346,12 +401,46 @@ _AVIATION_INTENTS = {"chart_retrieval", "procedure_lookup", "frequency_retrieval
                      "runway_data", "aerodrome_fact", "airspace_lookup"}
 
 
-def _bare_aerodrome(ex) -> bool:
-    """True when the message is essentially just naming a place ('Lagos', 'DNMM')
-    — the safe signal that it answers an earlier 'which aerodrome?'. Kept strict
-    (icao_lookup, no field) so 'elevation of Abuja' is treated as a NEW query, not
-    a slot-fill answer."""
-    return ex.intent == "icao_lookup" and not ex.procedure_type and not ex.runway
+# A message that is ONLY a place name, once the aerodrome itself is removed.
+# "Lagos", "DNMM", "lagos please", "it's Kano" -> nothing of substance is left.
+_FILLER_ONLY_RE = re.compile(
+    r"^(it'?s|its|the|a|at|in|for|to|is|use|try|do|please|pls|thanks?|ok|okay|"
+    r"yes|yeah|airport|aerodrome|dn[a-z]{2})$", re.I)
+
+
+def _bare_aerodrome(ex, raw: str = "") -> bool:
+    """True when the message is essentially just naming a place ('Lagos',
+    'DNMM') — the safe signal that it answers an earlier 'which aerodrome?'.
+
+    STRUCTURAL, not intent-based. The previous test required
+    intent == "icao_lookup", which is a judgement the extraction LLM has to
+    make about a single word with no context. It frequently returns
+    aerodrome_fact instead (and backstop #7 rewrites general_greeting to
+    aerodrome_fact too), so the test failed and the pending request was
+    silently dropped.
+
+    Confirmed live: "Show me ILS approach for RWY 18L" -> "Which aerodrome?"
+    -> "Lagos" -> the bot answered with Lagos's AD 2.1 city and aerodrome
+    NAME. The pilot's intent, procedure type and runway were all stored
+    correctly in `pending` and never merged, because of the intent check
+    alone.
+
+    What makes it safe is the same thing the old docstring wanted: the message
+    must carry NO field of its own. "elevation of Abuja" still fails this test
+    and is treated as a new query, because "elevation" survives the filter."""
+    if ex.procedure_type or ex.runway:
+        return False
+    if ex.intent == "icao_lookup":
+        return True
+    # Strip the aerodrome the extractor found, then see if anything meaningful
+    # remains. Nothing left -> the message was only a place name.
+    residue = raw or ""
+    for token in (ex.aerodrome_name or "", ex.icao_code or ""):
+        if token:
+            residue = re.sub(re.escape(token), " ", residue, flags=re.I)
+    words = [w for w in re.findall(r"[A-Za-z']{2,}", residue)
+             if not _FILLER_ONLY_RE.match(w)]
+    return not words
 
 
 def _aviation_intent(ex) -> bool:
@@ -523,7 +612,7 @@ async def process(chat_id: int, text: str) -> None:
         ctx_note = None
         follow_query = text
         pending = ctx.get("pending")
-        if pending and _bare_aerodrome(ex) and res.icao:
+        if pending and _bare_aerodrome(ex, text) and res.icao:
             # A bare "Lagos" answering an earlier "which aerodrome?" — merge the
             # remembered request onto this aerodrome and re-run it.
             ex.intent = pending.get("intent") or ex.intent
@@ -685,6 +774,29 @@ async def process(chat_id: int, text: str) -> None:
         #      right chunk is in hand.
         if _AERODROME_DATA_RE.search(follow_query) and res.icao:
             ad_text = await asyncio.to_thread(get_aerodrome_data, res.icao)
+            # A THIN AD 2.2 chunk must not answer. Measured on the real bot:
+            # 8 of 13 AD 2.2 stress cases returned the aerodrome ELEVATION
+            # regardless of what was asked -- magnetic variation, reference
+            # temperature, ARP longitude, ARP site description all got
+            # "DNKN elevation 476.0m/1562.0ft". The routing was right; the
+            # stored chunk simply holds one field.
+            #
+            # aip_knowledge_base (what this reads) is far thinner than
+            # aip_structured/aip_facts (what the 23 validated extractors
+            # built) -- DNAA's whole AD 2.8 chunk is the string
+            # "DNAA AD 2.8 aprons/taxiways". Answering from a one-line chunk
+            # produces a confident reply about the wrong field, which is the
+            # misattribution class this project exists to prevent.
+            #
+            # The test is structural, not a field list: a genuine AD 2.2
+            # record carries several fields and runs to hundreds of
+            # characters. Falling through is SAFE and already the established
+            # behaviour when the chunk is missing entirely -- the normal
+            # search path (and the facts path, when enabled) then gets a turn.
+            if ad_text and len(ad_text.strip()) < 120 and ad_text.count("\n") < 2:
+                log.info("AD 2.2 chunk too thin for %s (%d chars) — falling through",
+                         res.icao, len(ad_text.strip()))
+                ad_text = ""
             if ad_text:
                 ad_res = AIPResult(content=ad_text, similarity=1.0,
                                    aip_section="AD 2.2", reference_tag=res.icao)
@@ -747,9 +859,42 @@ async def process(chat_id: int, text: str) -> None:
             # Below FACTS_MIN_SIM the retriever has no real opinion, so we
             # leave the existing behaviour untouched rather than answer from
             # a weak match.
-            if (config.FACTS_ENABLED and res.icao
-                    and status in ("subsection", "grounded", "not_in_aip", "fallback")):
-                _sub = ga if status == "subsection" else ""
+            # Statuses whose fallback is a whole-SECTION dump from
+            # aip_knowledge_base, and the subsection aip_facts holds the same
+            # data under. Measured over 286 stress cases:
+            #
+            #     path                 store               pass
+            #     facts                aip_facts            74%
+            #     subsection_verbatim  aip_knowledge_base   54%
+            #     comms                aip_knowledge_base   50%
+            #     navaid               aip_knowledge_base  (refusals)
+            #
+            # 126 of 286 rows sat on paths that could never reach aip_facts,
+            # because the gate below listed only four statuses. aip_facts holds
+            # all 23 subsections for all 36 aerodromes, so those paths were
+            # falling back to the thin store while the rich one went unqueried.
+            #
+            # This is SAFER than the section dump it replaces, not merely more
+            # accurate. The comms and navaid guards exist because AD 2.18 and
+            # AD 2.19 stack several services/navaids into one block with
+            # misaligned fields, so a synthesised "the tower frequency" could
+            # return another service's value. In aip_facts each service and each
+            # navaid is already its own row (entity = "TWR"/"ATIS"/"ACC",
+            # "DVOR/DME"/"GP"/"DME"), and facts_reply() groups by entity — so
+            # two entities' values cannot merge onto one line. The guards' own
+            # reasoning was written before aip_facts existed.
+            #
+            # rwy_data (81%) and declared_distance (80%) are deliberately NOT
+            # here: they already read per-entity records from aip_structured
+            # and outperform the facts path. Do not "fix" what is winning.
+            _FACTS_SUBSECTION = {"comms": "2.18", "navaid": "2.19"}
+            _FACTS_STATUSES = ("subsection", "subsection_verbatim", "comms",
+                               "navaid", "grounded", "not_in_aip", "fallback")
+            if config.FACTS_ENABLED and res.icao and status in _FACTS_STATUSES:
+                if status in ("subsection", "subsection_verbatim"):
+                    _sub = ga or ""
+                else:
+                    _sub = _FACTS_SUBSECTION.get(status, "")
                 _sub_num = (_sub or "").replace("AD ", "").strip()
                 _facts = await asyncio.to_thread(
                     search_facts, embedding, res.icao, _sub_num, config.FACTS_MAX)

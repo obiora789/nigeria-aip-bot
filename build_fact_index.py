@@ -100,6 +100,40 @@ def _clean(v):
     return s or None
 
 
+# AD 2.14 TABLE FURNITURE. The AIP reprints the lighting table's column-header
+# row whenever the table spans a page, and the extractor stores it inside the
+# value: as the entire value for 5 aerodromes (DNAN, DNBY, DNGO, DNMK, DNSU),
+# and appended to real data for 3 more (DNBB, DNFB, DNMM — Lagos 18L ends in
+# "RWY APCH LGT ... 1 2 3 4 5 6 7 8 9 10").
+#
+# ad214_extractor.py now strips this at ingestion, but that only takes effect
+# on a full per-aerodrome re-ingest, which rewrites AD 2.1-2.23 in two tables
+# for ten aerodromes — a large blast radius for a display defect. Stripping
+# here instead means a routine `--force` rebuild of aip_facts alone cleans the
+# index Vannie actually queries, with no PDF re-parse and no other extractor
+# re-run.
+#
+# The header runs from "RWY APCH LGT" to the AIP's column-NUMBER row and stops
+# there; real content follows it (DNMK's "05 23 Note: PAPI RWY 23 U/S"), so
+# cutting to end-of-string destroys data. That mistake was made once already.
+_AD214_HEADER_RE = re.compile(
+    r"\bRWY\s+APCH\s+LGT\b.*?\b1\s+2\s+3\s+4\s+5\s+6\s+7\s+8\s+9(?:\s+10)?\b",
+    re.S | re.I)
+_AD214_TITLE_RE = re.compile(
+    r"\bDN[A-Z]{2}\s+AD\s*2\.14\s+APPROACH\s+AND\s+RUNWAY\s+LIGHTING\b", re.I)
+
+
+def _strip_ad214_furniture(value: str) -> str:
+    """Remove the AD 2.14 section title and column-header row from a value.
+
+    Returns the value unchanged when neither is present, so it is safe to call
+    on every fact. A genuine published value such as DNAK's "Not available."
+    survives intact."""
+    t = _AD214_TITLE_RE.sub(" ", value or "")
+    t = _AD214_HEADER_RE.sub(" ", t)
+    return re.sub(r"\s{2,}", " ", t).strip(" ,;.")
+
+
 def facts_from_record(icao, aero_name, subsection, rec):
     """Explode ONE structured record into atomic facts.
 
@@ -228,14 +262,61 @@ def facts_from_record(icao, aero_name, subsection, rec):
         return out
 
     # --- fallback: index whatever scalar fields exist -----------------------
+    #
+    # UNIT-SUFFIXED KEYS ARE MERGED, NOT SPLIT. Extractors name dual-unit
+    # fields as <base>_<unit> ("elevation_m": 199.0, "elevation_ft": 653.0).
+    # Turning each key into its own label produced two facts,
+    # "elevation m" -> "199.0" and "elevation ft" -> "653.0", with the UNIT IN
+    # THE LABEL and the fact_value a bare number.
+    #
+    # Two real consequences, both confirmed on DNKS:
+    #   * responder.facts_reply() shows fact_value verbatim, so an elevation
+    #     query could return "653.0" with no unit. A unitless altitude is
+    #     exactly the wrong-value output this project exists to prevent.
+    #   * retrieval saw two facts of identical meaning competing for one
+    #     query, so "how high is Kashimbila" had two equally-correct answers
+    #     that were ONE value (199.0 m x 3.28084 = 652.9 ft).
+    #
+    # Merging also satisfies config.SYNTHESIS_SYSTEM rule 2, which already
+    # requires both units whenever the AIP publishes both.
+    _UNIT_SUFFIX = re.compile(r"^(.*?)_(m|ft|km|nm|mhz|khz|deg|kg|lb|t|c|f)$", re.I)
+    # Deterministic order: the upsert key is (icao, subsection, entity, label),
+    # so an unstable join order would rewrite the same row on every rebuild.
+    _UNIT_ORDER = {"m": 0, "ft": 1, "km": 2, "nm": 3, "mhz": 4, "khz": 5,
+                   "deg": 6, "kg": 7, "lb": 8, "t": 9, "c": 10, "f": 11}
+    _UNIT_DISPLAY = {"m": "m", "ft": "ft", "km": "km", "nm": "NM",
+                     "mhz": "MHz", "khz": "kHz", "deg": "\u00b0",
+                     "kg": "kg", "lb": "lb", "t": "t",
+                     "c": "\u00b0C", "f": "\u00b0F"}
+    grouped = {}
     for k, v in rec.items():
         if k in ("icao", "icao_code"):
             continue
         val = _clean(v)
-        if val and not isinstance(v, (dict, list)):
-            label = k.replace("_", " ")
-            out.append({"entity": "", "label": label, "fact_value": val,
-                        "fact_text": f"{frame} {label}: {val}"})
+        if not val or isinstance(v, (dict, list)):
+            continue
+        m = _UNIT_SUFFIX.match(k)
+        if m:
+            grouped.setdefault(m.group(1), []).append((m.group(2), val))
+        else:
+            grouped.setdefault(k, []).append((None, val))
+
+    for base, parts in grouped.items():
+        label = base.replace("_", " ")
+        if len(parts) == 1 and parts[0][0] is None:
+            value = parts[0][1]
+        else:
+            parts.sort(key=lambda p: _UNIT_ORDER.get((p[0] or "").lower(), 99))
+            # Render units the way the AIP writes them. The key suffix is
+            # lowercase ASCII ("ref_temp_c"), so joining it raw produced
+            # "33.0 c" -- ambiguous in a document where a bare letter can be a
+            # runway side, an airspace class or an aircraft category. These are
+            # display forms for units that already exist in the key; nothing is
+            # inferred or converted.
+            value = " / ".join(f"{v} {_UNIT_DISPLAY.get(u.lower(), u)}" if u else v
+                               for u, v in parts)
+        out.append({"entity": "", "label": label, "fact_value": value,
+                    "fact_text": f"{frame} {label}: {value}"})
     return out
 
 
@@ -524,10 +605,18 @@ def main():
             rec = row.get("record") or {}
             if isinstance(rec, str):
                 rec = json.loads(rec)
-            facts.extend([
-                dict(f, icao_code=icao, subsection=sub)
-                for f in facts_from_record(icao, names.get(icao, icao), sub, rec)
-            ])
+            for f in facts_from_record(icao, names.get(icao, icao), sub, rec):
+                if sub.startswith("2.14"):
+                    # Strip the reprinted column-header row before it reaches
+                    # the index. See _strip_ad214_furniture(). A fact left
+                    # empty by the strip is DROPPED: it was table markup, not a
+                    # published value, and indexing it produced the "Notes"
+                    # facts that made "notes at Umueri" answerable at all.
+                    f["fact_value"] = _strip_ad214_furniture(f.get("fact_value"))
+                    f["fact_text"] = _strip_ad214_furniture(f.get("fact_text"))
+                    if not f["fact_value"]:
+                        continue
+                facts.append(dict(f, icao_code=icao, subsection=sub))
 
         # The text-kind subsections (2.10, 2.22, 2.23) have no structured
         # records, so they contribute nothing above. Pull their text from
