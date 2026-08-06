@@ -29,14 +29,31 @@ from typing import Optional
 
 @dataclass
 class ExtractResult:
-    icao: str
-    subsection: str                 # e.g. "2.12"
+    icao: str                       # AD: the ICAO code. ENR: the scope id.
+    subsection: str                 # e.g. "2.12", "5.1", "4.4"
     kind: str                       # "tabular" | "text"
     records: list = field(default_factory=list)   # list[dict] for tabular; [] for text
     text: str = ""                  # cleaned prose for text kind; "" for tabular
     embed_text: str = ""            # what gets embedded — ALWAYS present
     warnings: list = field(default_factory=list)   # non-fatal notes for the audit
     excluded: bool = False          # True for subsections excluded by decision (2.22)
+    # SCOPE. Defaults keep every existing AD extractor working unchanged: an
+    # extractor that sets only `icao` is an aerodrome extractor, exactly as
+    # before. ENR extractors set these explicitly.
+    #
+    # This field exists because `icao` is not a general identifier. A waypoint
+    # (TEMSA), an airway (UT467) and a danger area (DND45) are all published
+    # AIP entities with no ICAO code, so an extractor for them had nowhere to
+    # put its identity — which is why 152 pages of ENR had no extractors at
+    # all and "Where is TEMSA?" was answered "not in the Nigerian AIP".
+    scope_kind: str = "AD"          # AD | ENR_AREA | ENR_POINT | ENR_ROUTE |
+                                    # ENR_AIRSPACE | GEN
+
+    @property
+    def scope_id(self) -> str:
+        """The entity this result belongs to. `icao` for aerodromes; for ENR
+        the scope id was passed in through the same field."""
+        return self.icao
 
 
 @dataclass

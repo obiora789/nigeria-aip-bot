@@ -537,10 +537,22 @@ def _dedupe_keys(facts):
     individually addressable."""
     by_key = {}
     for f in facts:
-        by_key.setdefault((f["subsection"], f["entity"], f["label"]), []).append(f)
+        # SCOPE IS PART OF THE KEY. Without it every ENR entity collides:
+        # DNP1 and DNP2 both have entity='' and label='Name', so they looked
+        # like duplicates of one another and 57 areas collapsed to a handful of
+        # numbered "item 1 / item 2" rows. The upsert key is
+        # (scope_kind, scope_id, subsection, entity, label), so deduplication
+        # must use the same key or it removes rows the database would have
+        # accepted — silently, and in the direction of LOSING data.
+        #
+        # For AD rows scope_id is the ICAO, so behaviour there is unchanged:
+        # this function was always called per-aerodrome.
+        by_key.setdefault((f.get("scope_kind", "AD"), f.get("scope_id", ""),
+                           f["subsection"], f["entity"], f["label"]),
+                          []).append(f)
 
     out = []
-    for (sub, entity, label), group in by_key.items():
+    for (_sk, _sid, sub, entity, label), group in by_key.items():
         if len(group) == 1:
             out.append(group[0])
             continue
@@ -562,6 +574,251 @@ def _dedupe_keys(facts):
     return out
 
 
+
+# ---------------------------------------------------------------------------
+# ENR ingestion
+# ---------------------------------------------------------------------------
+# ENR entities are NOT aerodromes, so they cannot be reached by the loop above,
+# which iterates STANDARD_36 and reads aip_structured by icao_code. A waypoint
+# (TEMSA), an airway (UT467) and a danger area (DND45) each have their own
+# identity and no ICAO — which is exactly why 152 pages of ENR had no path into
+# the index and "Where is TEMSA?" was answered "not in the Nigerian AIP".
+#
+# One SCOPE per entity, not per section: DND45's facts are keyed
+# (ENR_AREA, DND45), so retrieval confined to that scope can never return
+# DND46's vertical limits. The same per-entity guarantee runway ends get.
+_ENR_SOURCES = {
+    # subsection -> (module, class, scope_kind)
+    "5.1": ("enr51_extractor", "ENR51Extractor", "ENR_AREA"),
+}
+
+# Which record fields become facts, and the label a pilot sees. Order matters:
+# it is the order they appear in a reply. Fields absent from a record are
+# skipped, never emitted as empty — an area with no published activation hours
+# must not gain a blank one.
+_ENR_FACT_FIELDS = [
+    ("family", "Type of area"),
+    ("name", "Name"),
+    ("upper_limit", "Upper limit"),
+    ("lower_limit", "Lower limit"),
+    ("lateral_limits", "Lateral limits"),
+]
+
+
+def _enr_facts_from_record(rec: dict, subsection: str) -> list:
+    """One record -> its atomic facts, each carrying the entity's own scope."""
+    scope_kind = rec.get("scope_kind") or "ENR_AREA"
+    scope_id = (rec.get("scope_id") or "").strip()
+    if not scope_id:
+        return []
+    frame = f"{scope_id} ENR {subsection}"
+    out = []
+    for key, label in _ENR_FACT_FIELDS:
+        val = _clean(rec.get(key))
+        if not val:
+            continue
+        out.append({
+            "scope_kind": scope_kind, "scope_id": scope_id,
+            "icao_code": scope_kind,        # trigger keeps this consistent
+            "subsection": subsection, "entity": "", "label": label,
+            "fact_value": val,
+            "fact_text": f"{frame} {label}: {val}",
+        })
+    # Coordinates are ONE fact, not one per vertex: a polygon is meaningless
+    # split across rows, and a pilot asking where an area is needs the whole
+    # boundary or none of it.
+    coords = rec.get("coordinates") or []
+    if coords:
+        joined = " ".join(coords)
+        out.append({
+            "scope_kind": scope_kind, "scope_id": scope_id,
+            "icao_code": scope_kind,
+            "subsection": subsection, "entity": "", "label": "Coordinates",
+            "fact_value": joined,
+            "fact_text": f"{frame} Coordinates ({len(coords)} points): {joined}",
+        })
+    return out
+
+
+def build_enr(subsections, pdf_path, dry_run=False, limit=40):
+    """Extract, embed and upsert ENR facts. Mirrors the AD path deliberately —
+    same embedding call, same batch sizes, same retry-with-reconnect — so the
+    failure modes already fixed there (SSL drops, false-success reporting,
+    silent overwrite on duplicate keys) do not have to be rediscovered here."""
+    import importlib
+    import pypdfium2 as pdfium
+
+    total = 0
+    any_error = False
+    for sub in subsections:
+        if sub not in _ENR_SOURCES:
+            print(f"ENR {sub}: no extractor registered — skipping")
+            any_error = True
+            continue
+        mod_name, cls_name, scope_kind = _ENR_SOURCES[sub]
+        try:
+            cls = getattr(importlib.import_module(mod_name), cls_name)
+        except Exception as exc:                      # noqa: BLE001
+            print(f"ENR {sub}: cannot load {mod_name}.{cls_name} ({exc})")
+            any_error = True
+            continue
+
+        # Page selection matches the extractor's own validator: the page's OWN
+        # running header, anchored at the start. Searching anywhere admits the
+        # table of contents, which once swept 500 unrelated pages into an
+        # AD 2.22 extraction.
+        hdr = re.compile(rf"^\s*ENR\s*{re.escape(sub)}\s*-\s*\d+")
+        doc = pdfium.PdfDocument(pdf_path)
+        pages = []
+        for i in range(len(doc)):
+            page = doc[i]
+            tp = page.get_textpage()
+            t = tp.get_text_range()
+            tp.close()
+            page.close()
+            if hdr.match(t):
+                pages.append(t)
+        if not pages:
+            print(f"ENR {sub}: no content pages found in {pdf_path}")
+            any_error = True
+            continue
+
+        ex = cls()
+        ex.segment_text = lambda _segs, _blob="\n".join(pages): _blob
+        result = ex.extract("ENR", [1])
+        issues = [i for i in ex.validate(result) if i.severity == "error"]
+        if issues:
+            # A validator error means a record is incomplete — for airspace a
+            # pilot may need to avoid, an incomplete record is worse than none.
+            print(f"ENR {sub}: {len(issues)} VALIDATION ERROR(S) — nothing written")
+            for i in issues[:5]:
+                print(f"    {i.field}: {i.message[:90]}")
+            any_error = True
+            continue
+
+        facts = []
+        for rec in result.records:
+            facts.extend(_enr_facts_from_record(rec, sub))
+        facts = _dedupe_keys(facts)
+        print(f"\nENR {sub} — {len(result.records)} entities -> {len(facts)} facts")
+
+        if dry_run:
+            for f in facts[:limit]:
+                print(f"    [{f['scope_kind']:9}] {f['scope_id']:8} "
+                      f"{f['label']:16} | {f['fact_text'][:88]}")
+            if len(facts) > limit:
+                print(f"    ... +{len(facts) - limit} more")
+            total += len(facts)
+            continue
+
+        written, failed, upsert_errors, lost = _embed_and_upsert(facts)
+        status = f"    wrote {written}/{len(facts)} facts"
+        if failed:
+            status += f"  ({failed} embedding failures)"
+        print(status)
+        for e in dict.fromkeys(upsert_errors):
+            print(f"      upsert error: {e}")
+        for f in lost[:10]:
+            print(f"      NOT WRITTEN: {f.get('scope_id')} / {f['label']}")
+        if len(lost) > 10:
+            print(f"      ... +{len(lost) - 10} more not written")
+        if lost:
+            print("      -> re-run the same command; upserts are idempotent, "
+                  "so only the missing rows are added.")
+        if written != len(facts) or upsert_errors or failed:
+            any_error = True
+        total += written
+
+    return total, any_error
+
+
+
+def _embed_and_upsert(facts):
+    """Embed every fact and upsert it. Returns rows ACTUALLY WRITTEN.
+
+    Shared by the AD and ENR paths deliberately. This code carries fixes that
+    were each found the hard way and must not be rediscovered in a second copy:
+      * a fact is NEVER stored without an embedding — it would be invisible to
+        vector search while still looking indexed;
+      * upserts run in batches of 10, not 100: a 1536-float embedding is ~30KB
+        of JSON and a 100-row request triggered "SSL: EOF occurred in violation
+        of protocol" mid-transfer;
+      * the client is rebuilt on SSL failure — a broken socket stays broken, so
+        retry alone was insufficient;
+      * the count returned is rows WRITTEN, not rows sent. An earlier version
+        printed "indexed 125 facts" after every upsert had failed.
+    """
+    # --- embed + upsert -------------------------------------------------
+    # The embeddings endpoint accepts arrays, so batch: one call per 100
+    # facts instead of one per fact (~4,500 round-trips across all 36).
+    import config as _cfg
+    from agent import client as _client
+    from retry import retry_call as _retry
+
+    embedded, failed = [], 0
+    for i in range(0, len(facts), 100):
+        batch = facts[i:i + 100]
+        texts = [f["fact_text"].strip().replace("\n", " ") for f in batch]
+        try:
+            resp = _retry(_client.embeddings.create,
+                          input=texts, model=_cfg.EMBEDDING_MODEL)
+            for f, item in zip(batch, resp.data):
+                f["embedding"] = item.embedding
+                embedded.append(f)
+        except Exception as exc:  # noqa: BLE001
+            # Never store a fact without an embedding: it would be
+            # invisible to vector search while still looking indexed.
+            failed += len(batch)
+            print(f"    embedding batch {i//100} FAILED ({exc}) — "
+                  f"{len(batch)} facts skipped")
+
+    written = 0
+    upsert_errors = []
+    lost = []
+    # 10, not 100: each row carries a 1536-float embedding (~30KB as JSON),
+    # so a 100-row upsert is a ~3MB request — large enough to trigger
+    # "SSL: EOF occurred in violation of protocol" mid-transfer.
+    UPSERT_BATCH = 10
+    for i in range(0, len(embedded), UPSERT_BATCH):
+        chunk = embedded[i:i + UPSERT_BATCH]
+        for attempt in range(4):
+            try:
+                _client_ref().table("aip_facts").upsert(
+                    chunk,
+                    on_conflict="scope_kind,scope_id,subsection,entity,label"
+                ).execute()
+                written += len(chunk)
+                break
+            except Exception as exc:  # noqa: BLE001
+                msg = str(exc)
+                if "PGRST204" in msg or "Could not find" in msg:
+                    upsert_errors.append(f"SCHEMA MISMATCH — {msg[:120]}")
+                    lost.extend(chunk)
+                    break
+                if attempt == 3:
+                    upsert_errors.append(msg[:160])
+                    lost.extend(chunk)
+                    break
+                # A TLS/connection failure leaves the socket unusable —
+                # retrying on the SAME client fails identically. Rebuild it.
+                if any(k in msg for k in ("SSL", "EOF", "record mac",
+                                          "Connection", "timed out", "reset")):
+                    _reset_client()
+                time.sleep(2 * (attempt + 1))
+
+    # Report what was actually WRITTEN, never what was merely embedded —
+    # an earlier version printed "indexed 125 facts" after every upsert
+    # had failed, which made a completely broken run look successful.
+    #
+    # The diagnostics are returned alongside the count, not swallowed. They
+    # ARE the false-success protection: `failed` counts facts that never got
+    # an embedding, `lost` names the exact rows that were not written, and
+    # `upsert_errors` distinguishes a schema mismatch from a transient SSL
+    # drop. A caller that only sees a number cannot tell a clean run from a
+    # broken one.
+    return written, failed, upsert_errors, lost
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--icao", nargs="*", help="limit to these aerodromes")
@@ -571,7 +828,21 @@ def main():
                     help="rows to show per aerodrome in --dry-run")
     ap.add_argument("--force", action="store_true",
                     help="re-embed and rewrite even aerodromes already indexed")
+    ap.add_argument("--enr", nargs="*", metavar="SUBSECTION",
+                    help="index ENR subsections instead of aerodromes, "
+                         "e.g. --enr 5.1")
+    ap.add_argument("--pdf", default="Complete_AIP2026.pdf",
+                    help="source PDF for --enr")
     args = ap.parse_args()
+
+    if args.enr is not None:
+        subs = args.enr or sorted(_ENR_SOURCES)
+        print(f"build_fact_index — ENR mode ({', '.join(subs)})")
+        total, any_error = build_enr(subs, args.pdf, args.dry_run, args.limit)
+        print(f"\n{total} facts" + (" (DRY RUN — nothing written)" if args.dry_run else ""))
+        if any_error:
+            print("\nCompleted WITH ERRORS — see above. Exit code 1.")
+        return 1 if any_error else 0
 
     from database import supabase
     from aip_structure import AERODROMES, STANDARD_36
@@ -616,7 +887,8 @@ def main():
                     f["fact_text"] = _strip_ad214_furniture(f.get("fact_text"))
                     if not f["fact_value"]:
                         continue
-                facts.append(dict(f, icao_code=icao, subsection=sub))
+                facts.append(dict(f, icao_code=icao, subsection=sub,
+                                  scope_kind="AD", scope_id=icao))
 
         # The text-kind subsections (2.10, 2.22, 2.23) have no structured
         # records, so they contribute nothing above. Pull their text from
@@ -635,7 +907,8 @@ def main():
                                            r.get("source_chunk") or 0))
                 blob = "\n".join(c.get("content", "") for c in chunks)
                 facts.extend([
-                    dict(f, icao_code=icao, subsection=sec)
+                    dict(f, icao_code=icao, subsection=sec,
+                         scope_kind="AD", scope_id=icao)
                     for f in facts_from_text(icao, names.get(icao, icao), sec, blob)
                 ])
         except Exception as exc:  # noqa: BLE001
@@ -676,66 +949,7 @@ def main():
             except Exception:  # noqa: BLE001
                 pass          # can't check -> just proceed and upsert
 
-        # --- embed + upsert -------------------------------------------------
-        # The embeddings endpoint accepts arrays, so batch: one call per 100
-        # facts instead of one per fact (~4,500 round-trips across all 36).
-        import config as _cfg
-        from agent import client as _client
-        from retry import retry_call as _retry
-
-        embedded, failed = [], 0
-        for i in range(0, len(facts), 100):
-            batch = facts[i:i + 100]
-            texts = [f["fact_text"].strip().replace("\n", " ") for f in batch]
-            try:
-                resp = _retry(_client.embeddings.create,
-                              input=texts, model=_cfg.EMBEDDING_MODEL)
-                for f, item in zip(batch, resp.data):
-                    f["embedding"] = item.embedding
-                    embedded.append(f)
-            except Exception as exc:  # noqa: BLE001
-                # Never store a fact without an embedding: it would be
-                # invisible to vector search while still looking indexed.
-                failed += len(batch)
-                print(f"    embedding batch {i//100} FAILED ({exc}) — "
-                      f"{len(batch)} facts skipped")
-
-        written = 0
-        upsert_errors = []
-        lost = []
-        # 10, not 100: each row carries a 1536-float embedding (~30KB as JSON),
-        # so a 100-row upsert is a ~3MB request — large enough to trigger
-        # "SSL: EOF occurred in violation of protocol" mid-transfer.
-        UPSERT_BATCH = 10
-        for i in range(0, len(embedded), UPSERT_BATCH):
-            chunk = embedded[i:i + UPSERT_BATCH]
-            for attempt in range(4):
-                try:
-                    _client_ref().table("aip_facts").upsert(
-                        chunk, on_conflict="icao_code,subsection,entity,label"
-                    ).execute()
-                    written += len(chunk)
-                    break
-                except Exception as exc:  # noqa: BLE001
-                    msg = str(exc)
-                    if "PGRST204" in msg or "Could not find" in msg:
-                        upsert_errors.append(f"SCHEMA MISMATCH — {msg[:120]}")
-                        lost.extend(chunk)
-                        break
-                    if attempt == 3:
-                        upsert_errors.append(msg[:160])
-                        lost.extend(chunk)
-                        break
-                    # A TLS/connection failure leaves the socket unusable —
-                    # retrying on the SAME client fails identically. Rebuild it.
-                    if any(k in msg for k in ("SSL", "EOF", "record mac",
-                                              "Connection", "timed out", "reset")):
-                        _reset_client()
-                    time.sleep(2 * (attempt + 1))
-
-        # Report what was actually WRITTEN, never what was merely embedded —
-        # an earlier version printed "indexed 125 facts" after every upsert
-        # had failed, which made a completely broken run look successful.
+        written, failed, upsert_errors, lost = _embed_and_upsert(facts)
         status = f"    wrote {written}/{len(facts)} facts"
         if failed:
             status += f"  ({failed} embedding failures)"

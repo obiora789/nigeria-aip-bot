@@ -18,6 +18,20 @@ class Resolution:
     ambiguous: List[str] = field(default_factory=list)  # >1 candidate ICAO
     unresolved: bool = False            # named an aerodrome we don't have
     reason: str = ""
+    # SCOPE. Defaults keep every existing caller working: a Resolution that
+    # names an aerodrome is scope_kind "AD" with scope_id = icao, exactly as
+    # before.
+    #
+    # These exist because `icao` cannot name a waypoint, an airway or a danger
+    # area. A pilot asked "Where is TEMSA?" and was told it is not in the
+    # Nigerian AIP; it is, on seven pages, but resolve() had nowhere to put a
+    # non-aerodrome identity and so returned unresolved.
+    scope_kind: str = ""                # AD | ENR_AREA | ENR_POINT | ...
+    scope_id: str = ""                  # DNMM | DND45 | TEMSA | UT467
+
+    def __post_init__(self):
+        if not self.scope_kind and self.icao:
+            self.scope_kind, self.scope_id = "AD", self.icao
 
 
 @dataclass

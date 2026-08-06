@@ -229,6 +229,60 @@ def search_facts(embedding: list, icao: str, subsection: str = "",
         return []
 
 
+def search_facts_scoped(embedding: list, scope_kind: str, scope_id: str,
+                        subsection: str = "", limit: int = 8) -> list:
+    """Field-level retrieval for ANY AIP entity, not just aerodromes.
+
+    The counterpart to search_facts(), which is hard-wired to an ICAO code and
+    therefore cannot reach a waypoint, an airway or a danger area. A pilot
+    asking "Where is TEMSA?" was told it is not in the Nigerian AIP; it is, on
+    seven pages, because nothing in the retrieval path could accept a scope
+    that is not an aerodrome.
+
+    The safety property is unchanged and still enforced at the DATABASE
+    boundary, not here: match_aip_facts_scoped filters on (scope_kind,
+    scope_id), so a fact can never be returned for a different entity. Only
+    the definition of "entity" widens — from 40 aerodromes to every published
+    entity in the document.
+
+    scope_kind is one of AD | ENR_AREA | ENR_POINT | ENR_ROUTE | ENR_AIRSPACE.
+    """
+    if not embedding or not scope_kind or not scope_id:
+        return []
+    try:
+        res = supabase.rpc("match_aip_facts_scoped", {
+            "query_embedding": embedding,
+            "p_scope_kind": scope_kind,
+            "p_scope_id": scope_id,
+            "p_subsection": subsection or None,
+            "match_limit": limit,
+        }).execute()
+        return res.data or []
+    except Exception:                                  # noqa: BLE001
+        log.exception("match_aip_facts_scoped failed (%s %s)", scope_kind, scope_id)
+        return []
+
+
+def find_aip_scope(name: str) -> list:
+    """Deterministic name -> scope lookup. "TEMSA" -> ENR_POINT/TEMSA.
+
+    Exact, no embedding, no ranking — the same shape as resolver.AERODROMES,
+    which is the one part of this system that has never misrouted. A name
+    either is a published entity or it is not, and answering "I don't have
+    that" for something the AIP publishes is the failure this closes.
+
+    Returns [] on error rather than raising: a lookup miss must degrade to the
+    existing behaviour, never take down the request."""
+    if not (name or "").strip():
+        return []
+    try:
+        res = supabase.rpc("find_aip_scope", {"p_name": name.strip()}).execute()
+        return res.data or []
+    except Exception:                                  # noqa: BLE001
+        log.exception("find_aip_scope failed (%s)", name)
+        return []
+
+
 def get_subsection_text(icao: str, section: str) -> str:
     """EXACTLY one subsection's text (all its chunks, in order).
 

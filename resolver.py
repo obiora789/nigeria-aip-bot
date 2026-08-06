@@ -222,6 +222,43 @@ def build_search_text(ex: AIPQueryExtraction, res: Resolution, raw: str) -> str:
     return " ".join(b for b in bits if b).strip()
 
 
+
+# Human labels for the scope kinds, used in citations.
+_SCOPE_LABELS = {
+    "ENR_AREA": "prohibited/restricted/danger area",
+    "ENR_POINT": "significant point",
+    "ENR_ROUTE": "ATS route",
+    "ENR_AIRSPACE": "airspace",
+}
+
+# Shapes that could be an ENR entity. Checked BEFORE the database is queried so
+# an ordinary place name never causes a lookup: DNP1/DNR9/DND45 (areas),
+# five-letter uppercase waypoints (TEMSA), airway designators (UT467).
+_ENR_ID_RE = re.compile(
+    r"^(?:DN[PRD]\s?\d{1,3}|[A-Z]{5}|U?[ABGLMNRTUVW]\d{1,3}[A-Z]?)$", re.I)
+
+
+def _lookup_enr_scope(name: str):
+    """('ENR_AREA', 'DND45') if `name` is a published ENR entity, else None.
+
+    Fails CLOSED and silently: any error returns None, so the caller falls
+    through to the existing unresolved path. A lookup outage must not turn a
+    correct refusal into a crash."""
+    token = re.sub(r"\s+", "", (name or "").strip()).upper()
+    if not token or not _ENR_ID_RE.match(token):
+        return None
+    try:
+        from database import find_aip_scope
+        rows = find_aip_scope(token)
+    except Exception:                                  # noqa: BLE001
+        return None
+    if len(rows) != 1:
+        # 0 = not published. >1 = the same id under two scope kinds, which
+        # would be a data defect; refusing is safer than picking one.
+        return None
+    return rows[0].get("scope_kind"), rows[0].get("scope_id")
+
+
 def resolve(ex: AIPQueryExtraction) -> Resolution:
     if not _loaded:
         load_index()
@@ -278,8 +315,29 @@ def resolve(ex: AIPQueryExtraction) -> Resolution:
                 return Resolution(unresolved=True,
                                   reason=(f"{loc} ({c}) has no published aerodrome "
                                           "section in the 2026 AIP."))
+        # NOT AN AERODROME — is it another published AIP entity? Waypoints,
+        # airways and prohibited/restricted/danger areas are all named things a
+        # pilot legitimately asks about, and none of them has an ICAO code.
+        # Before this, "Where is TEMSA?" got "I don't have 'TEMSA' in the
+        # Nigerian AIP" — for a significant point published on seven pages.
+        #
+        # The lookup is EXACT, against the indexed entities. No embedding, no
+        # ranking: a name either is a published entity or it is not. That is
+        # the same property that makes AERODROMES reliable, and it is why this
+        # cannot misroute one entity to another.
+        scope = _lookup_enr_scope(name)
+        if scope:
+            kind, sid = scope
+            return Resolution(part="ENR", reference="AIRSPACE",
+                              label=f"{sid} ({_SCOPE_LABELS.get(kind, kind)})",
+                              is_national=True,
+                              scope_kind=kind, scope_id=sid)
+
         return Resolution(unresolved=True,
-                          reason=f"I don't have '{name}' in the Nigerian AIP.")
+                          reason=(f"I don't have '{name}' in the Nigerian AIP. "
+                                  f"I cover published aerodromes (DN codes), "
+                                  f"significant points, ATS routes and "
+                                  f"prohibited/restricted/danger areas."))
 
     # 5) AD-type intent but no aerodrome given -> ask, don't guess.
     if ex.intent in _AD_INTENTS:

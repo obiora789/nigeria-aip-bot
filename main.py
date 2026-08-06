@@ -25,6 +25,7 @@ import config
 import resolver
 from agent import extract_query_parameters, get_embedding
 from database import (get_aerodrome_data, get_charts, get_charts_smart,
+                      search_facts_scoped,
                       get_declared_distances, get_lighting_data,
                       get_runway_physical_data, get_section_text,
                       get_subsection_text, search_aip, search_facts)
@@ -890,14 +891,28 @@ async def process(chat_id: int, text: str) -> None:
             _FACTS_SUBSECTION = {"comms": "2.18", "navaid": "2.19"}
             _FACTS_STATUSES = ("subsection", "subsection_verbatim", "comms",
                                "navaid", "grounded", "not_in_aip", "fallback")
-            if config.FACTS_ENABLED and res.icao and status in _FACTS_STATUSES:
+            # A scope may be an aerodrome OR an ENR entity (danger area,
+            # waypoint, ATS route). res.scope_id covers both: it is the ICAO
+            # for aerodromes and the entity id otherwise, so this condition
+            # widens without changing aerodrome behaviour.
+            if config.FACTS_ENABLED and (res.scope_id or res.icao) \
+                    and status in _FACTS_STATUSES:
                 if status in ("subsection", "subsection_verbatim"):
                     _sub = ga or ""
                 else:
                     _sub = _FACTS_SUBSECTION.get(status, "")
                 _sub_num = (_sub or "").replace("AD ", "").strip()
-                _facts = await asyncio.to_thread(
-                    search_facts, embedding, res.icao, _sub_num, config.FACTS_MAX)
+                if (res.scope_kind or "AD") != "AD":
+                    # Non-aerodrome scope: retrieval is confined to that ONE
+                    # entity at the database boundary, exactly as it is for an
+                    # aerodrome. DND45's facts can never be returned for DND46.
+                    _facts = await asyncio.to_thread(
+                        search_facts_scoped, embedding, res.scope_kind,
+                        res.scope_id, _sub_num, config.FACTS_MAX)
+                else:
+                    _facts = await asyncio.to_thread(
+                        search_facts, embedding, res.icao, _sub_num,
+                        config.FACTS_MAX)
                 _top = _facts[0]["similarity"] if _facts else 0.0
                 if _facts and _top >= config.FACTS_MIN_SIM:
                     rec["path"] = f"facts:{_sub_num or 'any'}"

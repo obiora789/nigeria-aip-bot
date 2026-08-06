@@ -984,6 +984,93 @@ def test_facts_path_is_wired_into_main():
     assert "config.FACTS_MIN_SIM" in src, "confidence floor not applied"
 
 
+def test_enr_scope_resolution_and_refusal_text():
+    """A published ENR entity must RESOLVE; anything unpublished must not.
+
+    "Where is TEMSA?" was answered "I don't have 'TEMSA' in the Nigerian AIP"
+    for a significant point published on seven pages, because resolve() only
+    ever matched the 40 AERODROMES. The lookup added here is EXACT against the
+    indexed entities — a name either is published or it is not — which is the
+    same property that has kept AERODROMES from ever misrouting."""
+    import resolver, database
+    from types import SimpleNamespace as N
+    resolver.load_index()
+    original = database.find_aip_scope
+    database.find_aip_scope = lambda n: (
+        [{"scope_kind": "ENR_AREA", "scope_id": "DND45"}]
+        if n.upper().replace(" ", "") == "DND45" else [])
+    try:
+        def ex(name):
+            return N(intent="aerodrome_fact", icao_code=None, aerodrome_name=name,
+                     procedure_type=None, runway=None, filter_part="AD")
+
+        r = resolver.resolve(ex("DND45"))
+        assert not r.unresolved, "a published danger area must resolve"
+        assert (r.scope_kind, r.scope_id) == ("ENR_AREA", "DND45")
+
+        # Aerodromes are unaffected.
+        assert resolver.resolve(ex("Lagos")).scope_kind == "AD"
+        assert resolver.resolve(ex("Lagos")).scope_id == "DNMM"
+
+        # A foreign airport must STILL be refused — the ENR branch widens what
+        # is answerable, never what is invented.
+        assert resolver.resolve(ex("Heathrow")).unresolved
+        # ...and the refusal must not tell a waypoint-asker to send a DN code.
+        assert "significant points" in resolver.resolve(ex("Heathrow")).reason
+    finally:
+        database.find_aip_scope = original
+
+
+def test_dedupe_key_includes_scope():
+    """GUARD: deduplication must use the same key as the upsert.
+
+    _dedupe_keys() originally keyed on (subsection, entity, label). ENR entities
+    all have entity='', so DNP1's "Name" and DNP2's "Name" looked like
+    duplicates of each other and 57 areas collapsed from 313 facts to 158 —
+    silently, and in the direction of LOSING data. The upsert key is
+    (scope_kind, scope_id, subsection, entity, label); anything narrower
+    removes rows the database would have accepted."""
+    import inspect, build_fact_index
+    src = inspect.getsource(build_fact_index._dedupe_keys)
+    assert "scope_kind" in src and "scope_id" in src, \
+        "dedupe key is narrower than the upsert key — ENR facts will be lost"
+
+
+def test_scope_generalisation_preserves_aerodrome_behaviour():
+    """GUARD: widening aip_facts from aerodrome-only to any AIP entity must not
+    change how aerodromes work.
+
+    ExtractResult.scope_kind defaults to "AD" so all 23 existing extractors are
+    unaffected — they set `icao` and nothing else, exactly as before. If that
+    default is ever removed, every AD extractor starts producing unscoped
+    records and the facts index silently splits in two."""
+    from extractor_base import ExtractResult
+    ad = ExtractResult(icao="DNMM", subsection="2.12", kind="tabular")
+    assert ad.scope_kind == "AD", "AD extractors must not need to declare scope"
+    assert ad.scope_id == "DNMM"
+
+    enr = ExtractResult(icao="DND45", subsection="5.1", kind="tabular",
+                        scope_kind="ENR_AREA")
+    assert enr.scope_kind == "ENR_AREA"
+    assert enr.scope_id == "DND45"
+
+
+def test_scoped_retrieval_exists_alongside_the_original():
+    """GUARD: search_facts() must survive the migration untouched.
+
+    5,289 live rows are served through it. The scoped variant is ADDITIVE —
+    replacing search_facts() in the same change would have made a schema
+    migration and a behaviour change indistinguishable if anything broke."""
+    import inspect, database
+    src = inspect.getsource(database)
+    assert "def search_facts(" in src, "the original aerodrome lookup was removed"
+    assert "match_aip_facts\"" in src or "match_aip_facts'" in src, \
+        "the original RPC call was removed"
+    assert "def search_facts_scoped(" in src, "scoped retrieval missing"
+    assert "match_aip_facts_scoped" in src, "scoped RPC not wired"
+    assert "def find_aip_scope(" in src, "name->scope lookup missing"
+
+
 def test_bare_aerodrome_is_structural_not_intent_based():
     """A bare place name answering "which aerodrome?" must complete the pending
     request, whatever intent the extraction LLM assigned to that single word.
