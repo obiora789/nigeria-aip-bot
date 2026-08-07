@@ -20,6 +20,11 @@ log = logging.getLogger("vannie.agent")
 client = OpenAI(api_key=config.OPENAI_API_KEY)
 
 _DN_RE = re.compile(r"\bDN[A-Z]{2}\b")
+# A prohibited/restricted/danger area id — DNP1, DNR9, DND45. Shares the "DN"
+# prefix with ICAO codes but is NOT one: the fourth character is P/R/D and it
+# ends in digits, which no aerodrome code does. That difference is what makes
+# this safe to match — it can never capture a real aerodrome.
+_ENR_AREA_RE = re.compile(r"\bDN[PRD]\s?\d{1,3}\b", re.I)
 # A clear identity/mapping question — safe to rescue from a wrong out_of_scope.
 _MAPPING_RE = re.compile(
     r"(icao code|what (?:city|airport|aerodrome)|what(?:'s| is)\s+dn[a-z]{2})", re.I)
@@ -75,17 +80,35 @@ _REAL_GREETING_RE = re.compile(
 #     "clearance to land at Minna"      ATC                     -> out
 # So "forecast" and bare "clearance" are NOT markers; the time words are.
 _LIVE_RE = re.compile(
+    # (a) TIME words — the state of something now or in the future.
     r"\b(current(ly)?|right now|at the moment|as of now|this (morning|afternoon|"
     r"evening)|tonight|today'?s?|live|latest|active\s+notams?|\bnotams?\b|"
-    r"in\s+use\s+(today|now)?)\b|"
+    r"tomorrow|next\s+(week|month)|this\s+week|\bslots?\b|runway\s+in\s+use)\b|"
     r"\bclearance\s+to\s+(land|take\s?off|taxi|enter)\b|"
-    r"\b(slots?\b|runway\s+in\s+use)\b|"
-    # A future-time word is as much a "not published in the AIP" signal as a
-    # present one: the AIP is a static document, so "tomorrow"/"next week" can
-    # only be asking about an operational state it does not carry.
-    r"\b(tomorrow|tonight|next\s+(week|month)|this\s+week)\b", re.I)
-# "charges"/"fees" are NOT here: GEN publishes aerodrome charges, so those are a
-# national_lookup, not out of scope.
+    # (b) OBSERVED WEATHER — inherently a reading taken now, whether or not a
+    # time word appears. "what is the wind at Abuja" carries no time marker but
+    # can only mean the current wind; the AIP publishes no wind values.
+    # NOT included: "reference temperature" (AD 2.2), "TAF validity" and
+    # "landing forecast" (AD 2.11 policy) — all static, all published, and all
+    # previously refused, which is the failure this whole guard exists to stop.
+    r"\b(metar|speci)\b|"
+    # "temperature" needs a negative lookBEHIND, not lookahead: the AIP's static
+    # field is "aerodrome REFERENCE temperature" (AD 2.2), where the qualifier
+    # precedes the word. A lookahead cannot see it, and flagged both
+    # "aerodrome reference temperature of Kano" and "reference temperature
+    # Ilorin" as live weather.
+    r"\b(wind|visibility|ceiling|cloud\s?base|qnh|humidity|rainfall)\b|"
+    r"(?<!reference\s)(?<!ref\s)\btemperature\b(?!\s*(policy|validity|type|interval))|"
+    r"\bweather\b(?!\s*(minima|service|policy))|"
+    # (c) NON-AIP ACTIONS — requests to DO something rather than look something
+    # up. The AIP is a reference document; it books nothing.
+    r"\b(book|reserve|cancel|check\s?in|buy|order)\b[^?]{0,20}\b(flight|ticket|seat|hotel)\b|"
+    r"\bmy\s+(flight|booking|ticket)\b", re.I)
+
+# NOTE on money: "fee"/"charge" are deliberately NOT price markers. GEN
+# publishes aerodrome charges, so "what is the landing fee at Kano" is a
+# legitimate national_lookup, not an out-of-scope question. Only genuinely
+# unpublished commercial data (fuel PRICES, what something COSTS) qualifies.
 _PRICE_RE = re.compile(
     r"\b(price[sd]?|cost[s]?|how much (does|is|to)|tariff)\b", re.I)
 
@@ -103,6 +126,21 @@ def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
     mislabelled as a text/procedure lookup. Never converts a genuine out-of-scope
     query (live weather, foreign airport) into an answer."""
     resolver.load_index()
+    # 0) A DN token that is NOT an aerodrome may still be a published ENR
+    #    entity: DNP1/DNR9/DND45 are prohibited/restricted/danger areas. The
+    #    model fills icao_code for them — correctly, by its own instruction
+    #    ("a 4-letter code starting with DN") — and step 1 below then discarded
+    #    it as invented, leaving nothing behind. resolve() reached its
+    #    "AD-type intent but no aerodrome given" branch and asked
+    #    "Which aerodrome?" for a danger area that IS in the index.
+    #
+    #    Moving it to aerodrome_name is what makes it reachable: that is the
+    #    field resolve() inspects, and its ENR lookup is exact — a name either
+    #    is a published entity or it is not, so this cannot invent one.
+    if ex.icao_code and _ENR_AREA_RE.match(ex.icao_code or ""):
+        ex.aerodrome_name = ex.aerodrome_name or ex.icao_code
+        ex.icao_code = None
+
     # 1) drop a code the model invented (e.g. 'DNLM' for 'Murtala Muhammed Lagos')
     if ex.icao_code and ex.icao_code not in resolver.VALID_ICAO \
             and ex.icao_code not in resolver.OUT_OF_SCOPE_ICAO:
@@ -112,6 +150,18 @@ def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
         found = [c for c in _DN_RE.findall(raw.upper()) if c in resolver.VALID_ICAO]
         if found:
             ex.icao_code = found[0]
+    # 2b) ...or an ENR area id literally present, if nothing else resolved.
+    #     "What is DND45?" carries no aerodrome, so without this the query has
+    #     no subject at all by the time it reaches resolve().
+    if not ex.icao_code and not ex.aerodrome_name:
+        # Search the raw text, NOT a space-stripped copy. Collapsing spaces
+        # glues the id to the preceding word ("What is DND45?" ->
+        # "WHATISDND45?") so the leading \b never matches and the scan finds
+        # nothing. The pattern itself tolerates an internal space, which is the
+        # case the strip was meant to cover.
+        area = _ENR_AREA_RE.search(raw.upper())
+        if area:
+            ex.aerodrome_name = re.sub(r"\s+", "", area.group(0))
     # 3) explicit identity/mapping question -> ensure it resolves, never refuse
     if _MAPPING_RE.search(raw):
         if ex.intent == "out_of_scope":
@@ -225,6 +275,12 @@ _SYSTEM = (
     "  (b) MONEY — the user wants a price: fuel price, what something costs, how "
     "much to land.\n"
     "  (c) PLACE — the airport is OUTSIDE Nigeria.\n"
+    "Any ONE of these being YES means out_of_scope, and (c) is decisive on its "
+    "own: if the airport is not Nigerian, answer out_of_scope no matter how "
+    "ordinary the question is — 'ILS frequency at Heathrow' and 'runway length "
+    "at JFK' are both out_of_scope, because this AIP covers Nigeria only. "
+    "Likewise (a): 'current METAR', 'the wind at Abuja' and 'weather now' are "
+    "observations taken at this moment, which the AIP does not publish.\n"
     "If all three are NO, you MUST NOT answer out_of_scope, however "
     "un-aeronautical the topic sounds. The AIP publishes a great deal that does "
     "not sound like aviation, and all of it is IN SCOPE: bus and taxi "

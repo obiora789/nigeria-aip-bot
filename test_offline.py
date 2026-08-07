@@ -984,6 +984,48 @@ def test_facts_path_is_wired_into_main():
     assert "config.FACTS_MIN_SIM" in src, "confidence floor not applied"
 
 
+def test_enr_area_id_survives_the_extraction_backstop():
+    """An ENR area id typed by a pilot must reach resolve() intact.
+
+    Confirmed live: "What is DND45?" answered "Which aerodrome? Please give a
+    name or ICAO code". The area was correctly indexed and resolve()'s ENR
+    branch worked — but the id never got there. The extraction LLM fills
+    icao_code with "DND45" (reasonably: its own instruction says "a 4-letter
+    code starting with DN"), and _backstop step 1 then dropped it as invented,
+    leaving the query with no subject at all.
+
+    DNP/DNR/DND ids are distinguishable from aerodrome codes by construction —
+    fourth character P/R/D, then digits — so this can never capture a real
+    aerodrome. Asserted below."""
+    import agent, resolver
+    from types import SimpleNamespace as N
+    resolver.load_index()
+
+    def backstopped(raw, icao=None):
+        ex = N(intent="aerodrome_fact", icao_code=icao, aerodrome_name=None,
+               procedure_type=None, runway=None, filter_part="AD")
+        return agent._backstop(ex, raw)
+
+    # The exact live failure: model puts the area id in icao_code.
+    ex = backstopped("What is DND45?", icao="DND45")
+    assert ex.aerodrome_name == "DND45", "area id discarded by the backstop"
+    assert ex.icao_code is None, "an area id must not masquerade as an ICAO code"
+
+    # ...and when the model fills nothing, the raw text is scanned.
+    assert backstopped("What is DND45?").aerodrome_name == "DND45"
+    assert backstopped("tell me about dnd45").aerodrome_name == "DND45"
+    # The AIP prints these with an internal space in places.
+    assert backstopped("is DND 45 active").aerodrome_name == "DND45"
+
+    # AERODROMES ARE UNTOUCHED. This is the property that makes the above safe:
+    # no real ICAO code has P/R/D as its fourth character followed by digits.
+    for code in ("DNMM", "DNAA", "DNKK", "DNBI"):
+        ex = backstopped(f"{code} elevation", icao=code)
+        assert ex.icao_code == code or ex.icao_code is None, \
+            f"{code} was mangled into an ENR area id"
+        assert ex.aerodrome_name != code or code not in resolver.VALID_ICAO
+
+
 def test_enr_scope_resolution_and_refusal_text():
     """A published ENR entity must RESOLVE; anything unpublished must not.
 
