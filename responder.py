@@ -659,7 +659,12 @@ def facts_reply(res: Resolution, facts: list, query: str = "") -> str:
         return not_in_aip(res)
 
     sections = sorted({f.get("subsection") for f in facts if f.get("subsection")})
-    cite = f"AD {sections[0]}" if len(sections) == 1 else "AD 2"
+    # The part prefix follows the SCOPE, not a constant. "AD" is only correct
+    # for aerodromes; a danger area lives in ENR 5.1 and citing it as "AD 5.1"
+    # names a section that does not exist — a pilot checking the source against
+    # the real AIP would not find it, which defeats the point of citing at all.
+    part = "AD" if (getattr(res, "scope_kind", "AD") or "AD") == "AD" else "ENR"
+    cite = f"{part} {sections[0]}" if len(sections) == 1 else f"{part} 2"
 
     grouped = {}
     for f in facts:

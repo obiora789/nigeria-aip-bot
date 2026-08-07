@@ -710,7 +710,17 @@ async def process(chat_id: int, text: str) -> None:
 
         # ICAO <-> name mapping: answer deterministically from the static table.
         # No retrieval, no LLM — the safest possible path.
-        if ex.intent == "icao_lookup":
+        # ONLY for aerodromes. This branch answers from resolver.AERODROMES,
+        # which contains the 40 published aerodromes and nothing else, so for
+        # an ENR entity aerodrome_full_name() returns None and the reply reads
+        #     "None — DND45 (prohibited/restricted/danger area), Nigeria."
+        # Confirmed live. Worse than the cosmetic defect: it RETURNS, so the
+        # facts lookup below never runs and a fully indexed danger area — its
+        # vertical limits, its coordinates, its activity — is never consulted.
+        #
+        # A non-aerodrome scope falls through to the normal retrieval path,
+        # which is where its facts actually live.
+        if ex.intent == "icao_lookup" and (res.scope_kind or "AD") == "AD" and res.icao:
             rec["path"] = "mapping"
             full = resolver.aerodrome_full_name(res.icao) or res.label
             await send_info(
@@ -827,6 +837,31 @@ async def process(chat_id: int, text: str) -> None:
         if embedding is None:
             rec["path"] = "error"
             await send_message(chat_id, error())
+            return
+
+        # 3b) NON-AERODROME SCOPES ARE SERVED FROM aip_facts, FIRST AND ONLY.
+        #
+        # search_aip() below queries aip_knowledge_base, which holds AD 2.x and
+        # ENR PROSE — it has no per-entity content for a danger area, waypoint
+        # or airway. So for an ENR scope it finds nothing, abstains, and sends
+        # "I couldn't find that" from inside a branch whose `else` contains the
+        # facts lookup. The entity is fully indexed and never consulted.
+        #
+        # Order matters, and it is the reverse of the aerodrome case: for an
+        # aerodrome the knowledge base is a reasonable first stop and facts are
+        # a refinement; for an ENR entity the facts index is the ONLY source.
+        if (res.scope_kind or "AD") != "AD" and res.scope_id:
+            _facts = await asyncio.to_thread(
+                search_facts_scoped, embedding, res.scope_kind, res.scope_id,
+                "", config.FACTS_MAX)
+            if _facts:
+                rec["path"] = f"facts:{res.scope_kind}"
+                await send_info(facts_reply(res, _facts, follow_query))
+                return
+            # Indexed entity with no matching fact: abstain rather than fall
+            # through to a knowledge-base search that cannot know about it.
+            rec["path"] = "not_found"
+            await send_info(not_found())
             return
 
         # 4) search with fallback + max-similarity gate

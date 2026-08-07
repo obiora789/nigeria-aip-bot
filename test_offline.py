@@ -984,6 +984,55 @@ def test_facts_path_is_wired_into_main():
     assert "config.FACTS_MIN_SIM" in src, "confidence floor not applied"
 
 
+def test_enr_scope_is_served_from_facts_not_the_mapping_reply():
+    """GUARD: a non-aerodrome scope must reach the facts lookup.
+
+    Confirmed live. "What is DND45?" answered:
+        "None — DND45 (prohibited/restricted/danger area), Nigeria."
+    That is the icao_lookup MAPPING reply, which answers from
+    resolver.AERODROMES — hence the leading "None", since a danger area is not
+    in that table. It also RETURNS, so the facts lookup never ran and a fully
+    indexed area (vertical limits, coordinates, activity) went unconsulted.
+
+    Two conditions, both asserted from source because this lives in main.py's
+    request path which the offline tests do not execute:
+      1. the mapping branch is restricted to AD scopes
+      2. a non-AD scope is served from search_facts_scoped BEFORE search_aip,
+         which queries aip_knowledge_base and has no per-entity ENR content —
+         it abstains, and its abstention path bypasses the facts lookup."""
+    import inspect, main
+    src = inspect.getsource(main)
+    assert 'ex.intent == "icao_lookup" and (res.scope_kind or "AD") == "AD"' in src, \
+        "the mapping reply is not restricted to aerodromes"
+    facts_at = src.find("search_facts_scoped")
+    search_at = src.find("search_aip, embedding, res")
+    assert facts_at != -1 and search_at != -1
+    assert facts_at < search_at, \
+        "ENR scopes must be served from aip_facts BEFORE the knowledge-base search"
+
+
+def test_facts_citation_prefix_follows_the_scope():
+    """A danger area must not be cited as "AD 5.1" — no such section exists.
+
+    facts_reply() hardcoded "AD", so an ENR entity was cited against a section
+    a pilot could not find in the real AIP. A citation that cannot be checked
+    is worse than none: it invites trust it has not earned."""
+    import responder
+    from models import Resolution
+    enr = Resolution(part="ENR", reference="AIRSPACE", label="DND45",
+                     is_national=True, scope_kind="ENR_AREA", scope_id="DND45")
+    out = responder.facts_reply(
+        enr, [{"subsection": "5.1", "entity": "", "label": "Upper limit",
+               "fact_value": "30000 FT AGL", "similarity": 0.7}], "DND45")
+    assert "ENR 5.1" in out and "AD 5.1" not in out
+
+    ad = Resolution(icao="DNMM", label="Lagos", part="AD", reference="DNMM")
+    out = responder.facts_reply(
+        ad, [{"subsection": "2.17", "entity": "", "label": "Transition altitude",
+              "fact_value": "3 500 ft", "similarity": 0.8}], "lagos ta")
+    assert "AD 2.17" in out, "aerodrome citations must be unchanged"
+
+
 def test_enr_area_id_survives_the_extraction_backstop():
     """An ENR area id typed by a pilot must reach resolve() intact.
 
