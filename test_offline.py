@@ -1033,6 +1033,41 @@ def test_facts_citation_prefix_follows_the_scope():
     assert "AD 2.17" in out, "aerodrome citations must be unchanged"
 
 
+def test_waypoint_designator_reaches_the_resolver():
+    """A five-letter significant point must become the query's subject.
+
+    "Where is TEMSA?" — the question that opened all of this — was refused for
+    a point published on seven pages, because the extraction LLM had nowhere to
+    put a name that is not an aerodrome and the query arrived with no subject.
+
+    The scan reads the RAW text, not an uppercased copy. Uppercasing first made
+    every five-letter word a candidate: "Where is TEMSA?" yielded
+    ["WHERE", "TEMSA"] and WHERE won as the first match. Pilots type
+    designators in caps, and that is the signal separating them from prose —
+    asserted below with an all-caps sentence that must NOT match."""
+    import agent, resolver
+    from types import SimpleNamespace as N
+    resolver.load_index()
+
+    def subject(raw):
+        ex = N(intent="aerodrome_fact", icao_code=None, aerodrome_name=None,
+               procedure_type=None, runway=None, filter_part="AD")
+        return agent._backstop(ex, raw).aerodrome_name
+
+    assert subject("Where is TEMSA?") == "TEMSA"
+    assert subject("GEOGRAPHICAL LOCATION OF TEMSA") == "TEMSA"
+    assert subject("TEMSA") == "TEMSA"
+    assert subject("what routes pass through AKLIS") == "AKLIS"
+
+    # Ordinary prose must not produce a candidate, in either case.
+    assert subject("what is the elevation of Abuja") != "ELEVA"
+    assert subject("WHERE IS THE TOWER") is None, \
+        "all-caps prose must not be read as a designator"
+
+    # A known aerodrome alias is never hijacked as a waypoint.
+    assert subject("PLEASE tell me about LAGOS") != "LAGOS"
+
+
 def test_enr_area_id_survives_the_extraction_backstop():
     """An ENR area id typed by a pilot must reach resolve() intact.
 

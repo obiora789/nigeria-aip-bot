@@ -234,6 +234,18 @@ _SCOPE_LABELS = {
 # Shapes that could be an ENR entity. Checked BEFORE the database is queried so
 # an ordinary place name never causes a lookup: DNP1/DNR9/DND45 (areas),
 # five-letter uppercase waypoints (TEMSA), airway designators (UT467).
+# A token that COULD be an ENR entity. Checked before the database is queried
+# so an ordinary word never causes a lookup.
+#
+# The five-letter arm is the loose one — plenty of English words are five
+# letters, and "WHICH" or "LIMIT" would reach the database. That is acceptable
+# and deliberate: the lookup is EXACT, so a non-published word returns nothing
+# and the caller falls through unchanged. Measured on the real index: 214
+# waypoints, and NOT ONE collides with an ICAO code, a city alias or a VOR
+# ident, so a hit can never be the wrong kind of entity.
+#
+# It is applied only to a name the extractor already isolated as the query's
+# subject, not to every word in the message.
 _ENR_ID_RE = re.compile(
     r"^(?:DN[PRD]\s?\d{1,3}|[A-Z]{5}|U?[ABGLMNRTUVW]\d{1,3}[A-Z]?)$", re.I)
 

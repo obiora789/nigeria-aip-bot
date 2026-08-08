@@ -590,6 +590,8 @@ def _dedupe_keys(facts):
 _ENR_SOURCES = {
     # subsection -> (module, class, scope_kind)
     "5.1": ("enr51_extractor", "ENR51Extractor", "ENR_AREA"),
+    "4.4": ("enr44_extractor", "ENR44Extractor", "ENR_POINT"),
+    "2.1": ("enr21_extractor", "ENR21Extractor", "ENR_AIRSPACE"),
 }
 
 # Which record fields become facts, and the label a pilot sees. Order matters:
@@ -597,11 +599,27 @@ _ENR_SOURCES = {
 # skipped, never emitted as empty — an area with no published activation hours
 # must not gain a blank one.
 _ENR_FACT_FIELDS = [
+    # ENR 5.1 — prohibited/restricted/danger areas
     ("family", "Type of area"),
     ("name", "Name"),
     ("upper_limit", "Upper limit"),
     ("lower_limit", "Lower limit"),
     ("lateral_limits", "Lateral limits"),
+    # ENR 4.4 — significant points. A field absent from a record is skipped,
+    # so one list serves both: a waypoint has no "upper limit" and an area has
+    # no "FRA relevance", and neither gains an empty one.
+    ("coordinates", "Position"),
+    ("routes", "ATS route(s)"),
+    ("fra_relevance", "FRA relevance"),
+    ("remarks", "Remarks"),
+    # ENR 2.1 — FIR / UIR / sector / TMA / CTA
+    ("airspace_class", "Class of airspace"),
+    ("ats_unit", "ATS unit"),
+    ("languages", "Languages"),
+    ("hours", "Hours of service"),
+    ("frequencies", "Frequency"),
+    ("parent", "Part of"),
+    ("note", "Note"),
 ]
 
 
@@ -628,6 +646,8 @@ def _enr_facts_from_record(rec: dict, subsection: str) -> list:
     # split across rows, and a pilot asking where an area is needs the whole
     # boundary or none of it.
     coords = rec.get("coordinates") or []
+    if isinstance(coords, str):
+        coords = []          # already emitted as "Position" by the field loop
     if coords:
         joined = " ".join(coords)
         out.append({

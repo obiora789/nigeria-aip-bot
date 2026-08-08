@@ -25,6 +25,25 @@ _DN_RE = re.compile(r"\bDN[A-Z]{2}\b")
 # ends in digits, which no aerodrome code does. That difference is what makes
 # this safe to match — it can never capture a real aerodrome.
 _ENR_AREA_RE = re.compile(r"\bDN[PRD]\s?\d{1,3}\b", re.I)
+# A five-letter significant-point designator (TEMSA, KIPSA, AKLIS). Uppercase
+# only, because that is how the AIP publishes them and how pilots type them;
+# matching case-insensitively here would catch ordinary words in every
+# sentence. The database lookup is exact, so a false candidate costs one query
+# and returns nothing.
+_WAYPOINT_RE = re.compile(r"\b([A-Z]{5})\b")
+# Five-letter words that appear in ALL-CAPS pilot messages and are not
+# designators. Deliberately TINY and closed: this is not an attempt to
+# enumerate English, only to stop the handful of aviation words that recur in
+# shouted queries ("WHERE IS THE TOWER") from being sent to the lookup.
+#
+# It is a filter, not the decision. The lookup is exact, so anything reaching
+# it that is not a published point returns nothing and the caller falls
+# through — a missing word here costs one query, never a wrong answer.
+_NOT_A_DESIGNATOR = {
+    "WHERE", "WHICH", "WHOSE", "THERE", "TOWER", "RADIO", "NORTH", "SOUTH",
+    "ROUTE", "POINT", "LIMIT", "CHART", "PLATE", "APRON", "LIGHT", "HOURS",
+    "RANGE", "AREAS", "NOTAM", "METAR", "PLEASE", "ABOUT",
+}
 # A clear identity/mapping question — safe to rescue from a wrong out_of_scope.
 _MAPPING_RE = re.compile(
     r"(icao code|what (?:city|airport|aerodrome)|what(?:'s| is)\s+dn[a-z]{2})", re.I)
@@ -150,6 +169,30 @@ def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
         found = [c for c in _DN_RE.findall(raw.upper()) if c in resolver.VALID_ICAO]
         if found:
             ex.icao_code = found[0]
+    # 2c) A bare five-letter designator is a SIGNIFICANT POINT (waypoint).
+    #     "GEOGRAPHICAL LOCATION OF TEMSA" leaves the model nothing to put in
+    #     aerodrome_name — TEMSA is not an aerodrome — so the query arrived
+    #     with no subject and was refused for a point published on seven pages.
+    #
+    #     Only fires when nothing else resolved, and only for a token that is
+    #     not already a known aerodrome alias. resolve() then does an EXACT
+    #     lookup, so an ordinary five-letter word simply returns nothing.
+    if not ex.icao_code and not ex.aerodrome_name:
+        # Scan the RAW text, not an uppercased copy. Uppercasing first turns
+        # every five-letter word into a candidate — "Where is TEMSA?" yielded
+        # ["WHERE", "TEMSA"] and WHERE won as the first match, so the real
+        # designator was never tried. Pilots type designators in caps, which is
+        # exactly the signal that distinguishes them from prose.
+        for tok in _WAYPOINT_RE.findall(raw):
+            if tok in resolver.VALID_ICAO:
+                continue
+            if tok.lower() in {a for v in resolver.AERODROMES.values() for a in v}:
+                continue
+            if tok in _NOT_A_DESIGNATOR:
+                continue
+            ex.aerodrome_name = tok
+            break
+
     # 2b) ...or an ENR area id literally present, if nothing else resolved.
     #     "What is DND45?" carries no aerodrome, so without this the query has
     #     no subject at all by the time it reaches resolve().
