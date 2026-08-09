@@ -160,6 +160,33 @@ def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
         ex.aerodrome_name = ex.aerodrome_name or ex.icao_code
         ex.icao_code = None
 
+    # 0b) A VOR IDENT MUST NOT BE SILENTLY TURNED INTO ITS AERODROME.
+    #     Measured: "What is the frequency of ABC?" extracts as
+    #         icao_code = DNAA, aerodrome_name = None
+    #     The model resolved the ident to its aerodrome — against schemas.py's
+    #     own instruction never to infer a code from a name — so the ident
+    #     never reached resolve(), the scope-ambiguity check never saw it, and
+    #     the query was answered from Abuja's AD 2.17 airspace table.
+    #
+    #     ABC is genuinely both: Abuja's VOR ident AND a navaid published in
+    #     ENR 4.1 with its own frequency. Putting the ident back into
+    #     aerodrome_name lets resolve() see the collision and ASK, which is the
+    #     only honest answer when two readings are equally correct.
+    #
+    #     The database is only consulted when the raw text actually contains a
+    #     known VOR ident, so an ordinary query costs nothing.
+    if ex.icao_code in resolver.VOR_IDENTS:
+        _want = resolver.VOR_IDENTS[ex.icao_code]
+        if re.search(rf"\b{re.escape(_want)}\b", raw or "", re.I):
+            try:
+                from database import find_aip_scope
+                if any(r.get("scope_kind") == "ENR_NAVAID"
+                       for r in (find_aip_scope(_want) or [])):
+                    ex.aerodrome_name = _want
+                    ex.icao_code = None
+            except Exception:      # noqa: BLE001 — a lookup outage must not
+                pass               # turn a working answer into a failure
+
     # 1) drop a code the model invented (e.g. 'DNLM' for 'Murtala Muhammed Lagos')
     if ex.icao_code and ex.icao_code not in resolver.VALID_ICAO \
             and ex.icao_code not in resolver.OUT_OF_SCOPE_ICAO:

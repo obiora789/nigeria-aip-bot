@@ -1110,6 +1110,45 @@ def test_enr_area_id_survives_the_extraction_backstop():
         assert ex.aerodrome_name != code or code not in resolver.VALID_ICAO
 
 
+def test_vor_ident_is_not_silently_converted_to_its_aerodrome():
+    """GUARD: a typed VOR ident must survive extraction as the ident.
+
+    Measured live: "What is the frequency of ABC?" extracted as
+        icao_code = DNAA, aerodrome_name = None
+    The model resolved the ident to its aerodrome — against schemas.py's own
+    instruction never to infer a code from a name — so the ident never reached
+    resolve(), the scope-ambiguity check never saw it, and the query was
+    answered from Abuja's AD 2.17 airspace table.
+
+    ABC is genuinely both readings. The backstop puts the ident back so
+    resolve() can ASK, and only when the ident was actually TYPED and is
+    published in ENR 4.1 — a city name or an explicit ICAO is untouched."""
+    import agent, resolver, database
+    from types import SimpleNamespace as N
+    resolver.load_index()
+    original = database.find_aip_scope
+    database.find_aip_scope = lambda n: (
+        [{"scope_kind": "ENR_NAVAID", "scope_id": n.upper()}]
+        if n.upper() in {"ABC", "BEN"} else [])
+    try:
+        def bs(raw, icao):
+            ex = N(intent="aerodrome_fact", icao_code=icao, aerodrome_name=None,
+                   procedure_type=None, runway=None, filter_part="AD")
+            return agent._backstop(ex, raw)
+
+        ex = bs("What is the frequency of ABC?", "DNAA")
+        assert ex.aerodrome_name == "ABC", "the typed ident was discarded"
+        assert ex.icao_code is None, "the ident still resolves straight to DNAA"
+
+        # A city name, an explicit ICAO and an ident with no ENR 4.1 entry must
+        # all behave exactly as before — this adds a question, never a change.
+        assert bs("frequency at Abuja", "DNAA").icao_code == "DNAA"
+        assert bs("DNAA elevation", "DNAA").icao_code == "DNAA"
+        assert bs("BEB frequency", "DNBB").icao_code == "DNBB"
+    finally:
+        database.find_aip_scope = original
+
+
 def test_scope_ambiguity_is_asked_with_buttons():
     """GUARD: a VOR ident that is ALSO a published navaid must be asked, and
     asked with TAPPABLE options.
