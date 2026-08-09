@@ -696,6 +696,15 @@ def not_found() -> str:
 
 def ambiguous(res: Resolution) -> str:
     opts = ", ".join(res.ambiguous)
+    # A SCOPE ambiguity is not an aerodrome ambiguity, and asking for an ICAO
+    # code would be useless advice: a navaid has no ICAO code. "ABC" means both
+    # Abuja and the ABC VOR/DME, so the question has to name both readings.
+    if getattr(res, "ambiguous_kind", "aerodrome") == "scope":
+        return (
+            f"{res.reason} Which did you mean — {opts}? "
+            "Reply with the aerodrome name or ICAO code for the aerodrome, "
+            "or say 'navaid' for the navigation aid."
+        )
     return (
         f"{res.reason} Which one do you mean? {opts}. "
         "Reply with the ICAO code so I show the right aerodrome."

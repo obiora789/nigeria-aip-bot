@@ -26,6 +26,12 @@ class Resolution:
     # area. A pilot asked "Where is TEMSA?" and was told it is not in the
     # Nigerian AIP; it is, on seven pages, but resolve() had nowhere to put a
     # non-aerodrome identity and so returned unresolved.
+    # What KIND of ambiguity `ambiguous` holds. "aerodrome" is the existing
+    # case (two aerodromes match a name). "scope" is a token that is BOTH an
+    # aerodrome's VOR ident and a separately published ENR navaid — "ABC" is
+    # Abuja's VOR/DME ident and also the ABC navaid in ENR 4.1, so a frequency
+    # query has two correct answers and picking one silently is a guess.
+    ambiguous_kind: str = "aerodrome"
     scope_kind: str = ""                # AD | ENR_AREA | ENR_POINT | ...
     scope_id: str = ""                  # DNMM | DND45 | TEMSA | UT467
 

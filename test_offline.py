@@ -1110,6 +1110,31 @@ def test_enr_area_id_survives_the_extraction_backstop():
         assert ex.aerodrome_name != code or code not in resolver.VALID_ICAO
 
 
+def test_scope_ambiguity_is_asked_with_buttons():
+    """GUARD: a VOR ident that is ALSO a published navaid must be asked, and
+    asked with TAPPABLE options.
+
+    Confirmed live: "what is the frequency of ABC?" returned Abuja's ATS COMMS
+    from AD 2.18. Both readings are real — VOR_IDENTS maps ABC to DNAA, and
+    ENR 4.1 publishes ABC as a navaid — so neither may be assumed.
+
+    Buttons rather than prose is a correctness point, not a nicety: the prose
+    form told the pilot to "say 'navaid'", and a typed "navaid" had nowhere to
+    land, because the slot-fill path only understands aerodrome names. The
+    callback data carries the chosen scope, so nothing is re-parsed."""
+    import inspect, main, telegram
+    kb = telegram.clarify_scope_kb("DNAA", "ABC", "q1")
+    datas = [b["callback_data"] for row in kb["inline_keyboard"] for b in row]
+    assert "scope:AD:DNAA:q1" in datas, "no aerodrome option"
+    assert "scope:ENR_NAVAID:ABC:q1" in datas, "no navaid option"
+
+    src = inspect.getsource(main)
+    assert 'data.startswith("scope:")' in src, "no callback branch for the choice"
+    assert "force_scope" in src, "the chosen scope is not pinned on the re-run"
+    assert 'pending.get("kind") != "scope_clar"' in src, \
+        "no qid guard — a stale button could act on a replaced request"
+
+
 def test_enr_scope_resolution_and_refusal_text():
     """A published ENR entity must RESOLVE; anything unpublished must not.
 

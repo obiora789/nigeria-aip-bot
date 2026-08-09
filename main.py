@@ -29,7 +29,7 @@ from database import (get_aerodrome_data, get_charts, get_charts_smart,
                       get_declared_distances, get_lighting_data,
                       get_runway_physical_data, get_section_text,
                       get_subsection_text, search_aip, search_facts)
-from models import AIPResult, SearchOutcome
+from models import AIPResult, Resolution, SearchOutcome
 import synthesize
 import subsection_router
 import facts
@@ -43,7 +43,8 @@ from responder import (ambiguous, answer, chart_intro, chart_not_found,
                        facts_reply, info_block_reply, lighting_data_reply, low_confidence,
                        navaid_reply, not_found, not_in_aip, runway_data_reply,
                        rwy_char_reply, subsection_reply, unresolved)
-from telegram import (answer_callback, clarify_runway_kb, clarify_type_kb,
+from telegram import (answer_callback, clarify_runway_kb, clarify_scope_kb,
+                      clarify_type_kb,
                       feedback_kb, send_charts, send_message, verify_secret)
 
 logging.basicConfig(level=logging.INFO)
@@ -242,6 +243,36 @@ async def handle_feedback(cb: dict) -> None:
             msg = "Thanks — logged." if verdict == "up" else "Thanks — flagged for review."
             if cid:
                 await answer_callback(cid, msg)
+            return
+
+        if data.startswith("scope:") and chat_id is not None:
+            parts = data.split(":")
+            if len(parts) < 4:
+                if cid:
+                    await answer_callback(cid)
+                return
+            kind, sid, qid = parts[1], parts[2], parts[3]
+            if cid:
+                await answer_callback(cid, sid)     # stop the spinner at once
+            try:
+                ctx = await asyncio.to_thread(memory.load, chat_id)
+                pending = ctx.get("pending") or {}
+                # qid guard: a stale button must not act on a replaced request.
+                if pending.get("kind") != "scope_clar" or pending.get("qid") != qid:
+                    await send_message(chat_id,
+                                       "That request expired — please ask again.")
+                    return
+                # Re-run the ORIGINAL question with the scope now pinned. The
+                # chosen scope is carried in the callback data, so nothing is
+                # re-resolved and the ambiguity cannot recur.
+                original = pending.get("query") or sid
+                await process(chat_id, original, force_scope=(kind, sid))
+            except Exception:  # noqa: BLE001 — surface, never vanish
+                log.exception("scope clarification callback failed")
+                await send_message(
+                    chat_id,
+                    "Sorry — I couldn't finish that. Please ask again, naming "
+                    "the aerodrome or the navaid.")
             return
 
         if data.startswith("clar:") and chat_id is not None:
@@ -516,7 +547,10 @@ async def _admin_stats_report() -> str:
     ])
 
 
-async def process(chat_id: int, text: str) -> None:
+async def process(chat_id: int, text: str, force_scope=None) -> None:
+    """`force_scope` is (scope_kind, scope_id) chosen from a clarification
+    button. It PINS the resolution, so the same ambiguity cannot recur on the
+    re-run and the pilot is never asked the same question twice."""
     """All heavy lifting; runs after the 200 ack. Never raises to the caller."""
     rec = {"intent": None, "icao": None, "path": "unknown",
            "similarity": None, "charts": 0, "qid": uuid.uuid4().hex[:12]}
@@ -689,8 +723,42 @@ async def process(chat_id: int, text: str) -> None:
                         res = _redirect
                         rec["icao"] = res.icao
 
+        if force_scope:
+            _k, _sid = force_scope
+            if _k == "AD":
+                res = Resolution(icao=_sid,
+                                 label=resolver.aerodrome_full_name(_sid) or _sid,
+                                 part="AD", reference=_sid,
+                                 scope_kind="AD", scope_id=_sid)
+            else:
+                res = Resolution(label=f"{_sid} (navaid)", part="ENR",
+                                 reference="AIRSPACE", is_national=True,
+                                 scope_kind=_k, scope_id=_sid)
+
         if res.ambiguous:
             rec["path"] = "ambiguous"
+            # A SCOPE ambiguity gets buttons, not prose. "ABC" is both Abuja and
+            # the ABC VOR/DME, and the prose form ("reply with the ICAO code,
+            # or say 'navaid'") had nowhere to land: the slot-fill path only
+            # understands aerodrome names, so a typed "navaid" would not have
+            # routed anywhere. The button carries the scope explicitly.
+            if getattr(res, "ambiguous_kind", "aerodrome") == "scope":
+                _ident = re.sub(r"\s+", "", (ex.aerodrome_name or "")).upper()
+                _icao = next((ic for ic, idt in resolver.VOR_IDENTS.items()
+                              if idt == _ident), None)
+                if _icao:
+                    rec["path"] = "ambiguous:scope"
+                    await asyncio.to_thread(
+                        memory.save_pending, chat_id,
+                        {"kind": "scope_clar", "qid": rec["qid"],
+                         "icao": _icao, "ident": _ident,
+                         "query": text})
+                    await send_message(
+                        chat_id,
+                        f"'{_ident}' is both an aerodrome and a published "
+                        f"navaid. Which did you mean?",
+                        reply_markup=clarify_scope_kb(_icao, _ident, rec["qid"]))
+                    return
             await send_message(chat_id, ambiguous(res))
             return
         if res.unresolved:

@@ -50,6 +50,23 @@ def clarify_runway_kb(options, qid: str) -> dict:
     return {"inline_keyboard": _rows(btns)}
 
 
+def clarify_scope_kb(icao: str, ident: str, qid: str) -> dict:
+    """Aerodrome-or-navaid, as two taps.
+
+    A VOR ident names both: "ABC" is Abuja AND the ABC VOR/DME published in
+    ENR 4.1. Asking in prose ("reply with the ICAO code, or say 'navaid'") put
+    the work on the pilot AND had nowhere to land — the slot-fill path only
+    understands aerodrome names, so a typed "navaid" would not have routed.
+    A button carries the chosen scope in its callback data, so there is nothing
+    to re-parse and no second chance to guess wrong."""
+    btns = [
+        {"text": f"{icao} (aerodrome)", "callback_data": f"scope:AD:{icao}:{qid}"},
+        {"text": f"{ident} (navaid)",
+         "callback_data": f"scope:ENR_NAVAID:{ident}:{qid}"},
+    ]
+    return {"inline_keyboard": _rows(btns)}
+
+
 async def answer_callback(callback_id: str, text: str = "") -> None:
     """Acknowledge a button tap so Telegram stops the loading spinner."""
     async with httpx.AsyncClient(timeout=10) as http:

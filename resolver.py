@@ -271,6 +271,35 @@ def _lookup_enr_scope(name: str):
     return rows[0].get("scope_kind"), rows[0].get("scope_id")
 
 
+
+def _ident_is_also_navaid(name: str):
+    """(aerodrome_label, navaid_label) if `name` is a VOR ident that ENR 4.1
+    also publishes as a navaid, else None.
+
+    Only fires when BOTH readings are real: the token must be in VOR_IDENTS
+    (so an aerodrome answer exists) AND be an indexed ENR_NAVAID (so a navaid
+    answer exists). A token that is only one of the two resolves as it always
+    did — this adds a question, never a refusal.
+
+    Fails closed: any lookup error returns None and the caller proceeds
+    unchanged, so an outage cannot turn a working answer into a prompt."""
+    token = re.sub(r"\s+", "", (name or "").strip()).upper()
+    if not token or len(token) > 4:
+        return None
+    owner = next((ic for ic, ident in VOR_IDENTS.items() if ident == token), None)
+    if not owner:
+        return None
+    try:
+        from database import find_aip_scope
+        rows = [r for r in (find_aip_scope(token) or [])
+                if r.get("scope_kind") == "ENR_NAVAID"]
+    except Exception:                                  # noqa: BLE001
+        return None
+    if not rows:
+        return None
+    return (f"{owner} (the aerodrome)", f"{token} (the navaid)")
+
+
 def resolve(ex: AIPQueryExtraction) -> Resolution:
     if not _loaded:
         load_index()
@@ -316,6 +345,22 @@ def resolve(ex: AIPQueryExtraction) -> Resolution:
             return Resolution(is_national=True, part="ENR", reference="AIRSPACE",
                               label="Kano FIR / En-route",
                               aerodrome_hint=_hint_for(name))
+        # A VOR IDENT RESOLVES AS ITS AERODROME, AND THAT IS THE PROBLEM.
+        # VOR_IDENTS is loaded into _ALIASES, so "ABC" matches DNAA here and
+        # never reaches the ENR lookup further down. Confirmed live: "what is
+        # the frequency of ABC?" returned Abuja's ATS COMMS from AD 2.18 when
+        # the asker plainly meant the VOR/DME on 116.3 MHz.
+        #
+        # Both readings are correct — ENR 4.1 publishes ABC as a navaid in its
+        # own right — so neither may be assumed. Checked BEFORE the alias match
+        # succeeds, because afterwards the aerodrome answer has already won.
+        _amb = _ident_is_also_navaid(name)
+        if _amb:
+            return Resolution(
+                ambiguous=list(_amb), ambiguous_kind="scope",
+                reason=f"'{re.sub(r'\s+', '', name.strip()).upper()}' is both an "
+                       f"aerodrome and a published navaid.")
+
         cands = _match_name(name)
         if len(cands) == 1:
             return _aero(next(iter(cands)))
@@ -337,6 +382,14 @@ def resolve(ex: AIPQueryExtraction) -> Resolution:
         # ranking: a name either is a published entity or it is not. That is
         # the same property that makes AERODROMES reliable, and it is why this
         # cannot misroute one entity to another.
+        # A VOR IDENT IS AMBIGUOUS BY CONSTRUCTION. VOR_IDENTS maps "ABC" to
+        # DNAA so an ident resolves as the aerodrome, but ENR 4.1 publishes
+        # "ABC" as a navaid in its own right. Confirmed live: "what is the
+        # frequency of ABC?" returned Abuja's ATS COMMS frequencies from
+        # AD 2.18 when the asker plainly meant the VOR/DME on 116.3 MHz.
+        #
+        # Both readings are correct, so neither may be assumed. Ask — the same
+        # choice clarify.decide() makes for an underspecified approach.
         scope = _lookup_enr_scope(name)
         if scope:
             kind, sid = scope
