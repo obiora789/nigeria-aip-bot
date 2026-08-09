@@ -592,6 +592,7 @@ _ENR_SOURCES = {
     "5.1": ("enr51_extractor", "ENR51Extractor", "ENR_AREA"),
     "4.4": ("enr44_extractor", "ENR44Extractor", "ENR_POINT"),
     "2.1": ("enr21_extractor", "ENR21Extractor", "ENR_AIRSPACE"),
+    "4.1": ("enr41_extractor", "ENR41Extractor", "ENR_NAVAID"),
 }
 
 # Which record fields become facts, and the label a pilot sees. Order matters:
@@ -620,6 +621,11 @@ _ENR_FACT_FIELDS = [
     ("frequencies", "Frequency"),
     ("parent", "Part of"),
     ("note", "Note"),
+    # ENR 4.1 — en-route navaids
+    ("station", "Station"),
+    ("navaid_type", "Type"),
+    ("frequency", "Frequency"),
+    ("elevation", "DME antenna elevation"),
 ]
 
 
