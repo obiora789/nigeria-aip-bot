@@ -66,6 +66,29 @@ def _write(chat_id, *, last_icao, pending, last_query=None) -> None:
         log.exception("context save failed")
 
 
+def clear(chat_id) -> bool:
+    """Forget everything remembered about this chat. Returns True on success.
+
+    DELETES the row rather than writing nulls into it. A row of nulls still has
+    an expires_at and still satisfies "context exists", which is the state that
+    made this necessary: an aerodrome pinned by an earlier turn kept answering
+    later, unrelated questions ("Using your last aerodrome, Abuja") long after
+    the pilot had moved on.
+
+    Carries no aerodrome, no pending request, no last query — a pilot asking
+    for a reset means all of it, and leaving one field behind is exactly how a
+    stale value survives a reset that appeared to work."""
+    if not config.CONTEXT_ENABLED:
+        return True
+    try:
+        supabase.table("conversation_context") \
+            .delete().eq("chat_hash", _hash(chat_id)).execute()
+        return True
+    except Exception:  # noqa: BLE001
+        log.exception("context clear failed")
+        return False
+
+
 def save_pending(chat_id, ex, raw: str, last_icao=None) -> None:
     """Remember a request awaiting an aerodrome (keeps any last_icao)."""
     _write(chat_id, last_icao=last_icao, last_query=raw, pending={

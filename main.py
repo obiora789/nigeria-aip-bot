@@ -570,6 +570,24 @@ async def process(chat_id: int, text: str, force_scope=None) -> None:
             rec["path"] = "help"
             await send_message(chat_id, config.HELP)
             return
+        # /reset is for PILOTS, not operators — deliberately ungated. Vannie
+        # carries an aerodrome between turns so "and the TORA?" works, but that
+        # same memory can pin the wrong thing: a VOR ident answered as its
+        # aerodrome once, and every later question then inherited it
+        # ("Using your last aerodrome, Abuja"). A pilot needs a way out that
+        # does not depend on knowing why.
+        if cmd in ("/reset", "/clear", "/forget"):
+            rec["path"] = "reset"
+            ok = await asyncio.to_thread(memory.clear, chat_id)
+            await send_message(
+                chat_id,
+                "Cleared. I've forgotten the aerodrome and any question I was "
+                "waiting on — ask me anything fresh."
+                if ok else
+                "I couldn't clear that just now. Try again shortly; until then, "
+                "name the aerodrome explicitly in your question.")
+            return
+
         # Operator-only diagnostics. Non-admins are ignored silently — the
         # commands don't exist for them (no info leak, no OpenAI/Supabase cost).
         if cmd in ("/health", "/stats"):

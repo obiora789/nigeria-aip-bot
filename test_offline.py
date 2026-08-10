@@ -1110,6 +1110,33 @@ def test_enr_area_id_survives_the_extraction_backstop():
         assert ex.aerodrome_name != code or code not in resolver.VALID_ICAO
 
 
+def test_reset_command_clears_all_context():
+    """A pilot must be able to clear remembered context, and /reset must not be
+    operator-gated.
+
+    Vannie carries an aerodrome between turns so "and the TORA?" works, but the
+    same memory pins the wrong thing when a turn goes wrong: after a VOR ident
+    was answered as its aerodrome, every later question inherited it —
+    "Using your last aerodrome, Abuja" in reply to a question about MIU. A
+    pilot needs a way out that does not depend on knowing why.
+
+    clear() DELETES the row rather than writing nulls: a row of nulls still
+    satisfies "context exists", which is how a stale value survives a reset
+    that appeared to work."""
+    import inspect, main, memory, config
+    src = inspect.getsource(main)
+    assert '"/reset"' in src, "no /reset command"
+    assert "memory.clear" in src, "/reset does not clear context"
+    # Ungated: the ADMIN_CHAT_ID check must not sit between the command and the
+    # clear, or a pilot cannot use it.
+    head = src.split('"/reset"')[0]
+    tail = src.split('"/reset"')[1][:600]
+    assert "ADMIN_CHAT_ID" not in tail.split("return")[0], \
+        "/reset is operator-gated — pilots cannot reset their own context"
+    assert hasattr(memory, "clear"), "memory.clear missing"
+    assert "/reset" in config.HELP, "pilots are not told /reset exists"
+
+
 def test_vor_ident_is_not_silently_converted_to_its_aerodrome():
     """GUARD: a typed VOR ident must survive extraction as the ident.
 

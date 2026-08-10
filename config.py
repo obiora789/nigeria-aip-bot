@@ -206,6 +206,7 @@ HELP = (
     "What I don't do: live weather/METAR/TAF values, NOTAMs, flight planning, or "
     "anything outside the published Nigerian AIP.\n\n"
     f"{DISCLAIMER}"
+    "\nSend /reset any time to clear the aerodrome I am remembering."
 )
 
 OUT_OF_SCOPE = (
