@@ -266,6 +266,25 @@ async def handle_feedback(cb: dict) -> None:
                 # chosen scope is carried in the callback data, so nothing is
                 # re-resolved and the ambiguity cannot recur.
                 original = pending.get("query") or sid
+                if kind == "AD":
+                    # SUBSTITUTE THE IDENT FOR THE AERODROME NAME.
+                    #
+                    # The pilot has just said they meant the aerodrome, so the
+                    # ident is no longer what they are asking about — and it is
+                    # actively harmful to leave in: "What is the frequency of
+                    # ABC?" embeds poorly against Abuja's AD 2.18 comms text,
+                    # because ABC is a NAVAID ident that appears nowhere in it.
+                    #
+                    # Measured: the re-run scored 39% for ABC, 33% for SAB and
+                    # 32% for MIU — all just under SIMILARITY_THRESHOLD (0.40),
+                    # so the search abstained and the tap produced "I couldn't
+                    # find a confident match". The abstention was correct; the
+                    # query it was given was not.
+                    _name = resolver.aerodrome_full_name(sid) or sid
+                    _ident = (pending.get("ident") or "").strip()
+                    if _ident:
+                        original = re.sub(rf"\b{re.escape(_ident)}\b", _name,
+                                          original, flags=re.I)
                 await process(chat_id, original, force_scope=(kind, sid))
             except Exception:  # noqa: BLE001 — surface, never vanish
                 log.exception("scope clarification callback failed")

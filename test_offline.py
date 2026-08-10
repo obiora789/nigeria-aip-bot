@@ -1212,6 +1212,35 @@ def test_vor_ident_is_not_silently_converted_to_its_aerodrome():
         database.find_aip_scope = original
 
 
+def test_aerodrome_tap_rewrites_the_ident_out_of_the_query():
+    """Tapping the AERODROME must produce a query that can actually match.
+
+    Measured: tapping "DNAA (aerodrome)" re-ran "What is the frequency of ABC?"
+    scoped to DNAA and scored 39% — just under SIMILARITY_THRESHOLD (0.40) — so
+    the search abstained and the tap answered "I couldn't find a confident
+    match". Same for SAB (33%) and MIU (32%).
+
+    The abstention was CORRECT; the query it was given was not. "ABC" is a
+    navaid ident that appears nowhere in Abuja's AD 2.18 comms text, and once
+    the pilot has said they meant the aerodrome the ident is no longer what
+    they are asking about. Substituting the aerodrome name makes the query mean
+    what the pilot just said it means."""
+    import inspect, main, resolver, re as _re
+    resolver.load_index()
+    src = inspect.getsource(main)
+    assert "aerodrome_full_name(sid)" in src, \
+        "the aerodrome tap does not substitute the ident — it will abstain"
+
+    # The substitution itself, on the three measured failures.
+    for ident, icao, q, want in [
+            ("ABC", "DNAA", "What is the frequency of ABC?", "Abuja"),
+            ("SAB", "DNAS", "What is the frequency of SAB?", "Asaba"),
+            ("MIU", "DNMA", "What is the frequency of MIU?", "Maiduguri")]:
+        name = resolver.aerodrome_full_name(icao) or icao
+        out = _re.sub(r"\b" + _re.escape(ident) + r"\b", name, q, flags=_re.I)
+        assert want in out and ident not in out, f"{ident} survived the rewrite"
+
+
 def test_scope_ambiguity_is_asked_with_buttons():
     """GUARD: a VOR ident that is ALSO a published navaid must be asked, and
     asked with TAPPABLE options.
