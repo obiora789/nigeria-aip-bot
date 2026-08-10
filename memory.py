@@ -79,6 +79,23 @@ def save_last(chat_id, icao, last_query=None) -> None:
         _write(chat_id, last_icao=icao, pending=None, last_query=last_query)
 
 
+def save_scope_pending(chat_id, icao, ident, query, qid, last_icao=None) -> None:
+    """Remember an aerodrome-or-navaid choice awaiting a button tap.
+
+    A VOR ident names both — "ABC" is Abuja AND the ABC VOR/DME in ENR 4.1 —
+    so the original QUERY is stored and re-run once the pilot picks. qid guards
+    against a stale tap acting on a request that has since been replaced.
+
+    Its own writer, like save_chart_pending: save_pending() builds a DIFFERENT
+    shape from an extraction object and takes (chat_id, ex, raw), so calling it
+    with a ready-made dict raised TypeError on this path and the bot answered
+    "something went wrong" — and even had it accepted, the record would have
+    carried no `kind` or `qid` for the callback guard to match."""
+    _write(chat_id, last_icao=last_icao or icao, last_query=query,
+           pending={"kind": "scope_clar", "icao": icao, "ident": ident,
+                    "query": query, "qid": qid})
+
+
 def save_chart_pending(chat_id, icao, label, ptype, runway, qid, last_icao=None) -> None:
     """Remember an under-specified chart request awaiting a clarifying answer
     (a button tap or a bare type/runway token). qid guards against stale taps;

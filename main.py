@@ -749,10 +749,8 @@ async def process(chat_id: int, text: str, force_scope=None) -> None:
                 if _icao:
                     rec["path"] = "ambiguous:scope"
                     await asyncio.to_thread(
-                        memory.save_pending, chat_id,
-                        {"kind": "scope_clar", "qid": rec["qid"],
-                         "icao": _icao, "ident": _ident,
-                         "query": text})
+                        memory.save_scope_pending, chat_id, _icao, _ident,
+                        text, rec["qid"])
                     await send_message(
                         chat_id,
                         f"'{_ident}' is both an aerodrome and a published "

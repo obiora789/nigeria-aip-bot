@@ -1167,7 +1167,27 @@ def test_scope_ambiguity_is_asked_with_buttons():
     assert "scope:AD:DNAA:q1" in datas, "no aerodrome option"
     assert "scope:ENR_NAVAID:ABC:q1" in datas, "no navaid option"
 
+    # The pending record must be written by a writer whose SHAPE the callback
+    # guard can match. save_pending() takes (chat_id, ex, raw) and builds a
+    # different shape from an extraction object — calling it with a ready-made
+    # dict raised TypeError and the bot answered "something went wrong", and
+    # even on success the record would have carried no `kind` or `qid`.
+    import memory
+    assert hasattr(memory, "save_scope_pending"), "no scope pending writer"
+    store = {}
+    original_write = memory._write
+    memory._write = lambda chat_id, **kw: store.update(kw)
+    try:
+        memory.save_scope_pending(1, "DNAA", "ABC", "frequency of ABC?", "q1")
+    finally:
+        memory._write = original_write
+    p = store["pending"]
+    assert p["kind"] == "scope_clar" and p["qid"] == "q1", \
+        "the callback guard cannot match this record"
+    assert p["query"] == "frequency of ABC?", "the original query is not stored"
+
     src = inspect.getsource(main)
+    assert "save_scope_pending" in src, "main.py does not use the scope writer"
     assert 'data.startswith("scope:")' in src, "no callback branch for the choice"
     assert "force_scope" in src, "the chosen scope is not pinned on the re-run"
     assert 'pending.get("kind") != "scope_clar"' in src, \
