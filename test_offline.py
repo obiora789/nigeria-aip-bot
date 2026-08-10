@@ -1033,39 +1033,75 @@ def test_facts_citation_prefix_follows_the_scope():
     assert "AD 2.17" in out, "aerodrome citations must be unchanged"
 
 
-def test_waypoint_designator_reaches_the_resolver():
-    """A five-letter significant point must become the query's subject.
+def test_published_entities_are_recognised_by_membership_not_shape():
+    """A named entity must be recognised because the AIP PUBLISHES it, not
+    because it looks like a designator.
 
-    "Where is TEMSA?" — the question that opened all of this — was refused for
-    a point published on seven pages, because the extraction LLM had nowhere to
-    put a name that is not an aerodrome and the query arrived with no subject.
+    Measured: "What is the frequency of MIU?" extracted NOTHING — MIU is
+    Maiduguri's VOR ident but the model does not know that — so a query naming
+    a published navaid was answered "Which aerodrome?".
 
-    The scan reads the RAW text, not an uppercased copy. Uppercasing first made
-    every five-letter word a candidate: "Where is TEMSA?" yielded
-    ["WHERE", "TEMSA"] and WHERE won as the first match. Pilots type
-    designators in caps, and that is the signal separating them from prose —
-    asserted below with an all-caps sentence that must NOT match."""
-    import agent, resolver
+    Shape cannot solve this. A 2-4 letter ident is indistinguishable from an
+    ordinary word by pattern, which is why a five-letter waypoint regex needed
+    a stop-list of English words ("WHERE", "TOWER") beside it. Membership in
+    the published set needs neither: WHERE is not a navaid, so it does not
+    match, and no list has to say so.
+
+    SAFETY: this fires ONLY when the query produced no subject at all. Such a
+    query is refused today, so it can only turn a refusal into an answer —
+    anything that already resolves takes an earlier branch. AERODROMES and
+    VOR_IDENTS are untouched."""
+    import agent, resolver, database
     from types import SimpleNamespace as N
     resolver.load_index()
+    o_list, o_find = database.list_scope_ids, database.find_aip_scope
+    database.list_scope_ids = lambda k: (
+        ["ABC", "MIU", "LAG"] if k == "ENR_NAVAID"
+        else ["TEMSA", "AKLIS"] if k == "ENR_POINT" else [])
+    database.find_aip_scope = lambda n: []
+    resolver._PUBLISHED_ENTITIES = None
+    try:
+        def subject(raw, icao=None):
+            ex = N(intent="aerodrome_fact", icao_code=icao, aerodrome_name=None,
+                   procedure_type=None, runway=None, filter_part="AD")
+            return agent._backstop(ex, raw).aerodrome_name
 
-    def subject(raw):
-        ex = N(intent="aerodrome_fact", icao_code=None, aerodrome_name=None,
-               procedure_type=None, runway=None, filter_part="AD")
-        return agent._backstop(ex, raw).aerodrome_name
+        assert subject("What is the frequency of MIU?") == "MIU"
+        assert subject("Where is TEMSA?") == "TEMSA"
+        assert subject("what routes pass through AKLIS") == "AKLIS"
 
-    assert subject("Where is TEMSA?") == "TEMSA"
-    assert subject("GEOGRAPHICAL LOCATION OF TEMSA") == "TEMSA"
-    assert subject("TEMSA") == "TEMSA"
-    assert subject("what routes pass through AKLIS") == "AKLIS"
+        # Prose matches nothing — with NO stop-list to maintain.
+        assert subject("WHERE IS THE TOWER") is None
+        assert subject("Which runway is longest") is None
+        assert subject("what is the elevation of Abuja") is None
 
-    # Ordinary prose must not produce a candidate, in either case.
-    assert subject("what is the elevation of Abuja") != "ELEVA"
-    assert subject("WHERE IS THE TOWER") is None, \
-        "all-caps prose must not be read as a designator"
+        # A query that already has a subject is untouched.
+        assert subject("DNAA elevation", icao="DNAA") is None
 
-    # A known aerodrome alias is never hijacked as a waypoint.
-    assert subject("PLEASE tell me about LAGOS") != "LAGOS"
+        src = __import__("inspect").getsource(agent)
+        assert "_NOT_A_DESIGNATOR" not in src, \
+            "the stop-list is back — membership makes it unnecessary"
+    finally:
+        database.list_scope_ids, database.find_aip_scope = o_list, o_find
+        resolver._PUBLISHED_ENTITIES = None
+
+
+def test_waypoint_designator_reaches_the_resolver():
+    """SUPERSEDED by test_published_entities_are_recognised_by_membership.
+
+    This asserted the SHAPE-based scan — a five-letter uppercase pattern with a
+    stop-list of English words beside it. That approach is gone: recognition is
+    now membership in the set the AIP publishes, which needs no pattern and no
+    stop-list. The property this test protected (a named waypoint must reach
+    the resolver) is asserted there against the same cases, plus the 2-4 letter
+    idents shape could never handle.
+
+    Kept as a marker rather than deleted, so the reason the old behaviour went
+    away is recorded where someone would look for it."""
+    import agent
+    src = __import__("inspect").getsource(agent)
+    assert "published_entities" in src, \
+        "membership recognition is gone — waypoints will not reach the resolver"
 
 
 def test_enr_area_id_survives_the_extraction_backstop():

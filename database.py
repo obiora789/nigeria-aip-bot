@@ -263,6 +263,32 @@ def search_facts_scoped(embedding: list, scope_kind: str, scope_id: str,
         return []
 
 
+def list_scope_ids(scope_kind: str) -> list:
+    """Every scope_id published for one scope kind.
+
+    The authoritative set for name recognition, read from the index rather than
+    described by a pattern. A 2-4 letter navaid ident cannot be matched by
+    shape — [A-Z]{2,4} matches half the words in an English sentence, which is
+    how a stop-list of "words that are not designators" came to exist. A token
+    either IS a published ident or it is not, and only the index knows."""
+    if not scope_kind:
+        return []
+    try:
+        rows, page, size = [], 0, 1000
+        while True:
+            res = (supabase.table("aip_facts").select("scope_id")
+                   .eq("scope_kind", scope_kind)
+                   .range(page * size, page * size + size - 1).execute())
+            batch = res.data or []
+            rows.extend(r["scope_id"] for r in batch if r.get("scope_id"))
+            if len(batch) < size:
+                return sorted(set(rows))
+            page += 1
+    except Exception:                                  # noqa: BLE001
+        log.exception("list_scope_ids failed (%s)", scope_kind)
+        return []
+
+
 def find_aip_scope(name: str) -> list:
     """Deterministic name -> scope lookup. "TEMSA" -> ENR_POINT/TEMSA.
 

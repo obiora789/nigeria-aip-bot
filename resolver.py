@@ -272,6 +272,34 @@ def _lookup_enr_scope(name: str):
 
 
 
+_PUBLISHED_ENTITIES = None
+
+
+def published_entities() -> dict:
+    """{TOKEN: scope_kind} for every named ENR entity, cached.
+
+    Includes VOR idents from VOR_IDENTS so an ident is recognised even before
+    aip_facts is populated. Read once; a lookup failure yields the VOR idents
+    alone rather than nothing, so recognition degrades instead of vanishing.
+
+    This REPLACES pattern matching on token shape. It cannot affect aerodrome
+    resolution: AERODROMES and VOR_IDENTS are untouched, and the caller only
+    consults this when a query has produced no subject at all."""
+    global _PUBLISHED_ENTITIES
+    if _PUBLISHED_ENTITIES is not None:
+        return _PUBLISHED_ENTITIES
+    out = {v.upper(): "ENR_NAVAID" for v in VOR_IDENTS.values()}
+    try:
+        from database import list_scope_ids
+        for kind in ("ENR_NAVAID", "ENR_POINT", "ENR_AREA", "ENR_ROUTE"):
+            for sid in list_scope_ids(kind):
+                out.setdefault(sid.upper(), kind)
+    except Exception:                                  # noqa: BLE001
+        pass
+    _PUBLISHED_ENTITIES = out
+    return out
+
+
 def _ident_is_also_navaid(name: str):
     """(aerodrome_label, navaid_label) if `name` is a VOR ident that ENR 4.1
     also publishes as a navaid, else None.

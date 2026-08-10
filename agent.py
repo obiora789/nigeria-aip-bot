@@ -25,25 +25,6 @@ _DN_RE = re.compile(r"\bDN[A-Z]{2}\b")
 # ends in digits, which no aerodrome code does. That difference is what makes
 # this safe to match — it can never capture a real aerodrome.
 _ENR_AREA_RE = re.compile(r"\bDN[PRD]\s?\d{1,3}\b", re.I)
-# A five-letter significant-point designator (TEMSA, KIPSA, AKLIS). Uppercase
-# only, because that is how the AIP publishes them and how pilots type them;
-# matching case-insensitively here would catch ordinary words in every
-# sentence. The database lookup is exact, so a false candidate costs one query
-# and returns nothing.
-_WAYPOINT_RE = re.compile(r"\b([A-Z]{5})\b")
-# Five-letter words that appear in ALL-CAPS pilot messages and are not
-# designators. Deliberately TINY and closed: this is not an attempt to
-# enumerate English, only to stop the handful of aviation words that recur in
-# shouted queries ("WHERE IS THE TOWER") from being sent to the lookup.
-#
-# It is a filter, not the decision. The lookup is exact, so anything reaching
-# it that is not a published point returns nothing and the caller falls
-# through — a missing word here costs one query, never a wrong answer.
-_NOT_A_DESIGNATOR = {
-    "WHERE", "WHICH", "WHOSE", "THERE", "TOWER", "RADIO", "NORTH", "SOUTH",
-    "ROUTE", "POINT", "LIMIT", "CHART", "PLATE", "APRON", "LIGHT", "HOURS",
-    "RANGE", "AREAS", "NOTAM", "METAR", "PLEASE", "ABOUT",
-}
 # A clear identity/mapping question — safe to rescue from a wrong out_of_scope.
 _MAPPING_RE = re.compile(
     r"(icao code|what (?:city|airport|aerodrome)|what(?:'s| is)\s+dn[a-z]{2})", re.I)
@@ -196,29 +177,33 @@ def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
         found = [c for c in _DN_RE.findall(raw.upper()) if c in resolver.VALID_ICAO]
         if found:
             ex.icao_code = found[0]
-    # 2c) A bare five-letter designator is a SIGNIFICANT POINT (waypoint).
-    #     "GEOGRAPHICAL LOCATION OF TEMSA" leaves the model nothing to put in
-    #     aerodrome_name — TEMSA is not an aerodrome — so the query arrived
-    #     with no subject and was refused for a point published on seven pages.
+    # 2c) A PUBLISHED ENTITY NAMED IN THE QUERY, recognised by MEMBERSHIP.
     #
-    #     Only fires when nothing else resolved, and only for a token that is
-    #     not already a known aerodrome alias. resolve() then does an EXACT
-    #     lookup, so an ordinary five-letter word simply returns nothing.
+    #     Fires ONLY when the query produced no subject at all — both fields
+    #     empty. Such a query is refused today ("Which aerodrome?"), so this can
+    #     only turn a refusal into an answer; anything that already resolves
+    #     took an earlier branch and never reaches here. AERODROMES and
+    #     VOR_IDENTS are untouched.
+    #
+    #     Measured: "What is the frequency of MIU?" extracted NOTHING — MIU is
+    #     Maiduguri's VOR ident, but the model does not know that — so a query
+    #     naming a published navaid was answered "Which aerodrome?".
+    #
+    #     This REPLACES two shape-based scans: a five-letter waypoint pattern
+    #     and a stop-list of English words that pattern wrongly matched
+    #     ("WHERE", "TOWER"). Shape cannot separate a 2-4 letter ident from an
+    #     ordinary word, so the test is membership in the set the AIP actually
+    #     publishes — the same test AERODROMES applies, and the one part of
+    #     this system that has never misrouted.
     if not ex.icao_code and not ex.aerodrome_name:
-        # Scan the RAW text, not an uppercased copy. Uppercasing first turns
-        # every five-letter word into a candidate — "Where is TEMSA?" yielded
-        # ["WHERE", "TEMSA"] and WHERE won as the first match, so the real
-        # designator was never tried. Pilots type designators in caps, which is
-        # exactly the signal that distinguishes them from prose.
-        for tok in _WAYPOINT_RE.findall(raw):
-            if tok in resolver.VALID_ICAO:
+        known = resolver.published_entities()
+        for tok in re.findall(r"\b[A-Za-z][A-Za-z0-9]{1,5}\b", raw or ""):
+            up = tok.upper()
+            if up in resolver.VALID_ICAO:
                 continue
-            if tok.lower() in {a for v in resolver.AERODROMES.values() for a in v}:
-                continue
-            if tok in _NOT_A_DESIGNATOR:
-                continue
-            ex.aerodrome_name = tok
-            break
+            if up in known:
+                ex.aerodrome_name = up
+                break
 
     # 2b) ...or an ENR area id literally present, if nothing else resolved.
     #     "What is DND45?" carries no aerodrome, so without this the query has
