@@ -91,7 +91,17 @@ def save_scope_pending(chat_id, icao, ident, query, qid, last_icao=None) -> None
     with a ready-made dict raised TypeError on this path and the bot answered
     "something went wrong" — and even had it accepted, the record would have
     carried no `kind` or `qid` for the callback guard to match."""
-    _write(chat_id, last_icao=last_icao or icao, last_query=query,
+    # DO NOT write last_icao from `icao`. save_chart_pending does, correctly —
+    # there the aerodrome is already settled. Here it is the OPEN QUESTION, and
+    # recording DNAA as the conversation's aerodrome asserts the very reading
+    # we are asking the pilot to choose.
+    #
+    # Confirmed live: "What is the frequency of ABC?" asked correctly the first
+    # time, then the SAME question 26 seconds later skipped the prompt and
+    # answered from Abuja's AD 2.17 — because the first ask had quietly pinned
+    # last_icao=DNAA and the follow-up context path resolved straight to it.
+    # An ambiguity must not resolve itself as a side effect of being raised.
+    _write(chat_id, last_icao=last_icao, last_query=query,
            pending={"kind": "scope_clar", "icao": icao, "ident": ident,
                     "query": query, "qid": qid})
 

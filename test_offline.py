@@ -1186,6 +1186,16 @@ def test_scope_ambiguity_is_asked_with_buttons():
         "the callback guard cannot match this record"
     assert p["query"] == "frequency of ABC?", "the original query is not stored"
 
+    # RAISING an ambiguity must not RESOLVE it. Writing last_icao=DNAA here
+    # pins the aerodrome reading as the conversation's context, so the SAME
+    # question asked again skips the prompt and answers as the aerodrome.
+    # Confirmed live: the first "frequency of ABC?" asked correctly; the same
+    # question 26 seconds later answered from Abuja's AD 2.17 with no prompt.
+    assert store.get("last_icao") is None, \
+        "raising the ambiguity pinned the aerodrome — it will not ask again"
+    assert p["icao"] == "DNAA", \
+        "the tap handler still needs the aerodrome from the pending record"
+
     src = inspect.getsource(main)
     assert "save_scope_pending" in src, "main.py does not use the scope writer"
     assert 'data.startswith("scope:")' in src, "no callback branch for the choice"
