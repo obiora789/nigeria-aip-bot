@@ -593,7 +593,17 @@ _ENR_SOURCES = {
     "4.4": ("enr44_extractor", "ENR44Extractor", "ENR_POINT"),
     "2.1": ("enr21_extractor", "ENR21Extractor", "ENR_AIRSPACE"),
     "4.1": ("enr41_extractor", "ENR41Extractor", "ENR_NAVAID"),
+    # 3.1/3.2 routes and 3.3 DCT combinations need pdfplumber WORD POSITIONS,
+    # not page text: their columns interleave when flattened, and the point
+    # sequence is only unambiguous when read as a band. build_enr() handles
+    # them separately for that reason.
+    "3.1": ("enr3x_extractor", "ENR3XExtractor", "ENR_ROUTE"),
+    "3.2": ("enr3x_extractor", "ENR3XExtractor", "ENR_ROUTE"),
+    "3.3": ("enr3x_extractor", "ENR33Extractor", "ENR_FRA_DCT"),
 }
+
+# Sections whose extractor takes BAND-SLICED lines rather than page text.
+_ENR_BANDED = {"3.1": None, "3.2": None, "3.3": 360}
 
 # Which record fields become facts, and the label a pilot sees. Order matters:
 # it is the order they appear in a reply. Fields absent from a record are
@@ -626,6 +636,11 @@ _ENR_FACT_FIELDS = [
     ("navaid_type", "Type"),
     ("frequency", "Frequency"),
     ("elevation", "DME antenna elevation"),
+    # ENR 3.1/3.2 routes and 3.3 DCT combinations
+    ("point_sequence", "Significant points"),
+    ("navigation_spec", "Navigation specification"),
+    ("dct", "Direct routing"),
+    ("availability", "Availability"),
 ]
 
 
@@ -695,7 +710,7 @@ def build_enr(subsections, pdf_path, dry_run=False, limit=40):
         # AD 2.22 extraction.
         hdr = re.compile(rf"^\s*ENR\s*{re.escape(sub)}\s*-\s*\d+")
         doc = pdfium.PdfDocument(pdf_path)
-        pages = []
+        pages, page_idx = [], []
         for i in range(len(doc)):
             page = doc[i]
             tp = page.get_textpage()
@@ -704,14 +719,28 @@ def build_enr(subsections, pdf_path, dry_run=False, limit=40):
             page.close()
             if hdr.match(t):
                 pages.append(t)
+                page_idx.append(i)
         if not pages:
             print(f"ENR {sub}: no content pages found in {pdf_path}")
             any_error = True
             continue
 
-        ex = cls()
-        ex.segment_text = lambda _segs, _blob="\n".join(pages): _blob
-        result = ex.extract("ENR", [1])
+        if sub in _ENR_BANDED:
+            # Word positions, not page text — see _ENR_BANDED.
+            import pdfplumber
+            from enr3x_extractor import column1_lines
+            segs = []
+            with pdfplumber.open(pdf_path) as _pdf:
+                for _i in page_idx:
+                    _pg = _pdf.pages[_i]
+                    segs.append(column1_lines(_pg, col_max=_ENR_BANDED[sub]))
+                    _pg.flush_cache()
+            ex = cls(sub) if sub in ("3.1", "3.2") else cls()
+            result = ex.extract("ENR", segs)
+        else:
+            ex = cls()
+            ex.segment_text = lambda _segs, _blob="\n".join(pages): _blob
+            result = ex.extract("ENR", [1])
         issues = [i for i in ex.validate(result) if i.severity == "error"]
         if issues:
             # A validator error means a record is incomplete — for airspace a
