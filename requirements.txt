@@ -7,3 +7,23 @@ pydantic>=2.6
 python-dotenv>=1.0
 redis>=5.0
 python-multipart>=0.0.13
+
+# PDF extraction — used by the 29 extractors (23 AD + 6 ENR) and their
+# validators, and by build_fact_index.py / run_stress_set.py which import
+# main.py's full dependency chain. Confirmed missing via a clean-venv import
+# check (`python -c "import run_stress_set"` failed with ModuleNotFoundError
+# for fastapi first, then pdfplumber/pypdfium2 once fastapi's chain resolved).
+#
+#   pypdfium2   fast full-document page scanning (page discovery, ENR 4.4/5.1/
+#               2.1/4.1 text extraction). ~2 orders of magnitude faster than
+#               pdfplumber for a straight text sweep.
+#   pdfplumber  WORD-POSITION extraction. Required for ENR 3.1/3.2/3.3, whose
+#               columns interleave when flattened to plain text — the band
+#               slice in enr3x_extractor.py reads column x-positions directly.
+#   PyMuPDF     imported as `fitz`. Used by all 23 validate_ad2*.py scripts
+#               (the AD-section correctness gate) plus extract_charts.py and
+#               vectorise_aip_v2.py. Confirmed via
+#               `grep -rl "^import fitz" *.py` — 29 files, not a stray import.
+pypdfium2>=4.30
+pdfplumber>=0.11
+PyMuPDF>=1.24
