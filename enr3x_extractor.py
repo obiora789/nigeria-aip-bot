@@ -113,8 +113,18 @@ def column1_lines(page, col_max=None) -> list:
     coordinate. It is NOT safe for the route table, where the remarks column
     holds point names that look exactly like the real ones."""
     limit = _COL1_MAX if col_max is None else col_max
-    words = [w for w in page.extract_words()
-             if w["x0"] < limit and w["top"] > _BODY_TOP]
+    # NO fixed y-cutoff. A page-independent constant is wrong here: pages
+    # from 3.3-2 onward reprint the column-header table at a DIFFERENT height
+    # each time, and a fixed cutoff (_BODY_TOP = 185) silently swallowed real
+    # data on the pages where a combination's header line landed just above
+    # it — "ONSEV DCT BOVDA" was lost this way, along with its first point's
+    # name and coordinates, because they sat at top=129-165 while the cutoff
+    # was 185. The combination never reached aip_facts at all.
+    #
+    # Filtering is by TEXT CONTENT instead (_CHROME_RE), the same approach
+    # every other extractor in this project uses. It is position-independent,
+    # so it cannot be defeated by the header table moving between pages.
+    words = [w for w in page.extract_words() if w["x0"] < limit]
     rows = {}
     for w in words:
         rows.setdefault(round(w["top"] / _YTOL), []).append(w)

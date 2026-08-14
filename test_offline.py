@@ -1033,6 +1033,50 @@ def test_facts_citation_prefix_follows_the_scope():
     assert "AD 2.17" in out, "aerodrome citations must be unchanged"
 
 
+def test_out_of_scope_rescue_covers_enr_entities_not_just_aerodromes():
+    """A query naming a real ENR entity must not be refused as out_of_scope,
+    even when the classifier itself returns that intent.
+
+    Confirmed live: "Where is Kelak?" — KELAK is a genuine ENR 3.3 route
+    point — was refused: "I'm limited to the published Nigerian AIP... "
+    live weather... NOTAMs... international airspace..." The membership
+    backstop (test_published_entities_are_recognised_by_membership_not_shape)
+    HAD already identified KELAK and set aerodrome_name — but that fixes the
+    SUBJECT, not the INTENT. The out_of_scope override immediately below it
+    only ever checked resolver.match_name(), which knows aerodromes only, so
+    the already-identified entity was discarded and the refusal stood.
+
+    Still must refuse a GENUINELY out-of-scope query: live weather and a
+    foreign airport must not be rescued just because some word in the query
+    happens to be an aerodrome or entity name."""
+    import agent, resolver, database
+    from types import SimpleNamespace as N
+    resolver.load_index()
+    o_list, o_find = database.list_scope_ids, database.find_aip_scope
+    database.list_scope_ids = lambda k: (
+        ["KELAK", "TEMSA", "ABC"] if k == "ENR_POINT" else
+        ["ABC"] if k == "ENR_NAVAID" else [])
+    database.find_aip_scope = lambda n: []
+    resolver._PUBLISHED_ENTITIES = None
+    try:
+        def run(raw, intent="out_of_scope"):
+            ex = N(intent=intent, icao_code=None, aerodrome_name=None,
+                   procedure_type=None, runway=None, filter_part="AD")
+            return agent._backstop(ex, raw)
+
+        rescued = run("Where is Kelak?")
+        assert rescued.intent == "aerodrome_fact", \
+            "a published ENR entity must not be refused as out_of_scope"
+        assert rescued.aerodrome_name == "KELAK"
+
+        # Genuinely out of scope: must NOT be rescued by this change.
+        assert run("weather in Lagos right now").intent == "out_of_scope"
+        assert run("ILS frequency at Heathrow").intent == "out_of_scope"
+    finally:
+        database.list_scope_ids, database.find_aip_scope = o_list, o_find
+        resolver._PUBLISHED_ENTITIES = None
+
+
 def test_published_entities_are_recognised_by_membership_not_shape():
     """A named entity must be recognised because the AIP PUBLISHES it, not
     because it looks like a designator.

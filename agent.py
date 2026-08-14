@@ -269,7 +269,23 @@ def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
     #     never resolves to a DN aerodrome, so the condition below fails.
     if ex.intent == "out_of_scope" and not _is_genuinely_out_of_scope(raw):
         cands = resolver.match_name(raw)
-        if ex.icao_code in resolver.VALID_ICAO or len(cands) == 1:
+        # A PUBLISHED ENR ENTITY rescues the query exactly like a matched
+        # aerodrome does. Confirmed live: "Where is Kelak?" — KELAK is a real
+        # ENR 3.3 route point — was refused as out_of_scope. Step 2c above had
+        # ALREADY found it and set ex.aerodrome_name = "KELAK", but that fixes
+        # the SUBJECT, not the INTENT: this override only ever checked
+        # resolver.match_name(), which knows aerodromes only, so a query naming
+        # a real waypoint, navaid, area or route point still fell through
+        # refused, even though the entity had already been positively
+        # identified two steps earlier in the same function.
+        #
+        # Still cannot rescue a genuinely out-of-scope query: live/priced
+        # queries are caught by _is_genuinely_out_of_scope, and an unpublished
+        # name matches neither an aerodrome nor a known ENR entity.
+        is_known_entity = (
+            ex.aerodrome_name
+            and ex.aerodrome_name.upper() in resolver.published_entities())
+        if ex.icao_code in resolver.VALID_ICAO or len(cands) == 1 or is_known_entity:
             ex.intent = "aerodrome_fact"
             if not ex.icao_code and len(cands) == 1:
                 ex.icao_code = next(iter(cands))
