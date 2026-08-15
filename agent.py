@@ -197,13 +197,35 @@ def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
     #     this system that has never misrouted.
     if not ex.icao_code and not ex.aerodrome_name:
         known = resolver.published_entities()
-        for tok in re.findall(r"\b[A-Za-z][A-Za-z0-9]{1,5}\b", raw or ""):
-            up = tok.upper()
-            if up in resolver.VALID_ICAO:
-                continue
-            if up in known:
-                ex.aerodrome_name = up
-                break
+        # ROUTE DESIGNATORS WITH A CATEGORY PREFIX ("A/UA604", "H/UH206",
+        # "V/UV224") are checked FIRST, as a single combined token, and
+        # separately from the bare-word scan below.
+        #
+        # The bare-word regex uses \b word boundaries, and "/" IS a word
+        # boundary to \b — so it splits "A/UA604" into "A" and "UA604" as two
+        # independent matches, never producing the combined string
+        # "A/UA604" that is the ACTUAL database key. published_entities()
+        # correctly contains "A/UA604" (after the matching resolver.py fix),
+        # but nothing could ever produce that exact token to look it up with.
+        #
+        # Confirmed live: roughly a third of all ENR_ROUTE designators use
+        # this prefixed form, and every one of them failed for this reason —
+        # not because they were unrecognised, but because the token that
+        # would have recognised them was never assembled from the raw text.
+        prefixed = re.search(r"\b([A-Za-z])/(U?[A-Za-z]\d{1,3}[A-Za-z]?)\b",
+                             raw or "")
+        if prefixed:
+            combined = f"{prefixed.group(1)}/{prefixed.group(2)}".upper()
+            if combined in known:
+                ex.aerodrome_name = combined
+        if not ex.aerodrome_name:
+            for tok in re.findall(r"\b[A-Za-z][A-Za-z0-9]{1,5}\b", raw or ""):
+                up = tok.upper()
+                if up in resolver.VALID_ICAO:
+                    continue
+                if up in known:
+                    ex.aerodrome_name = up
+                    break
 
     # 2b) ...or an ENR area id literally present, if nothing else resolved.
     #     "What is DND45?" carries no aerodrome, so without this the query has

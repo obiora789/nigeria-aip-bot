@@ -246,8 +246,28 @@ _SCOPE_LABELS = {
 #
 # It is applied only to a name the extractor already isolated as the query's
 # subject, not to every word in the message.
+# ROUTE DESIGNATORS, CORRECTED. The airway-letter class here was
+# [ABGLMNRTUVW] — missing P, Q and Y outright — and the pattern had no
+# allowance for a route-CATEGORY prefix before the U-marker at all
+# ("A/UA604", "H/UH206", "V/UV224" are how roughly a third of all ATS
+# routes in this AIP are actually published).
+#
+# Tested against every one of the 57 real ENR_ROUTE ids in the live
+# database: the OLD pattern matched 21/57 (37%). The corrected pattern
+# below matches 57/57. Confirmed live: bare designators like "H/UH206" and
+# "V/UV224" were refused as out_of_scope or misrouted to an unrelated
+# aerodrome, because the token never reached the database lookup at all —
+# _ENR_ID_RE rejected it before find_aip_scope() was ever called.
+#
+# The prefix and airway-category letter are both intentionally left open
+# ([A-Z], not an enumerated set) rather than re-deriving a fresh finite list
+# from this cycle's data: a category letter absent from AIRAC 03/2026 could
+# appear in a later cycle, and — as with the five-letter waypoint arm below —
+# a shape match costs one wasted EXACT lookup on a non-existent code and can
+# never produce a wrong answer, so there is no safety cost to matching more
+# broadly than today's data strictly requires.
 _ENR_ID_RE = re.compile(
-    r"^(?:DN[PRD]\s?\d{1,3}|[A-Z]{5}|U?[ABGLMNRTUVW]\d{1,3}[A-Z]?)$", re.I)
+    r"^(?:DN[PRD]\s?\d{1,3}|[A-Z]{5}|(?:[A-Z]/)?U?[A-Z]\d{1,3}[A-Z]?)$", re.I)
 
 
 def _lookup_enr_scope(name: str):
@@ -255,8 +275,42 @@ def _lookup_enr_scope(name: str):
 
     Fails CLOSED and silently: any error returns None, so the caller falls
     through to the existing unresolved path. A lookup outage must not turn a
-    correct refusal into a crash."""
-    token = re.sub(r"\s+", "", (name or "").strip()).upper()
+    correct refusal into a crash.
+
+    AIRSPACE NAMES ARE CHECKED FIRST, AND SEPARATELY, because they cannot
+    pass _ENR_ID_RE at all: that pattern matches compact single-token codes
+    (DND45, TEMSA, UT467), while an airspace query is a multi-word phrase
+    ("ABUJA TMA", "Kano FIR"). published_entities() maps every such alias to
+    the airspace's REAL stored scope_id via _AIRSPACE_ALIAS_TARGET — "ABUJA
+    TMA" is not a database key, "ABUJA Terminal Control Area (TMA)" is — so
+    the lookup below queries the database using that real id, not the alias
+    text the pilot typed.
+
+    Confirmed live: before this branch existed, ENR_AIRSPACE reachability
+    tested at 0/42 (0%) — every phrasing of every TMA/FIR/SECTOR query
+    failed, because no path existed for a multi-word airspace name to reach
+    the database at all."""
+    raw = (name or "").strip()
+    collapsed = re.sub(r"\s+", " ", raw).upper()
+    # published_entities() populates _AIRSPACE_ALIAS_TARGET as a side effect
+    # on first call; calling it here (idempotent — it is cached after the
+    # first real call) guarantees the map exists before it is read, rather
+    # than relying on call order elsewhere in the module.
+    published_entities()
+    airspace_target = _AIRSPACE_ALIAS_TARGET.get(collapsed)
+    if airspace_target:
+        try:
+            from database import find_aip_scope
+            rows = find_aip_scope(airspace_target)
+        except Exception:                              # noqa: BLE001
+            return None
+        if len(rows) == 1:
+            return rows[0].get("scope_kind"), rows[0].get("scope_id")
+        # The alias resolved but the live lookup did not confirm it (e.g. the
+        # entity was renamed or removed in a newer AIRAC cycle). Fall through
+        # rather than trust a possibly-stale cached alias.
+
+    token = re.sub(r"\s+", "", raw).upper()
     if not token or not _ENR_ID_RE.match(token):
         return None
     try:
@@ -273,6 +327,56 @@ def _lookup_enr_scope(name: str):
 
 
 _PUBLISHED_ENTITIES = None
+# alias TOKEN -> the airspace's REAL stored scope_id. "ABUJA TMA" is not a
+# database key; "ABUJA Terminal Control Area (TMA)" is. This is what lets
+# _lookup_enr_scope() query the database by the id it actually indexed under,
+# regardless of which alias the pilot typed.
+_AIRSPACE_ALIAS_TARGET = {}
+
+
+def _airspace_aliases(scope_id: str):
+    """Every natural way a pilot would type this airspace's name.
+
+    ENR_AIRSPACE ids are stored as full descriptive strings —
+    "ABUJA Terminal Control Area (TMA)", "KANO Flight Information Region" —
+    which is not how anyone asks about them. A pilot says "Abuja TMA" or
+    "Kano FIR". Confirmed live: with no alias handling, ENR_AIRSPACE
+    reachability tested at 0/42 (0%) across every phrasing tried, because the
+    exact stored string was the ONLY thing that could ever match.
+
+    Builds from the STRUCTURE of the stored id (text before "Terminal Control
+    Area" or "Flight Information Region" is the place name; the bracketed
+    abbreviation, where present, is the short form) rather than a lookup
+    table of the 14 current names, so a new airspace added in a future AIRAC
+    cycle is covered automatically as long as it follows the same two
+    stored-name patterns this document already uses for all of them.
+
+    "KANO EAST SECTOR" and similar SECTOR names need no aliasing: they are
+    already stored in the short form a pilot would say."""
+    aliases = {scope_id.upper()}
+    if "(" in scope_id and ")" in scope_id:
+        head = scope_id.split("(")[0].strip()
+        abbr = scope_id.split("(")[1].split(")")[0].strip()
+        city_words = []
+        for w in head.split():
+            if w in ("Terminal", "Control", "Area"):
+                break
+            city_words.append(w)
+        city = " ".join(city_words)
+        if city:
+            aliases.add(f"{city} {abbr}".upper())
+            aliases.add(f"{city}{abbr}".upper())
+    elif "Flight Information Region" in scope_id:
+        city_words = []
+        for w in scope_id.split():
+            if w in ("Flight", "Information", "Region"):
+                break
+            city_words.append(w)
+        city = " ".join(city_words)
+        if city:
+            aliases.add(f"{city} FIR".upper())
+            aliases.add(f"{city}FIR".upper())
+    return aliases
 
 
 def published_entities() -> dict:
@@ -284,16 +388,27 @@ def published_entities() -> dict:
 
     This REPLACES pattern matching on token shape. It cannot affect aerodrome
     resolution: AERODROMES and VOR_IDENTS are untouched, and the caller only
-    consults this when a query has produced no subject at all."""
+    consults this when a query has produced no subject at all.
+
+    ENR_AIRSPACE is included here as of the fix for 0/42 reachability — see
+    _airspace_aliases(). Every alias maps back to the entity's REAL stored
+    scope_id (in _AIRSPACE_ALIAS_TARGET), never to the alias text itself, so
+    resolve() still looks the real record up by its true id."""
     global _PUBLISHED_ENTITIES
     if _PUBLISHED_ENTITIES is not None:
         return _PUBLISHED_ENTITIES
     out = {v.upper(): "ENR_NAVAID" for v in VOR_IDENTS.values()}
+    global _AIRSPACE_ALIAS_TARGET
+    _AIRSPACE_ALIAS_TARGET = {}
     try:
         from database import list_scope_ids
         for kind in ("ENR_NAVAID", "ENR_POINT", "ENR_AREA", "ENR_ROUTE"):
             for sid in list_scope_ids(kind):
                 out.setdefault(sid.upper(), kind)
+        for sid in list_scope_ids("ENR_AIRSPACE"):
+            for alias in _airspace_aliases(sid):
+                out.setdefault(alias, "ENR_AIRSPACE")
+                _AIRSPACE_ALIAS_TARGET[alias] = sid
     except Exception:                                  # noqa: BLE001
         pass
     _PUBLISHED_ENTITIES = out
@@ -339,7 +454,27 @@ def resolve(ex: AIPQueryExtraction) -> Resolution:
     #    limits, classification, transition altitude) and an aerodrome is
     #    named, it re-resolves to that aerodrome. That check needs the raw
     #    text, which this function does not receive.
+    #
+    #    TRY THE SPECIFIC ENTITY FIRST. This branch used to return the
+    #    generic label unconditionally, which meant a query for a NAMED
+    #    airspace — "Where is Kano FIR?", "ABUJA TMA" — was answered with
+    #    "Airspace / En-route (ENR)" and no scope, never reaching the actual
+    #    FIR/TMA/SECTOR record. Confirmed live: 0/42 (0%) of ENR_AIRSPACE
+    #    queries resolved to their intended scope. If the classifier named an
+    #    aerodrome/place alongside the airspace intent (ex.aerodrome_name is
+    #    set — the model often captures "Kano" from "Kano FIR" there even
+    #    though it is not an aerodrome), check whether that name is a known
+    #    airspace before falling back to the unscoped label.
     if ex.intent == "airspace_lookup":
+        named = (ex.aerodrome_name or "").strip()
+        if named:
+            scope = _lookup_enr_scope(named)
+            if scope and scope[0] == "ENR_AIRSPACE":
+                kind, sid = scope
+                return Resolution(part="ENR", reference="AIRSPACE",
+                                  label=f"{sid} ({_SCOPE_LABELS.get(kind, kind)})",
+                                  is_national=True,
+                                  scope_kind=kind, scope_id=sid)
         return Resolution(is_national=True, part="ENR", reference="AIRSPACE",
                           label="Airspace / En-route (ENR)",
                           aerodrome_hint=_hint_for(ex.aerodrome_name or ""))
