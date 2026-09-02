@@ -229,6 +229,7 @@ _SCOPE_LABELS = {
     "ENR_POINT": "significant point",
     "ENR_ROUTE": "ATS route",
     "ENR_AIRSPACE": "airspace",
+    "ENR_FRA_DCT": "free route direct segment",
 }
 
 # Shapes that could be an ENR entity. Checked BEFORE the database is queried so
@@ -310,8 +311,53 @@ def _lookup_enr_scope(name: str):
         # entity was renamed or removed in a newer AIRAC cycle). Fall through
         # rather than trust a possibly-stale cached alias.
 
+    # DIRECT ROUTINGS, checked alongside airspace names and for the same
+    # reason: "ABC to NANOS" is a multi-word phrase that cannot pass the
+    # single-token gate below, and the alias key is not the stored id.
+    dct_target = _DCT_ALIAS_TARGET.get(dct_key(raw))
+    if dct_target:
+        try:
+            from database import find_aip_scope
+            rows = [r for r in (find_aip_scope(dct_target) or [])
+                    if r.get("scope_kind") == "ENR_FRA_DCT"]
+        except Exception:                              # noqa: BLE001
+            rows = []
+        if len(rows) == 1:
+            return rows[0].get("scope_kind"), rows[0].get("scope_id")
+        # UNVERIFIED: find_aip_scope is an RPC and its behaviour on ids
+        # containing "(", "/" and "#" has not been checked against real SQL.
+        # The airspace branch above falls through on a non-confirming lookup,
+        # which is right there because its aliases are derived from a NAME
+        # PATTERN and could in principle name something that no longer exists.
+        # A DCT target is different: it is the literal string list_scope_ids()
+        # read out of aip_facts in this process, so it is not a guess and
+        # returning it is not an invention. Confirm the RPC's behaviour on
+        # these ids before treating this fallback as settled.
+        return "ENR_FRA_DCT", dct_target
+
     token = re.sub(r"\s+", "", raw).upper()
-    if not token or not _ENR_ID_RE.match(token):
+    if not token:
+        return None
+    # MEMBERSHIP FIRST, SHAPE ONLY AS A FALLBACK.
+    #
+    # _ENR_ID_RE has no arm for a 2-4 letter navaid ident. Tested against the
+    # real failing ids from the exhaustive Part B run — AK, AO, BA, BE, BDA,
+    # EK, ESC, GB, GO, IBS, IL, JJ, JS, KC, KIS, KUA, MA, OK, ZA — NOT ONE
+    # matches, so find_aip_scope() was never called and every one returned
+    # "I don't have 'AK' in the Nigerian AIP" for a navaid published in
+    # ENR 4.1. published_entities() already held every one of those idents;
+    # the shape gate rejected them before the dict was ever consulted.
+    #
+    # Widening the regex to [A-Z]{2,5} would match most English words and is
+    # the shape-based reasoning this project has repeatedly had to undo. The
+    # test that belongs here is the one AERODROMES uses: is this string a
+    # published entity id, yes or no.
+    #
+    # The regex is retained as a SECOND arm so an entity added to the AIP
+    # after the process-lifetime cache was built still reaches the exact
+    # database lookup. A shape hit on a non-existent id costs one wasted
+    # EXACT lookup and can never produce a wrong answer.
+    if token not in published_entities() and not _ENR_ID_RE.match(token):
         return None
     try:
         from database import find_aip_scope
@@ -319,9 +365,28 @@ def _lookup_enr_scope(name: str):
     except Exception:                                  # noqa: BLE001
         return None
     if len(rows) != 1:
-        # 0 = not published. >1 = the same id under two scope kinds, which
-        # would be a data defect; refusing is safer than picking one.
-        return None
+        # AN EXACT ID MATCH BEATS A PARTIAL ONE. This used to return None on
+        # any row count other than 1, on the reasoning that >1 meant the same
+        # id under two scope kinds — a data defect where refusing is safer
+        # than picking. That reasoning predates ENR_FRA_DCT: a DCT id EMBEDS
+        # its endpoints' names ("APSAL-KORUT" contains "APSAL"), so if the RPC
+        # matches on containment a plain waypoint now returns several rows and
+        # was refused for it.
+        #
+        # Measured: 'What is CAL?', 'What is IBA?', 'What is APSAL?', ETVAL,
+        # MOLIT and PITSA all resolved to no scope at all while sitting
+        # correctly in the index.
+        #
+        # Narrowing to rows whose scope_id EQUALS the token is not a tie-break
+        # or a ranking — the other rows are simply about a different entity
+        # that happens to contain this one's name. If that still leaves more
+        # than one, the original data-defect case genuinely holds and the
+        # refusal stands.
+        exact = [r for r in rows
+                 if (r.get("scope_id") or "").upper() == token]
+        if len(exact) != 1:
+            return None
+        rows = exact
     return rows[0].get("scope_kind"), rows[0].get("scope_id")
 
 
@@ -332,6 +397,10 @@ _PUBLISHED_ENTITIES = None
 # _lookup_enr_scope() query the database by the id it actually indexed under,
 # regardless of which alias the pilot typed.
 _AIRSPACE_ALIAS_TARGET = {}
+# alias KEY -> the direct routing's REAL stored scope_id. Same contract as
+# _AIRSPACE_ALIAS_TARGET: "ABC-NANOS" is not a database key, "ABUJA VOR/DME
+# (ABC)-NANOS" is.
+_DCT_ALIAS_TARGET = {}
 
 
 def _airspace_aliases(scope_id: str):
@@ -379,6 +448,57 @@ def _airspace_aliases(scope_id: str):
     return aliases
 
 
+def dct_key(s: str) -> str:
+    """Normalise every way a pilot writes a direct routing to ONE key.
+
+    "ABC to NANOS", "ABC-NANOS", "ABC - NANOS", "ABC DCT NANOS" and
+    "ABC direct NANOS" are the same request. Rather than enumerating those
+    forms as separate aliases, they are all collapsed to the stored id's own
+    separator, so a phrasing nobody anticipated ("ABC  DCT  NANOS") still
+    lands on the same key.
+
+    Leaves any string without a routing separator untouched apart from case
+    and whitespace, so it is safe to apply to ordinary names."""
+    t = re.sub(r"\s+", " ", (s or "")).strip().upper()
+    t = re.sub(r"\s*-\s*", "-", t)
+    t = re.sub(r"\s+(?:TO|DCT|DIRECT)\s+", "-", t)
+    return t
+
+
+def _dct_endpoint_short(part: str) -> str:
+    """"ABUJA VOR/DME (ABC)" -> "ABC". ENR_FRA_DCT ids print a navaid endpoint
+    as its full station name with the ident in brackets; a pilot types the
+    ident. A bare waypoint endpoint ("NANOS") has no brackets and is returned
+    unchanged."""
+    if "(" in part and ")" in part:
+        inner = part.split("(")[1].split(")")[0].strip()
+        if inner.isalpha() and 2 <= len(inner) <= 4:
+            return inner
+    return part.strip()
+
+
+def _dct_aliases(scope_id: str):
+    """Every natural way a pilot would name this direct routing.
+
+    Three forms, all reduced through dct_key():
+      * the stored id verbatim ("ABUJA VOR/DME (ABC)-NANOS", "KELAK-POLTO#2")
+      * the id with our own "#N" collision suffix removed
+      * both endpoints shortened to the identifiers a pilot uses ("ABC-NANOS")
+
+    NO REVERSED FORM IS GENERATED. A published direct combination is
+    directional; inventing "NANOS-ABC" from "ABC-NANOS" would be asserting a
+    routing the AIP does not publish, which is the failure class this project
+    exists to prevent. If the reverse is available, the AIP publishes it as its
+    own row and it gets its own aliases."""
+    out = {dct_key(scope_id)}
+    base = scope_id.split("#")[0]
+    out.add(dct_key(base))
+    if "-" in base:
+        a, _, b = base.partition("-")
+        out.add(dct_key(f"{_dct_endpoint_short(a)}-{_dct_endpoint_short(b)}"))
+    return {a for a in out if a}
+
+
 def published_entities() -> dict:
     """{TOKEN: scope_kind} for every named ENR entity, cached.
 
@@ -398,8 +518,9 @@ def published_entities() -> dict:
     if _PUBLISHED_ENTITIES is not None:
         return _PUBLISHED_ENTITIES
     out = {v.upper(): "ENR_NAVAID" for v in VOR_IDENTS.values()}
-    global _AIRSPACE_ALIAS_TARGET
+    global _AIRSPACE_ALIAS_TARGET, _DCT_ALIAS_TARGET
     _AIRSPACE_ALIAS_TARGET = {}
+    _DCT_ALIAS_TARGET = {}
     try:
         from database import list_scope_ids
         for kind in ("ENR_NAVAID", "ENR_POINT", "ENR_AREA", "ENR_ROUTE"):
@@ -409,6 +530,27 @@ def published_entities() -> dict:
             for alias in _airspace_aliases(sid):
                 out.setdefault(alias, "ENR_AIRSPACE")
                 _AIRSPACE_ALIAS_TARGET[alias] = sid
+        # ENR_FRA_DCT. Previously absent from this function entirely, which is
+        # why the exhaustive Part B run measured 4/132 (3%) reachability: not a
+        # matching failure, no path at all. The 4 passes were incidental
+        # navaid-ambiguity prompts on the first endpoint.
+        #
+        # COLLISIONS ARE DROPPED, NOT ARBITRATED. Our "#N" suffix marks two
+        # genuinely different published routings that share endpoints, so the
+        # shared alias "KELAK-POLTO" is a real ambiguity. Registering either
+        # one would answer with the other routing's data half the time —
+        # null-over-guess says refuse. Each id keeps its own verbatim-id alias,
+        # so the specific routing is still reachable by its full name.
+        _seen = {}
+        for sid in list_scope_ids("ENR_FRA_DCT"):
+            for alias in _dct_aliases(sid):
+                _seen.setdefault(alias, set()).add(sid)
+        for alias, sids in _seen.items():
+            if len(sids) != 1:
+                continue
+            sid = next(iter(sids))
+            out.setdefault(alias, "ENR_FRA_DCT")
+            _DCT_ALIAS_TARGET[alias] = sid
     except Exception:                                  # noqa: BLE001
         pass
     _PUBLISHED_ENTITIES = out
@@ -468,8 +610,19 @@ def resolve(ex: AIPQueryExtraction) -> Resolution:
     if ex.intent == "airspace_lookup":
         named = (ex.aerodrome_name or "").strip()
         if named:
+            # ANY ENR SCOPE COUNTS, NOT JUST ENR_AIRSPACE. This branch used to
+            # require scope[0] == "ENR_AIRSPACE" and threw away every other
+            # kind. Measured on the exhaustive Part B run: the classifier
+            # labels a bare route/point/navaid query ("Where is UM114?",
+            # "What is ETVAL?") as airspace_lookup and DOES put the token in
+            # aerodrome_name — _lookup_enr_scope resolved it correctly to
+            # ENR_ROUTE/UM114 — and this branch then discarded the resolved
+            # scope and returned the unscoped "Airspace / En-route (ENR)"
+            # label. That is the entire ENR_ROUTE "went to ?/?" cluster
+            # (34 failures) plus the ?/? failures in ENR_POINT and
+            # ENR_NAVAID: not a lookup failure, a discarded lookup RESULT.
             scope = _lookup_enr_scope(named)
-            if scope and scope[0] == "ENR_AIRSPACE":
+            if scope:
                 kind, sid = scope
                 return Resolution(part="ENR", reference="AIRSPACE",
                                   label=f"{sid} ({_SCOPE_LABELS.get(kind, kind)})",
@@ -503,6 +656,24 @@ def resolve(ex: AIPQueryExtraction) -> Resolution:
     # 4) Aerodrome name.
     name = (ex.aerodrome_name or "").strip()
     if name:
+        # A DIRECT ROUTING IS CHECKED BEFORE ANY AERODROME MATCHING.
+        # _match_name() is a whole-word substring match, so "ILBAS to LAG"
+        # contains " lag " and resolves to DNMM, and "ABC to NANOS" contains
+        # " abc " and resolves to DNAA. Measured on the exhaustive run: that
+        # is what every one of the "went to AD/..." DCT failures actually was
+        # — the phrase matching one of its own endpoints. The endpoint really
+        # is in the string, so no amount of scoring fixes it; the pair has to
+        # be recognised first.
+        _dct = _DCT_ALIAS_TARGET.get(dct_key(name))
+        if _dct:
+            scope = _lookup_enr_scope(name)
+            if scope:
+                kind, sid = scope
+                return Resolution(part="ENR", reference="AIRSPACE",
+                                  label=f"{sid} ({_SCOPE_LABELS.get(kind, kind)})",
+                                  is_national=True,
+                                  scope_kind=kind, scope_id=sid)
+
         nl = name.lower()
         if "fir" in nl or "en-route" in nl or "enroute" in nl:
             return Resolution(is_national=True, part="ENR", reference="AIRSPACE",
@@ -530,6 +701,22 @@ def resolve(ex: AIPQueryExtraction) -> Resolution:
         if len(cands) > 1:
             return Resolution(ambiguous=sorted(cands),
                               reason=f"'{name}' matches more than one aerodrome.")
+        # EXACT ENR MEMBERSHIP IS CHECKED BEFORE THE OUT-OF-SCOPE CITY LOOP.
+        # OBUDU is BOTH an unpublished aerodrome (DNOB) and a published
+        # significant point in ENR 3.x. The loop below matched the city first
+        # and refused, so "Where is OBUDU?" answered "Obudu (DNOB) has no
+        # published aerodrome section" about a waypoint that is indexed and
+        # answerable — 9 failures in ENR_POINT and 12 in ENR_FRA_DCT on the
+        # exhaustive run. An exact id match is stronger evidence than a
+        # first-word city match, so it is consulted first.
+        scope = _lookup_enr_scope(name)
+        if scope:
+            kind, sid = scope
+            return Resolution(part="ENR", reference="AIRSPACE",
+                              label=f"{sid} ({_SCOPE_LABELS.get(kind, kind)})",
+                              is_national=True,
+                              scope_kind=kind, scope_id=sid)
+
         for c, loc in OUT_OF_SCOPE_ICAO.items():
             if _normalize(loc).split()[0] in _normalize(name).split():
                 return Resolution(unresolved=True,
@@ -553,14 +740,6 @@ def resolve(ex: AIPQueryExtraction) -> Resolution:
         #
         # Both readings are correct, so neither may be assumed. Ask — the same
         # choice clarify.decide() makes for an underspecified approach.
-        scope = _lookup_enr_scope(name)
-        if scope:
-            kind, sid = scope
-            return Resolution(part="ENR", reference="AIRSPACE",
-                              label=f"{sid} ({_SCOPE_LABELS.get(kind, kind)})",
-                              is_national=True,
-                              scope_kind=kind, scope_id=sid)
-
         return Resolution(unresolved=True,
                           reason=(f"I don't have '{name}' in the Nigerian AIP. "
                                   f"I cover published aerodromes (DN codes), "

@@ -119,6 +119,19 @@ def _is_genuinely_out_of_scope(raw: str) -> bool:
     return bool(_LIVE_RE.search(raw or "") or _PRICE_RE.search(raw or ""))
 
 
+def _known_dct(key: str) -> bool:
+    """True if `key` is a published ENR_FRA_DCT alias.
+
+    Exact membership against the built index — never a shape test. A collided
+    pair (two published routings sharing endpoints, our "#N" suffix) is absent
+    from the index by construction, so this returns False for it and the query
+    falls through to the existing behaviour rather than picking one."""
+    try:
+        return resolver.published_entities().get(key) == "ENR_FRA_DCT"
+    except Exception:                                  # noqa: BLE001
+        return False
+
+
 def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
     """Deterministic correction of LLM extraction failures a regex handles
     perfectly: (1) a fabricated/invalid ICAO code, (2) a real DN code or a clear
@@ -195,6 +208,130 @@ def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
     #     ordinary word, so the test is membership in the set the AIP actually
     #     publishes — the same test AERODROMES applies, and the one part of
     #     this system that has never misrouted.
+    # AIRSPACE PHRASES ("Abuja TMA", "Kano FIR", "Kano East Sector") ARE
+    # CHECKED FIRST AND UNCONDITIONALLY — even when the model already set
+    # icao_code/aerodrome_name/intent to something else. Confirmed live via
+    # three DISTINCT failure modes on the exact same class of query:
+    #
+    #   "What is ABUJA TMA?"        -> aerodrome_name="ABUJA" (dropped "TMA")
+    #   "KANO EAST SECTOR"          -> aerodrome_name=None (nothing extracted)
+    #   "What is KANO EAST SECTOR?" -> intent=aerodrome_fact, icao_code=DNKN
+    #                                  (misread as the KANO AERODROME)
+    #
+    # The third case is the dangerous one: it does not fail, it SUCCEEDS at
+    # the wrong answer, because "Kano" also happens to name a real aerodrome.
+    # A guard that only fires "if nothing was extracted" (the pattern every
+    # other backstop check in this function uses) would never catch it —
+    # something WAS extracted, just the wrong thing. So this checks the raw
+    # text structurally and, when it finds an unambiguous airspace phrase,
+    # OVERRIDES whatever the model produced rather than deferring to it.
+    #
+    # This is safe to do unconditionally because the phrase shape itself is
+    # the evidence: "<PLACE> TMA/FIR/SECTOR" cannot mean anything else in
+    # this AIP's vocabulary, so there is no query where overriding could turn
+    # a correct classification into a wrong one.
+    # The place-name capture is UNANCHORED backward, so a naive \bWORD+\b
+    # scan swallowed the question's lead words too: "What is ABUJA TMA?"
+    # captured group(1)="What is ABUJA" instead of "ABUJA", and the resulting
+    # phrase "WHAT IS ABUJA TMA" was never a key in published_entities().
+    # Confirmed live: this was the reason 4 of 7 diagnosed queries still
+    # failed on the FIRST version of this check — every one of them used
+    # "What is X?" or "Where is X?" phrasing, while bare "X" phrasing already
+    # worked, which is the exact signature of an unanchored capture eating
+    # the interrogative prefix.
+    #
+    # Fixed by stripping the interrogative lead first, then anchoring the
+    # place-name capture to the START of what remains. This only handles
+    # "What/Where is/are X" — a narrower net than ideal, but a MISS here
+    # costs nothing (the query falls through to existing behaviour exactly as
+    # it did before this check existed) so there is no safety cost to being
+    # conservative about which lead phrasings are stripped.
+    _stripped = re.sub(r"^(?:where|what)\s+(?:is|are)\s+", "", raw.strip(),
+                       flags=re.I)
+    _airspace_phrase = re.search(
+        r"^([A-Za-z][A-Za-z ]{2,24}?)\s+"
+        r"(TMA|FIR|CTR|UIR|(?:EAST|WEST|NORTH|SOUTH)\s+SECTOR|SECTOR)\b",
+        _stripped, re.I)
+    if _airspace_phrase:
+        phrase = re.sub(r"\s+", " ",
+                        f"{_airspace_phrase.group(1)} {_airspace_phrase.group(2)}"
+                        ).strip().upper()
+        known_now = resolver.published_entities()
+        if phrase in known_now and known_now[phrase] == "ENR_AIRSPACE":
+            ex.intent = "airspace_lookup"
+            ex.aerodrome_name = phrase
+            ex.icao_code = None
+
+    # 2c-pre0) A PUBLISHED DIRECT ROUTING ("ABC to NANOS") IS A PAIR, AND MUST
+    #     BE RECOGNISED BEFORE ANY SINGLE-TOKEN CHECK RUNS.
+    #
+    #     Both endpoints are themselves published entities, so every
+    #     single-token scan in this function — including 2c-pre immediately
+    #     below — matches the FIRST endpoint and stops, which is exactly the
+    #     "ARDEX to EDUKO -> ENR_POINT/ARDEX" signature across the exhaustive
+    #     Part B run. The model does the same thing for the same reason.
+    #
+    #     Overrides unconditionally, on the pattern the airspace-phrase check
+    #     above already establishes: the pair shape IS the evidence, and the
+    #     membership test is exact, so a phrase that is not a published
+    #     routing simply does not match and nothing changes.
+    _dct_hit = None
+    for _m in re.finditer(
+            r"\b([A-Za-z][A-Za-z0-9/]{1,7})\s*(?:-|\bto\b|\bdct\b|\bdirect\b)\s*"
+            r"([A-Za-z][A-Za-z0-9/]{1,7})\b", raw or "", re.I):
+        _key = resolver.dct_key(f"{_m.group(1)}-{_m.group(2)}")
+        if _known_dct(_key):
+            _dct_hit = _key
+            break
+    if _dct_hit:
+        ex.aerodrome_name = _dct_hit
+        ex.icao_code = None
+        if ex.intent in ("out_of_scope", "general_greeting"):
+            ex.intent = "airspace_lookup"
+
+    # 2c-pre) A PUBLISHED ENR ENTITY NAMED VERBATIM IN THE RAW TEXT OVERRIDES
+    #     WHATEVER THE MODEL PUT IN THE SUBJECT FIELDS.
+    #
+    #     Every other membership check in this function fires only when the
+    #     model extracted NOTHING. That misses the dangerous case, exactly as
+    #     the airspace-phrase check above already documents: the model does not
+    #     fail, it SUCCEEDS at the wrong subject by mapping an ident or a
+    #     waypoint onto a similar-sounding aerodrome it does know. Measured on
+    #     the exhaustive Part B run:
+    #
+    #       "Where is ABC?"    -> AD/DNAA   (ident expanded to its aerodrome)
+    #       "AKLIS"            -> AD/DNAA
+    #       "POLTO"            -> AD/DNPO
+    #       "GUSUS"            -> refused as Gusau (DNGU)
+    #       "Where is JOS?"    -> AD/DNJO
+    #
+    #     Step 0b already guards the ident case, but only by inspecting
+    #     ex.icao_code — when the model writes aerodrome_name="ABUJA" instead
+    #     of icao_code="DNAA" the guard never fires, which is why AKW passed
+    #     under two phrasings and failed under the third. Reading the RAW TEXT
+    #     removes that dependency on which field the model happened to use.
+    #
+    #     SAFETY: fires only when the token is an exact published entity id
+    #     AND is not itself an aerodrome alias. The one deliberate exception is
+    #     a VOR ident (ABC, LAG, POT), which IS an aerodrome alias and IS a
+    #     published navaid — routing it here is what lets resolve() see the
+    #     collision and ASK, instead of silently answering as the aerodrome.
+    #     Measured: none of the 214 indexed waypoints collides with an ICAO
+    #     code or a city alias, so no aerodrome query can be captured here.
+    _entity_hit = False
+    _vor_idents = set(resolver.VOR_IDENTS.values())
+    _known_raw = {} if _dct_hit else resolver.published_entities()
+    for _tok in re.findall(r"\b[A-Za-z](?:[A-Za-z0-9]|/)*[A-Za-z0-9]\b", raw or ""):
+        _up = _tok.upper()
+        if _up in resolver.VALID_ICAO or _up not in _known_raw:
+            continue
+        if resolver.match_name(_up) and _up not in _vor_idents:
+            continue          # an ordinary aerodrome alias — leave it alone
+        ex.aerodrome_name = _up
+        ex.icao_code = None
+        _entity_hit = True
+        break
+
     if not ex.icao_code and not ex.aerodrome_name:
         known = resolver.published_entities()
         # ROUTE DESIGNATORS WITH A CATEGORY PREFIX ("A/UA604", "H/UH206",
@@ -251,13 +388,45 @@ def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
     if ex.intent in _CHART_FORCEABLE and (
             _CHART_NOUN_RE.search(raw) or _CHART_REQ_RE.search(raw)):
         ex.intent = "chart_retrieval"
+
+    # A CLAIMED ENR ENTITY IS NOT AN UNDER-EXTRACTED AERODROME QUERY.
+    # resolver.match_name() knows aerodromes only, and VOR_IDENTS is loaded
+    # into its alias list, so match_name('ABC') -> {DNAA} and match_name('POT')
+    # -> {DNPO}. Every step from here down uses that as evidence that a
+    # subjectless query really meant one aerodrome, and writes ex.icao_code
+    # from it. When 2c-pre has already claimed the subject as a published ENR
+    # entity, that write is not a rescue — it is a demotion, and resolve()
+    # branch 3 then answers as the aerodrome before the scope-ambiguity check
+    # in branch 4 is ever reached.
+    #
+    # Measured on the exhaustive run: all 17 surviving ENR_NAVAID failures are
+    # this, and every one of them is a VOR ident — ABC, JOS, POT, ILR, BEN,
+    # ENG, GME, LAG, OSB. 2c-pre set aerodrome_name correctly; step 6c then
+    # set icao_code from the same ident's aerodrome and won.
+    #
+    # The INTENT rescue in 6c still runs (is_known_entity already covers a
+    # known entity); only the icao_code write is suppressed.
+    _may_adopt_icao = not _entity_hit
     # 5) a per-aerodrome field (TAF/METAR/ATIS/hours) asked AT a named aerodrome is
     #    an aerodrome fact (AD 2.11/2.18), not a national MET/AIS policy question.
+    # A RECOGNISED DIRECT ROUTING IS NOT AN AERODROME QUERY. Steps 5-6c below
+    # all rescue an under-extracted query via resolver.match_name(raw), which
+    # is a whole-word substring match — and a DCT pair CONTAINS an endpoint
+    # that is also an aerodrome alias. Measured: match_name("Where is ABC to
+    # NANOS?") -> {DNAA} and match_name("ILBAS to LAG") -> {DNMM}, so step 6c
+    # would set ex.icao_code=DNAA on a pair that 2c-pre0 had already resolved
+    # correctly, and resolve() branch 3 would then answer as the aerodrome
+    # before branch 4 ever saw the pair. Every one of these steps exists to
+    # give a SUBJECTLESS query a subject; a recognised routing already has
+    # one, so they are skipped rather than allowed to overwrite it.
+    if _dct_hit:
+        return ex
+
     if ex.intent in ("national_lookup", "out_of_scope") and _AD_FIELD_AT_RE.search(raw):
         cands = resolver.match_name(raw)
         if ex.icao_code in resolver.VALID_ICAO or len(cands) == 1:
             ex.intent = "aerodrome_fact"
-            if not ex.icao_code and len(cands) == 1:
+            if not ex.icao_code and len(cands) == 1 and _may_adopt_icao:
                 ex.icao_code = next(iter(cands))
     # 6) "how many/list runways" for a named aerodrome is runway data, never
     #    out_of_scope or a greeting.
@@ -266,7 +435,7 @@ def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
         if ex.icao_code in resolver.VALID_ICAO or ex.aerodrome_name or len(cands) == 1:
             if ex.intent in ("out_of_scope", "general_greeting", "national_lookup"):
                 ex.intent = "runway_data"
-            if not ex.icao_code and len(cands) == 1:
+            if not ex.icao_code and len(cands) == 1 and _may_adopt_icao:
                 ex.icao_code = next(iter(cands))
     # 6b) approach PROCEDURE requests (holding/letdown/missed) for a named
     #     aerodrome route through the approach-chart flow, so they inherit the
@@ -276,7 +445,7 @@ def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
         cands = resolver.match_name(raw)
         if ex.icao_code in resolver.VALID_ICAO or ex.aerodrome_name or len(cands) == 1:
             ex.intent = "chart_retrieval"
-            if not ex.icao_code and len(cands) == 1:
+            if not ex.icao_code and len(cands) == 1 and _may_adopt_icao:
                 ex.icao_code = next(iter(cands))
     # 6c) A REFUSAL needs positive evidence. If the model said out_of_scope but
     #     the query resolves to exactly one Nigerian aerodrome and contains no
@@ -309,7 +478,7 @@ def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
             and ex.aerodrome_name.upper() in resolver.published_entities())
         if ex.icao_code in resolver.VALID_ICAO or len(cands) == 1 or is_known_entity:
             ex.intent = "aerodrome_fact"
-            if not ex.icao_code and len(cands) == 1:
+            if not ex.icao_code and len(cands) == 1 and _may_adopt_icao:
                 ex.icao_code = next(iter(cands))
 
     # 7) the model sometimes tags a follow-up ("can you list them?") as a greeting.
@@ -349,7 +518,13 @@ _SYSTEM = (
     "DNBC?', 'ICAO code for Port Harcourt?'. Fill icao_code or aerodrome_name.\n"
     "- airspace_lookup (ENR): FIR/UIR/TMA/CTR limits, airways/routes, waypoints, "
     "prohibited/restricted/danger areas, en-route navaids, cruising levels. Use ONLY "
-    "for airspace itself, not an aerodrome's own data.\n"
+    "for airspace itself, not an aerodrome's own data. When the query NAMES a "
+    "specific FIR/TMA/SECTOR (\"Abuja TMA\", \"Kano FIR\", \"Kano East Sector\"), put "
+    "the FULL phrase — place name AND the airspace-type word (TMA/FIR/SECTOR) — "
+    "in aerodrome_name VERBATIM. Do NOT drop \"TMA\"/\"FIR\"/\"SECTOR\" as if it were "
+    "filler, and do NOT treat the city name alone as identifying the aerodrome — "
+    "\"Kano East Sector\" is en-route airspace, never the Kano aerodrome, even "
+    "though \"Kano\" also names an aerodrome elsewhere in this AIP.\n"
     "- national_lookup (GEN): nationwide policy — aerodrome charges, MET service "
     "policy/TAF validity, SAR organisation, AIS, the AIP's publishing authority, "
     "abbreviations.\n\n"
@@ -389,7 +564,10 @@ _SYSTEM = (
     "Minna' is AD 2.7 snow/rain clearance (in scope); 'clearance to land at "
     "Minna' is ATC (out of scope).\n\n"
     "ICAO: only set icao_code if the user literally typed a 4-letter 'DN' code; never "
-    "infer a code from a name — put the name verbatim in aerodrome_name.\n\n"
+    "infer a code from a name — put the name verbatim in aerodrome_name. For an "
+    "airspace_lookup naming a specific FIR/TMA/SECTOR, aerodrome_name is the FULL "
+    "airspace phrase (see above), not the aerodrome the place name might otherwise "
+    "identify.\n\n"
     "filter_part is a coarse hint: AD for aerodrome data, ENR for airspace, GEN for "
     "national."
 )
