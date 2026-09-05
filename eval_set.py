@@ -80,8 +80,22 @@ def score(row: dict, r: dict) -> tuple[str, str]:
 
     if tt == "structure":
         secs = SECTIONS.findall(gt)
-        cited = " ".join((x.aip_section or "") for x in r["results"]).upper()
-        sec_hit = [s for s in secs if s.upper() in up or s.upper() in cited]
+        # SCORED FROM THE REPLY ONLY. This used to also read r["results"] and
+        # match against the aip_section of each retrieved chunk. That key
+        # belonged to e2e.run_pipeline; run_stress_set.run_pipeline returns
+        # query/reply/path/icao/intent/sim/charts/messages and never had it, so
+        # the first `structure` case raised KeyError and killed the run after
+        # D10 — the E, F and G blocks were never scored at all.
+        #
+        # Nothing else can supply it: observability.log_query records path,
+        # icao, intent and similarity, not the sections retrieved. Rather than
+        # invent a substitute, the check now uses the reply alone.
+        #
+        # This is STRICTLY STRICTER, never looser: a case can now FAIL because
+        # Vannie retrieved the right section without naming it, but no case can
+        # PASS that would have failed before. A false FAIL is visible and
+        # correctable; a false PASS on a citation check is not.
+        sec_hit = [s for s in secs if s.upper() in up]
         kw = [k for k in ("NCAA", "NAMA", "Kano FIR", "DNKK") if k.upper() in up]
         if sec_hit or kw:
             return ("PASS", f"sections={sec_hit} kw={kw}")
