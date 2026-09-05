@@ -327,6 +327,25 @@ def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
             continue
         if resolver.match_name(_up) and _up not in _vor_idents:
             continue          # an ordinary aerodrome alias — leave it alone
+        if _up in _vor_idents and not resolver._ident_is_also_navaid(_up):
+            # MEMBERSHIP IN published_entities() IS NOT EVIDENCE FOR A VOR IDENT.
+            # That dict SEEDS every value of VOR_IDENTS as ENR_NAVAID up front
+            # (resolver line 520) so an ident is recognised before the index
+            # loads — it is an assumption, not a database read. Taking it as
+            # proof claims idents that ENR 4.1 does not actually publish:
+            # test_vor_ident_is_not_silently_converted_to_its_aerodrome caught
+            # "BEB frequency"/DNBB being rewritten to aerodrome_name='BEB' with
+            # the code dropped, turning a working aerodrome answer into a
+            # refusal for a navaid that does not exist.
+            #
+            # _ident_is_also_navaid is the test that was already correct here:
+            # it requires BOTH readings to be real — in VOR_IDENTS *and* an
+            # indexed ENR_NAVAID — and fails closed on any lookup error. Only
+            # a genuine collision gets taken away from the aerodrome.
+            #
+            # Tokens that are not VOR idents need no such check: their
+            # membership came from list_scope_ids(), which is a real read.
+            continue
         ex.aerodrome_name = _up
         ex.icao_code = None
         _entity_hit = True
