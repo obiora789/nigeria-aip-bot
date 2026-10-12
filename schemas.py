@@ -68,6 +68,129 @@ class AIPQueryExtraction(BaseModel):
         "out_of_scope",
     ] = Field(description="Classify what the pilot is asking for.")
 
+    # SET FOR EVERY QUESTION, NOT ONLY REFUSALS. This is the field the live-
+    # query gate in agent._backstop() reads, after every correction has run.
+    #
+    # It asks about the ANSWER, not the wording. The AIP publishes facts of
+    # lasting character; a word like "now" or "current" in the question does
+    # not change a frequency, a TA or the AD 2.22.2 runway-in-use statement.
+    # The earlier name, time_bound, invited exactly that word-level reading
+    # and the model refused published data because of it.
+    #
+    # Optional[bool] with a None default, not bool=False: identical in shape to
+    # out_of_scope_reason below, which is proven to work with the structured-
+    # output call. None and False are both treated as "not live".
+    needs_live_source: Optional[bool] = Field(
+        None,
+        description=(
+            "Answer for EVERY question. Can the answer only come from a live "
+            "source — NOTAM, ATIS, METAR/TAF report or a controller — because "
+            "it changes from day to day and the AIP cannot hold it?\n"
+            "TRUE only for: whether a runway, taxiway, apron, aerodrome, navaid "
+            "or facility is open, closed, serviceable, usable, restricted or "
+            "under works at the moment; which NOTAMs are active; an observed or "
+            "forecast weather value (METAR, SPECI, TAF report, the wind, "
+            "visibility or QNH right now); a clearance or instruction for a "
+            "particular flight; a slot, delay or flight status.\n"
+            "FALSE for anything the AIP publishes, however it is worded. The "
+            "AIP holds information of lasting character, and words such as "
+            "now, current, currently, today, tonight, at the moment, latest or "
+            "live do NOT make a published fact live: a frequency, call sign, "
+            "ident, hours of service, transition altitude, runway dimensions, "
+            "declared distances, elevation, RFFS category, a procedure, a rule "
+            "or a charge is the same until the next amendment.\n"
+            "The runway in use is FALSE: every aerodrome's AD 2.22.2 publishes "
+            "a runway-in-use statement, and that statement is the answer.\n"
+            "TRUE needs the question to ask about the PRESENT STATE of "
+            "something — is it open, closed, working, usable, available; can I "
+            "use it at a given time; what is it reading. A question that only "
+            "names a topic or a published field asks for the AIP entry and is "
+            "FALSE: 'fuel spillage at Yola' (the published spillage-cleaning "
+            "service), 'removal of disabled aircraft at Kano', 'takeoff and "
+            "landing minima'.\n"
+            "Examples, FALSE: 'what is Lagos tower frequency now', 'current "
+            "ATIS frequency at Kano', 'which runway is in use at Lagos today', "
+            "'Lagos tower hours today', 'current transition altitude at Abuja', "
+            "'the current landing fee', 'which AIRAC amendment is this AIP "
+            "on', 'TAF validity at Lagos', 'ATC clearance requirements for VFR "
+            "flights at Lagos', 'fuel spillage at Yola'.\n"
+            "Examples, TRUE: 'is runway 18R open right now', 'can I use 18R "
+            "at Lagos tonight', 'is Lagos tower open now', 'any NOTAMs for "
+            "Kano', 'current METAR for Lagos', 'the wind at Abuja', 'is the "
+            "Kano ILS working today', 'can I get a clearance to land at Port "
+            "Harcourt'.\n"
+            "Decide on what the answer is, not on a word in the question."
+        ),
+    )
+
+    out_of_scope_reason: Optional[Literal[
+        "transient_status",
+        "current_weather",
+        "atc_clearance",
+        "planning_or_flow",
+        "charges",
+        "outside_nigeria",
+        "other",
+    ]] = Field(
+        None,
+        description=(
+            "Fill this when intent is 'out_of_scope' OR needs_live_source is "
+            "true. Null otherwise.\n"
+            "The test is PERMANENCE. The AIP publishes information of lasting "
+            "character, true until the next amendment; only a state that "
+            "changes from day to day belongs to someone else. Words like now, "
+            "current or today do not decide it.\n"
+            "transient_status — whether a runway, taxiway, apron, aerodrome, "
+            "navaid or facility is open, closed, serviceable, usable or "
+            "restricted at the moment; works in progress; active NOTAMs. "
+            "NOTAM territory. NOT the runway in use, which AD 2.22.2 publishes.\n"
+            "current_weather — an observed or forecast weather VALUE: a METAR, "
+            "SPECI or TAF report, the wind, visibility, ceiling or QNH right "
+            "now. NOTE the AIP's MET POLICY in AD 2.11 (TAF validity, trend "
+            "type, briefing hours) and published values such as the aerodrome "
+            "reference temperature are NOT this and are IN scope.\n"
+            "atc_clearance — a clearance or instruction for a particular "
+            "flight, which only a controller can give. Published clearance "
+            "rules and procedures are IN scope.\n"
+            "planning_or_flow — a slot, delay, flight status or schedule for a "
+            "particular flight. Published flight-plan filing procedures are "
+            "IN scope.\n"
+            "charges — a price the AIP does NOT publish: fuel price, handling "
+            "quotes, ticket prices. NOTE aerodrome and air navigation charges "
+            "ARE published in GEN 4 (landing, parking, passenger service, "
+            "en-route, terminal navigation) and are IN scope — classify those "
+            "as national_lookup and set gen4_charge instead.\n"
+            "outside_nigeria — an aerodrome or airspace outside Nigeria.\n"
+            "other — out of scope for none of the above reasons.\n"
+            "Choose the reason the question actually turns on, not a word that "
+            "happens to appear in it."
+        ),
+    )
+
+    # Which GEN 4 subsection a charges question belongs to. Read by main.py to
+    # fetch that subsection BY NAME and show it verbatim, rather than leaving a
+    # fee schedule to vector search and synthesis, which could swap the
+    # international and domestic rates or the day and night rates — the same
+    # juxtaposition hazard AD 2.12 and AD 2.17 have.
+    gen4_charge: Optional[Literal["aerodrome", "air_navigation"]] = Field(
+        None,
+        description=(
+            "Set ONLY when the question asks about a charge or fee the Nigerian "
+            "AIP publishes in GEN 4. Null otherwise.\n"
+            "aerodrome — GEN 4.1 aerodrome charges: landing fees, parking, "
+            "avio bridge, passenger service charge, cargo/port charges, the "
+            "fuel throughput charge levied on oil marketing companies, CUTE "
+            "and check-in counter charges.\n"
+            "air_navigation — GEN 4.2 air navigation services charges: "
+            "en-route (route) charges, overflight charges, terminal navigation "
+            "charge (TNC), charges for ATS outside normal hours.\n"
+            "NOT a GEN 4 charge, so null: the price of fuel itself, handling "
+            "agent quotes, any price at an airport outside Nigeria. GEN 4 "
+            "publishes one national schedule, so a charges question naming a "
+            "Nigerian aerodrome still gets gen4_charge set."
+        ),
+    )
+
     icao_code: Optional[str] = Field(
         None,
         description=(
@@ -137,9 +260,9 @@ class AIPQueryExtraction(BaseModel):
             "and call signs | 2.19 radio navigation and landing aids: VOR, DME, ILS, "
             "NDB, localizer, glide path — frequencies, idents, positions | 2.20 local "
             "aerodrome regulations, taxiing limitations, parking, training flights | "
-            "2.21 noise abatement | 2.22 flight procedures: holding, letdown, missed "
-            "approach, approach and take-off minima, OCA/H, circling, radar procedures, "
-            "VFR procedures, PBN | 2.23 additional information, bird and wildlife "
+            "2.21 noise abatement | 2.22 flight procedures: runway in use, holding, "
+            "letdown, missed approach, approach and take-off minima, OCA/H, circling, "
+            "radar procedures, VFR procedures, PBN | 2.23 additional information, bird and wildlife "
             "hazards | 2.24 charts"
         ),
     )

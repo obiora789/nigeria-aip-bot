@@ -62,61 +62,62 @@ _REAL_GREETING_RE = re.compile(
 # --- out_of_scope backstop ---------------------------------------------------
 # The prompt already said out_of_scope was ONLY for live/commercial/foreign, and
 # the model ignored it: 16 of 198 published fields were refused, and adding
-# in-scope examples fixed 0 of them. That is not fixable by more examples,
-# because "is this in scope?" is an UNBOUNDED question — 23 subsections times
-# every field name the AIP contains, including tourist offices and bus
-# services. No list covers it.
+# in-scope examples fixed 0 of them. So the rescue steps in _apply_corrections
+# override a refusal that names a published aerodrome or ENR entity.
 #
-# "Is this live, priced, or foreign?" is bounded. It is a question about TIME
-# and MONEY, not about AIP content, so it can be enumerated and stays
-# enumerated as the AIP grows. That asymmetry is the whole reason this guard
-# is written this way round.
+# What VETOES a rescue is the model's own reasoned judgement, never a word in
+# the question. An earlier version vetoed on a regex of time and weather words
+# ("current", "today", "latest", "slot", "wind", "visibility", "runway in
+# use"...). That is exactly the wrong test: the AIP holds information of
+# lasting character, and "what is Lagos tower frequency now" asks for the same
+# published frequency as the question without "now". A word list kept every
+# such refusal in place. Removed.
 #
-# Deliberately NARROW, because each pattern must not catch its static
-# counterpart — the confusions are real, from measured failures:
-#     "landing FORECAST for Zaria"      AD 2.11 type/interval   -> in scope
-#     "current METAR for Zaria"         observation now         -> out
-#     "CLEARANCE PRIORITIES for Minna"  AD 2.7 snow/rain        -> in scope
-#     "clearance to land at Minna"      ATC                     -> out
-# So "forecast" and bare "clearance" are NOT markers; the time words are.
-_LIVE_RE = re.compile(
-    # (a) TIME words — the state of something now or in the future.
-    r"\b(current(ly)?|right now|at the moment|as of now|this (morning|afternoon|"
-    r"evening)|tonight|today'?s?|live|latest|active\s+notams?|\bnotams?\b|"
-    r"tomorrow|next\s+(week|month)|this\s+week|\bslots?\b|runway\s+in\s+use)\b|"
-    r"\bclearance\s+to\s+(land|take\s?off|taxi|enter)\b|"
-    # (b) OBSERVED WEATHER — inherently a reading taken now, whether or not a
-    # time word appears. "what is the wind at Abuja" carries no time marker but
-    # can only mean the current wind; the AIP publishes no wind values.
-    # NOT included: "reference temperature" (AD 2.2), "TAF validity" and
-    # "landing forecast" (AD 2.11 policy) — all static, all published, and all
-    # previously refused, which is the failure this whole guard exists to stop.
-    r"\b(metar|speci)\b|"
-    # "temperature" needs a negative lookBEHIND, not lookahead: the AIP's static
-    # field is "aerodrome REFERENCE temperature" (AD 2.2), where the qualifier
-    # precedes the word. A lookahead cannot see it, and flagged both
-    # "aerodrome reference temperature of Kano" and "reference temperature
-    # Ilorin" as live weather.
-    r"\b(wind|visibility|ceiling|cloud\s?base|qnh|humidity|rainfall)\b|"
-    r"(?<!reference\s)(?<!ref\s)\btemperature\b(?!\s*(policy|validity|type|interval))|"
-    r"\bweather\b(?!\s*(minima|service|policy))|"
-    # (c) NON-AIP ACTIONS — requests to DO something rather than look something
-    # up. The AIP is a reference document; it books nothing.
-    r"\b(book|reserve|cancel|check\s?in|buy|order)\b[^?]{0,20}\b(flight|ticket|seat|hotel)\b|"
-    r"\bmy\s+(flight|booking|ticket)\b", re.I)
-
-# NOTE on money: "fee"/"charge" are deliberately NOT price markers. GEN
-# publishes aerodrome charges, so "what is the landing fee at Kano" is a
-# legitimate national_lookup, not an out-of-scope question. Only genuinely
-# unpublished commercial data (fuel PRICES, what something COSTS) qualifies.
-_PRICE_RE = re.compile(
-    r"\b(price[sd]?|cost[s]?|how much (does|is|to)|tariff)\b", re.I)
+# A refusal is kept when the model gave a reason that genuinely puts the answer
+# outside the AIP: a live source is needed (asks_live below), the price is not
+# one GEN 4 publishes, or the place is not Nigerian. A refusal with no reason,
+# or "other", has no basis and the rescues may override it.
+_REASONED_REFUSALS = frozenset({"charges", "outside_nigeria"})
 
 
-def _is_genuinely_out_of_scope(raw: str) -> bool:
-    """True only if the query is about NOW or about MONEY. Foreign airports are
-    handled separately by resolver.resolve(), which fails to match them."""
-    return bool(_LIVE_RE.search(raw or "") or _PRICE_RE.search(raw or ""))
+def _refusal_has_basis(ex) -> bool:
+    """True if the extraction gives a reason the AIP cannot answer this."""
+    return (asks_live(ex)
+            or getattr(ex, "out_of_scope_reason", None) in _REASONED_REFUSALS)
+
+
+# --- the live-query rule ----------------------------------------------------
+# The AIP publishes information of lasting character: what stays true until the
+# next amendment. Only a state that changes from day to day — a closure, a
+# serviceability state, an active NOTAM, a weather observation, a clearance for
+# a particular flight, a slot — belongs to NOTAM, ATIS, METAR, ATC or flow
+# management, and Vannie must not answer it from the AIP.
+#
+# Words do not decide this. "Current Lagos tower frequency", "Kano TA today"
+# and "which runway is in use at Lagos now" are published facts (AD 2.18,
+# AD 2.17, AD 2.22.2) whatever the wording, and are answered.
+#
+# The extraction LLM reports the judgement in two places, and either is
+# enough: needs_live_source (asked of EVERY question, about the ANSWER rather
+# than the wording) and out_of_scope_reason (set when it refuses).
+#
+# outside_nigeria and charges are refusals but NOT live, so they are not here:
+# they do not need the live gate, and outside_nigeria is enforced separately
+# below so a foreign charges question cannot be answered from GEN 4.
+_LIVE_REASONS = frozenset({"transient_status", "current_weather",
+                           "atc_clearance", "planning_or_flow"})
+
+
+def asks_live(ex) -> bool:
+    """True if the extraction says this question asks for live information.
+
+    getattr with defaults throughout: extraction objects built before the
+    needs_live_source field existed (old tests, a partial deploy) read as
+    not-live, which is exactly the pre-change behaviour rather than a crash."""
+    if ex is None:
+        return False
+    return (getattr(ex, "needs_live_source", None) is True
+            or getattr(ex, "out_of_scope_reason", None) in _LIVE_REASONS)
 
 
 def _known_dct(key: str) -> bool:
@@ -133,6 +134,71 @@ def _known_dct(key: str) -> bool:
 
 
 def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
+    """Corrections first, then the scope rules — in that order, always.
+
+    Every correction below can CHANGE an intent, and seven of them can turn an
+    out_of_scope refusal into an in-scope answer (steps 2c-pre0, 3, 5, 6, 6b,
+    6c and 7). That is their job: the model over-refuses published data. But
+    it also means a correct refusal of a live question could be undone by any
+    one of them, and patching each step separately leaves the next new step
+    unguarded. Confirmed live: step 5 turned "current METAR for Kano" into an
+    aerodrome_fact because it lacked the check step 6c has.
+
+    So the live rule is enforced ONCE, AFTER all corrections, in
+    _enforce_scope(). Nothing that runs earlier can undo it, and a correction
+    added later is covered without anyone remembering to guard it. The
+    corrections also return early in one place (a recognised direct routing),
+    which is why this is a wrapper rather than a final step inside them."""
+    ex = _apply_corrections(ex, raw)
+    return _enforce_scope(ex)
+
+
+def _enforce_scope(ex):
+    """The scope rules the corrections may not override.
+
+    1. LIVE -> out_of_scope. If the model judged the answer needs a live source, or
+       gave a live refusal reason, it is refused whatever intent the
+       corrections arrived at. The refusal reason is filled in when missing so
+       the reply names the right authority rather than falling back to the
+       generic string.
+    2. A charges question about a FOREIGN airport is not a GEN 4 question.
+       Without this, "landing fee at Heathrow" with gen4_charge set would be
+       answered from Nigeria's schedule — a confident answer about the wrong
+       State.
+    3. A published GEN 4 charge is IN scope. If the model set gen4_charge but
+       also refused, the refusal is overridden to national_lookup, so the
+       measured intent matches what main.py will actually do with it."""
+    if ex is None:
+        return ex
+
+    if asks_live(ex):
+        ex.intent = "out_of_scope"
+        # Fill the reason ONLY when the model gave none. A more fundamental
+        # reason it did give must survive: "is Accra airport open?" is live AND
+        # outside_nigeria, and overwriting that with transient_status would
+        # send the pilot to Nigerian NOTAMs about a Ghanaian airport.
+        if getattr(ex, "out_of_scope_reason", None) in (None, "other"):
+            try:
+                ex.out_of_scope_reason = "transient_status"
+            except Exception:  # noqa: BLE001 — a frozen/legacy object must not
+                pass           # turn a refusal into a crash
+        if hasattr(ex, "gen4_charge"):
+            ex.gen4_charge = None     # live wins over a charges reading
+        return ex
+
+    if getattr(ex, "out_of_scope_reason", None) == "outside_nigeria" \
+            and getattr(ex, "gen4_charge", None):
+        ex.gen4_charge = None
+        return ex
+
+    if getattr(ex, "gen4_charge", None) in ("aerodrome", "air_navigation"):
+        ex.intent = "national_lookup"
+        if hasattr(ex, "out_of_scope_reason"):
+            ex.out_of_scope_reason = None
+    return ex
+
+
+def _apply_corrections(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
     """Deterministic correction of LLM extraction failures a regex handles
     perfectly: (1) a fabricated/invalid ICAO code, (2) a real DN code or a clear
     mapping question wrongly sent to out_of_scope, (3) an obvious chart request
@@ -441,7 +507,19 @@ def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
     if _dct_hit:
         return ex
 
-    if ex.intent in ("national_lookup", "out_of_scope") and _AD_FIELD_AT_RE.search(raw):
+    # STEP 5 MUST NOT RESCUE A LIVE QUESTION. This step exists for the static
+    # AD 2.11 / AD 2.18 / AD 2.3 fields — "TAF validity at Lagos", "ATIS hours
+    # at Kano" — which the model sometimes files as national or refuses. But
+    # _AD_FIELD_AT_RE also matches "metar", so "current METAR for Kano" — a
+    # live observation, correctly refused — was rewritten to aerodrome_fact and
+    # answered. Confirmed in measure_intent.py.
+    #
+    # The veto is the model's reasoned refusal (_refusal_has_basis), not a word
+    # list: "current ATIS frequency at Kano" is published AD 2.18 data and must
+    # be rescued, while "current METAR for Kano" carries current_weather.
+    # _enforce_scope() repeats the live check after every step regardless.
+    if ex.intent in ("national_lookup", "out_of_scope") and _AD_FIELD_AT_RE.search(raw) \
+            and not _refusal_has_basis(ex):
         cands = resolver.match_name(raw)
         if ex.icao_code in resolver.VALID_ICAO or len(cands) == 1:
             ex.intent = "aerodrome_fact"
@@ -467,17 +545,19 @@ def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
             if not ex.icao_code and len(cands) == 1 and _may_adopt_icao:
                 ex.icao_code = next(iter(cands))
     # 6c) A REFUSAL needs positive evidence. If the model said out_of_scope but
-    #     the query resolves to exactly one Nigerian aerodrome and contains no
-    #     time or money marker, the refusal has no basis and is overridden.
+    #     the query resolves to exactly one Nigerian aerodrome and the model
+    #     gave no reason that puts the answer outside the AIP (live source,
+    #     unpublished price, foreign place), the refusal has no basis and is
+    #     overridden.
     #     Measured: 16 of 198 published fields were refused this way —
     #     "tourist office at Escravos", "Kashimbila health and sanitation",
     #     "direction distance from city at Makurdi" — every one of them static,
     #     Nigerian and published.
     #
-    #     This cannot rescue a genuinely out-of-scope query: live and priced
-    #     ones are caught by _is_genuinely_out_of_scope, and a foreign airport
-    #     never resolves to a DN aerodrome, so the condition below fails.
-    if ex.intent == "out_of_scope" and not _is_genuinely_out_of_scope(raw):
+    #     This cannot rescue a genuinely out-of-scope query: live, priced and
+    #     foreign ones carry a reason (_refusal_has_basis), and a foreign
+    #     airport never resolves to a DN aerodrome anyway.
+    if ex.intent == "out_of_scope" and not _refusal_has_basis(ex):
         cands = resolver.match_name(raw)
         # A PUBLISHED ENR ENTITY rescues the query exactly like a matched
         # aerodrome does. Confirmed live: "Where is Kelak?" — KELAK is a real
@@ -490,7 +570,7 @@ def _backstop(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
         # identified two steps earlier in the same function.
         #
         # Still cannot rescue a genuinely out-of-scope query: live/priced
-        # queries are caught by _is_genuinely_out_of_scope, and an unpublished
+        # queries carry a reason (_refusal_has_basis), and an unpublished
         # name matches neither an aerodrome nor a known ENR entity.
         is_known_entity = (
             ex.aerodrome_name
@@ -516,7 +596,12 @@ _SYSTEM = (
     "or DN code), the question is almost certainly about that aerodrome's published "
     "data — choose an AERODROME intent and put the place in aerodrome_name (or "
     "icao_code if a DN code was typed). Do NOT route an aerodrome's own data to "
-    "airspace_lookup or national_lookup.\n\n"
+    "airspace_lookup or national_lookup.\n"
+    "ONE EXCEPTION: charges and fees. GEN 4 publishes one national schedule "
+    "(landing, parking, passenger service, cargo, en-route, terminal "
+    "navigation), not a schedule per aerodrome — so a charges question is "
+    "national_lookup with gen4_charge set, even when an aerodrome is named "
+    "('landing fee at Kano').\n\n"
     "The AIP publishes STATIC aeronautical data. IN SCOPE intents:\n"
     "- frequency_retrieval: any radio frequency at an aerodrome — Tower, Ground, "
     "Approach/Radar, ATIS, Director, Emergency.\n"
@@ -526,7 +611,9 @@ _SYSTEM = (
     "reference temperature, magnetic variation, taxiway widths, apron/stands, RFFS "
     "(fire) category, fuel/oil types, de-icing, repair/handling facilities, hangar, "
     "hours of operation, customs/immigration, removal of disabled aircraft, "
-    "transition altitude, VOR/DME and ILS identifiers and frequencies.\n"
+    "transition altitude, VOR/DME and ILS identifiers and frequencies, the runway "
+    "in use (AD 2.22.2 publishes a runway-in-use statement for every aerodrome — "
+    "set ad2_subsection 2.22).\n"
     "- procedure_lookup: SID/STAR/approach/missed-approach procedure text, minima.\n"
     "- chart_retrieval: the user wants to SEE a chart/plate. Covers ILS, RNAV, "
     "RNAV(GNSS), RNP, VOR, NDB, SID/departure, STAR/arrival, aerodrome, "
@@ -544,30 +631,54 @@ _SYSTEM = (
     "filler, and do NOT treat the city name alone as identifying the aerodrome — "
     "\"Kano East Sector\" is en-route airspace, never the Kano aerodrome, even "
     "though \"Kano\" also names an aerodrome elsewhere in this AIP.\n"
-    "- national_lookup (GEN): nationwide policy — aerodrome charges, MET service "
-    "policy/TAF validity, SAR organisation, AIS, the AIP's publishing authority, "
-    "abbreviations.\n\n"
+    "- national_lookup (GEN): nationwide policy — aerodrome and air navigation "
+    "charges (GEN 4: also set gen4_charge), MET service policy/TAF validity, SAR "
+    "organisation, AIS, the AIP's publishing authority, abbreviations.\n\n"
     "IMPORTANT — these only SOUND out-of-scope but are STATIC AIP data and are IN "
     "SCOPE: 'reference temperature' (AD 2.2, not live weather), 'TAF validity / trend "
     "issuance interval' (MET service policy), aerodrome 'elevation'/'how high', ATIS, "
-    "de-icing and repair facilities, taxiway widths, hours of operation. Casual or "
+    "de-icing and repair facilities, taxiway widths, hours of operation, the runway "
+    "in use. Casual or "
     "terse phrasing ('abuja twr freq', 'how high is abuja', 'longest rwy lagos') is "
     "still IN SCOPE — classify it normally.\n\n"
     "OUT OF SCOPE is a POSITIVE classification, not a leftover bucket. Before you "
     "may answer out_of_scope, one of these three must be true. Check them "
     "explicitly:\n"
-    "  (a) TIME — the user wants the state of something RIGHT NOW: current "
-    "weather/wind/METAR observation, active NOTAMs, the runway in use today, an "
-    "ATC clearance, a slot, a flight's status.\n"
-    "  (b) MONEY — the user wants a price: fuel price, what something costs, how "
-    "much to land.\n"
+    "  (a) LIVE — the ANSWER is a state that changes from day to day and is "
+    "promulgated by NOTAM, ATIS, METAR or a controller, so the AIP cannot hold "
+    "it: whether a runway, taxiway, aerodrome, navaid or facility is open, "
+    "closed, serviceable, usable or restricted at the moment; active NOTAMs; "
+    "a weather observation (METAR, the wind, QNH right now); a clearance or "
+    "instruction for a particular flight; a slot, delay or flight status.\n"
+    "      WORDS DO NOT MAKE A QUESTION LIVE. The AIP holds information of "
+    "lasting character, true until the next amendment. 'Now', 'current', "
+    "'currently', 'today', 'tonight', 'at the moment', 'latest' or 'live' "
+    "attached to a published fact still asks for the published fact: 'what is "
+    "Lagos tower frequency now', 'current ATIS frequency at Kano', 'Abuja "
+    "transition altitude today', 'Lagos tower hours today', 'the current "
+    "landing fee', 'which AIRAC amendment is this AIP on' — all IN SCOPE. A "
+    "question that only names a topic or published field ('fuel spillage at "
+    "Yola', 'removal of disabled aircraft at Kano') asks for the AIP entry, "
+    "not for an incident happening now — IN SCOPE. The runway in use is IN SCOPE, with or without such a "
+    "word: every aerodrome's AD 2.22.2 publishes a runway-in-use statement, "
+    "and that statement is the answer. Standing rules are IN SCOPE too: 'ATC "
+    "clearance requirements for VFR flights at Lagos' (AD 2.22), flight plan "
+    "filing procedures (ENR 1.10).\n"
+    "  (b) MONEY — the user wants a price the AIP does NOT publish: the price "
+    "of fuel, a handling agent's quote, a ticket. Aerodrome and air navigation "
+    "CHARGES ARE published in GEN 4 — landing, parking, passenger service, "
+    "en-route, terminal navigation — and are IN SCOPE (national_lookup, set "
+    "gen4_charge).\n"
     "  (c) PLACE — the airport is OUTSIDE Nigeria.\n"
     "Any ONE of these being YES means out_of_scope, and (c) is decisive on its "
     "own: if the airport is not Nigerian, answer out_of_scope no matter how "
     "ordinary the question is — 'ILS frequency at Heathrow' and 'runway length "
     "at JFK' are both out_of_scope, because this AIP covers Nigeria only. "
     "Likewise (a): 'current METAR', 'the wind at Abuja' and 'weather now' are "
-    "observations taken at this moment, which the AIP does not publish.\n"
+    "observations taken at this moment, which the AIP does not publish; 'is "
+    "runway 18R open right now', 'can I use 18R at Lagos tonight' and 'is "
+    "Lagos tower open now' ask the present state of a runway or unit, which "
+    "is a NOTAM matter.\n"
     "If all three are NO, you MUST NOT answer out_of_scope, however "
     "un-aeronautical the topic sounds. The AIP publishes a great deal that does "
     "not sound like aviation, and all of it is IN SCOPE: bus and taxi "
@@ -577,11 +688,38 @@ _SYSTEM = (
     "(AD 2.7), landing-forecast type and issuance interval (AD 2.11), medical "
     "facilities (AD 2.5). Asking WHICH of these a Nigerian aerodrome publishes "
     "is always an aerodrome_fact.\n"
-    "Note the difference TIME makes: 'landing forecast for Zaria' is the "
+    "Note the difference LIVE makes: 'landing forecast for Zaria' is the "
     "published forecast TYPE (AD 2.11, in scope); 'current METAR for Zaria' is "
     "an observation happening now (out of scope). 'Clearance priorities for "
     "Minna' is AD 2.7 snow/rain clearance (in scope); 'clearance to land at "
     "Minna' is ATC (out of scope).\n\n"
+    "needs_live_source: answer it for EVERY question, in scope or not. True "
+    "exactly when (a) LIVE above is YES — the answer can only come from a NOTAM, "
+    "ATIS, a weather report or a controller. False for every published fact, "
+    "whatever words the question uses. Decide on what the answer is, not on a "
+    "word in the question.\n\n"
+    "When you answer out_of_scope, or set needs_live_source true, you MUST also set "
+    "out_of_scope_reason. The "
+    "test is PERMANENCE: the AIP publishes information of lasting character, "
+    "what stays true until the next "
+    "amendment; only a state that changes from day to day is somebody else's "
+    "to publish. A runway's dimensions are AIP; whether that runway is open this "
+    "afternoon is a NOTAM. Pick the reason the question actually turns on:\n"
+    "  transient_status - whether a runway, taxiway, aerodrome, navaid or "
+    "facility is open/closed/serviceable/usable/restricted at the moment, works "
+    "in progress, active NOTAMs. NOT the runway in use (published, AD 2.22.2).\n"
+    "  current_weather - an observed or forecast weather VALUE: a METAR, SPECI "
+    "or TAF report, the wind, visibility, ceiling or QNH right now.\n"
+    "  atc_clearance - a clearance or instruction for a particular flight, "
+    "which only a controller can give.\n"
+    "  planning_or_flow - a slot, delay, flight status or schedule for a "
+    "particular flight.\n"
+    "  charges - a price the AIP does NOT publish (fuel price, handling quotes).\n"
+    "  outside_nigeria - an aerodrome or airspace outside Nigeria.\n"
+    "  other - out of scope for none of the above reasons.\n"
+    "This reports a reason for a decision you have ALREADY made. It does NOT "
+    "widen out_of_scope: everything listed as IN SCOPE above stays in scope, "
+    "with out_of_scope_reason null.\n\n"
     "ICAO: only set icao_code if the user literally typed a 4-letter 'DN' code; never "
     "infer a code from a name — put the name verbatim in aerodrome_name. For an "
     "airspace_lookup naming a specific FIR/TMA/SECTOR, aerodrome_name is the FULL "

@@ -23,7 +23,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 import cache
 import config
 import resolver
-from agent import extract_query_parameters, get_embedding
+from agent import asks_live, extract_query_parameters, get_embedding
 from database import (get_aerodrome_data, get_charts, get_charts_smart,
                       search_facts_scoped,
                       get_declared_distances, get_lighting_data,
@@ -38,6 +38,8 @@ import clarify
 import observability
 import procedures
 import toc
+import scope_refusal
+import charges
 from responder import (ambiguous, answer, chart_intro, chart_not_found,
                        comms_reply, declared_distance_reply, error, grounded_reply,
                        facts_reply, info_block_reply, lighting_data_reply, low_confidence,
@@ -652,6 +654,21 @@ async def process(chat_id: int, text: str, force_scope=None) -> None:
             await send_message(chat_id, config.GREETING)
             return
 
+        # LIVE QUESTIONS ARE REFUSED BEFORE ANYTHING ELSE CAN ANSWER THEM.
+        # The TA enumeration and the ToC below run ahead of the out_of_scope
+        # check on purpose — a structure question mis-tagged out_of_scope
+        # should still get its ToC answer. But that ordering also let a live
+        # question reach them first. A question whose answer needs a live
+        # source (NOTAM, ATIS, METAR, ATC) is refused here, whatever else it
+        # resembles. This reads the model's judgement of the ANSWER, never the
+        # wording: "which aerodromes use 5000 ft TA today" is published AD 2.17
+        # data and goes straight past this gate. agent._backstop has already
+        # forced the intent; this keeps the order of checks honest.
+        if asks_live(ex):
+            rec["path"] = "out_of_scope:live"
+            await send_info(scope_refusal.out_of_scope(ex))
+            return
+
         # Cross-aerodrome enumeration ("which aerodromes use 5000 ft TA") —
         # structured-facts lookup, not retrieval.
         if facts.is_ta_enumeration(text):
@@ -672,7 +689,22 @@ async def process(chat_id: int, text: str, force_scope=None) -> None:
 
         if ex.intent == "out_of_scope":
             rec["path"] = "out_of_scope"
-            await send_info(config.OUT_OF_SCOPE)
+            await send_info(scope_refusal.out_of_scope(ex))
+            return
+
+        # PUBLISHED CHARGES (GEN 4) — fetched BY SECTION and shown VERBATIM.
+        # A fee schedule is never left to vector search and synthesis: GEN 4.1
+        # puts international and domestic rates, and day and night landing
+        # rates, side by side, which is the same juxtaposition hazard as
+        # AD 2.12 and AD 2.17. The pilot reads the AIP's own lines, with the
+        # amendment they are valid for and who to ask for current rates.
+        _g4 = charges.section_for(getattr(ex, "gen4_charge", None))
+        if _g4:
+            rec["path"] = f"charges:{_g4}"
+            g4_text = await asyncio.to_thread(get_subsection_text, "NATIONAL", _g4)
+            await send_info(charges.charges_reply(
+                _g4, g4_text, text,
+                aerodrome_named=bool(ex.icao_code or ex.aerodrome_name)))
             return
 
         # 2) deterministic resolution

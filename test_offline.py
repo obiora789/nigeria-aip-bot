@@ -1059,9 +1059,9 @@ def test_out_of_scope_rescue_covers_enr_entities_not_just_aerodromes():
     database.find_aip_scope = lambda n: []
     resolver._PUBLISHED_ENTITIES = None
     try:
-        def run(raw, intent="out_of_scope"):
+        def run(raw, intent="out_of_scope", **kw):
             ex = N(intent=intent, icao_code=None, aerodrome_name=None,
-                   procedure_type=None, runway=None, filter_part="AD")
+                   procedure_type=None, runway=None, filter_part="AD", **kw)
             return agent._backstop(ex, raw)
 
         rescued = run("Where is Kelak?")
@@ -1070,8 +1070,12 @@ def test_out_of_scope_rescue_covers_enr_entities_not_just_aerodromes():
         assert rescued.aerodrome_name == "KELAK"
 
         # Genuinely out of scope: must NOT be rescued by this change.
-        assert run("weather in Lagos right now").intent == "out_of_scope"
-        assert run("ILS frequency at Heathrow").intent == "out_of_scope"
+        # The refusal is kept by the model's stated reason, not by a word in
+        # the question.
+        assert run("weather in Lagos right now", needs_live_source=True,
+                   out_of_scope_reason="current_weather").intent == "out_of_scope"
+        assert run("ILS frequency at Heathrow",
+                   out_of_scope_reason="outside_nigeria").intent == "out_of_scope"
     finally:
         database.list_scope_ids, database.find_aip_scope = o_list, o_find
         resolver._PUBLISHED_ENTITIES = None

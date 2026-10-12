@@ -26,8 +26,10 @@ import resolver
 import facts
 import toc
 import synthesize
-from agent import extract_query_parameters, get_embedding
-from database import get_charts, get_charts_smart, search_aip
+import scope_refusal
+import charges
+from agent import asks_live, extract_query_parameters, get_embedding
+from database import get_charts, get_charts_smart, get_subsection_text, search_aip
 from responder import (ambiguous, answer, chart_intro, chart_not_found, error,
                        grounded_reply, low_confidence, not_found, not_in_aip,
                        unresolved)
@@ -65,6 +67,12 @@ def run_pipeline(q: str) -> dict:
     if ex.intent == "general_greeting":
         out["path"], out["reply"] = "greeting", config.GREETING
         return out
+    # Mirrors main.process(): a live question is refused before the ToC rescue
+    # below can answer it.
+    if asks_live(ex):
+        out["path"], out["reply"] = ("out_of_scope",
+                                     scope_refusal.out_of_scope(ex))
+        return out
     if ex.intent == "out_of_scope":
         # A structure question ("which part covers X") can be mis-tagged
         # out_of_scope — answer it deterministically from the ToC first.
@@ -73,7 +81,17 @@ def run_pipeline(q: str) -> dict:
             if ans:
                 out["path"], out["reply"] = "structure", ans
                 return out
-        out["path"], out["reply"] = "out_of_scope", config.OUT_OF_SCOPE
+        out["path"], out["reply"] = ("out_of_scope",
+                                     scope_refusal.out_of_scope(ex))
+        return out
+
+    # Published GEN 4 charges — fetched by section, shown verbatim (as main.py).
+    _g4 = charges.section_for(getattr(ex, "gen4_charge", None))
+    if _g4:
+        out["path"] = f"charges:{_g4}"
+        out["reply"] = charges.charges_reply(
+            _g4, get_subsection_text("NATIONAL", _g4), q,
+            aerodrome_named=bool(ex.icao_code or ex.aerodrome_name))
         return out
 
     # Cross-aerodrome enumeration (e.g. "which aerodromes use 5000 ft TA") — a
@@ -169,6 +187,8 @@ def check(case: dict, r: dict) -> tuple[list, list]:
     # Expectations from the golden case.
     if "path" in case and r["path"] != case["path"]:
         fails.append(f"path={r['path']} expected {case['path']}")
+    if "not_path" in case and r["path"] == case["not_path"]:
+        fails.append(f"path={r['path']} must not be {case['not_path']}")
     if "icao" in case and r["icao"] != case["icao"]:
         fails.append(f"icao={r['icao']} expected {case['icao']}")
     if "ref" in case and r["ref"] != case["ref"]:
@@ -206,14 +226,17 @@ GOLDEN = [
      "path": "out_of_scope"},
     {"name": "freq_lagos",      "q": "Lagos tower frequency",
      "path": "answer", "icao": "DNMM", "contains": ["MHz"]},
+    # POT and ABC are VOR idents AND published ENR 4.1 navaids, so Vannie asks
+    # which was meant (test_scope_ambiguity_is_asked_with_buttons). These two
+    # cases predate that design and still expected the aerodrome answer.
     {"name": "vor_ident_pot",   "q": "POT VOR frequency",
-     "path": "answer", "icao": "DNPO", "contains": ["MHz"]},
+     "path": "ambiguous", "contains": ["navaid"]},
     {"name": "airspace_ph",     "q": "What are the lateral limits of PH approach?",
      "path": "answer", "ref": "AIRSPACE", "contains": ["Port Harcourt"], "min_sim": 0.5},
     {"name": "sar_units",       "q": "search and rescue units in Nigeria",
      "path": "answer", "ref": "NATIONAL", "charts": True},
     {"name": "chart_ils_abc",   "q": "What is the ILS approach plate for abc?",
-     "path": "chart", "icao": "DNAA", "charts": True, "contains": ["ILS", "Abuja"]},
+     "path": "ambiguous", "contains": ["navaid"]},
     {"name": "runway_dist",     "q": "DNAA declared distances RWY 04",
      "path": "answer", "icao": "DNAA"},
     {"name": "unresolved_noad", "q": "show me the ILS approach plate",
@@ -225,6 +248,35 @@ GOLDEN = [
      "path": None},
     {"name": "regress_abuja",   "q": "Abuja tower frequency",
      "path": "answer", "icao": "DNAA", "contains": ["MHz"]},
+    # --- the live/lasting boundary, both directions --------------------------
+    # Live: must be refused, and the refusal must name the authority.
+    {"name": "live_runway_open", "q": "Is runway 22 at Abuja open right now?",
+     "path": "out_of_scope", "contains": ["NOTAM"]},
+    {"name": "live_metar",       "q": "current METAR for Kano",
+     "path": "out_of_scope", "contains": ["METAR"]},
+    {"name": "live_no_keyword",  "q": "can I use 18R at Lagos tonight",
+     "path": "out_of_scope"},
+    # Lasting facts asked with "now"/"current"/"today": the word does not make
+    # them live. The runway in use is published in AD 2.22.2 and is answered.
+    {"name": "rwy_in_use_published", "q": "which runway is in use at Kano now",
+     "not_path": "out_of_scope"},
+    {"name": "freq_with_now",    "q": "what is Lagos tower frequency now",
+     "not_path": "out_of_scope"},
+    {"name": "ta_with_current",  "q": "current transition altitude at Abuja",
+     "not_path": "out_of_scope"},
+    # A genuinely standing rule with live-sounding wording: must NOT be refused.
+    {"name": "published_vfr_clearance_rule",
+     "q": "what are the ATC clearance requirements for VFR flights at Lagos",
+     "not_path": "out_of_scope"},
+    # Published charges: shown from GEN 4 with the amendment + authority.
+    {"name": "charges_landing",  "q": "what is the landing fee at Kano",
+     "path": "charges:GEN 4.1", "contains": ["4.1.3", "AIRAC AMDT", "FAAN"]},
+    {"name": "charges_tnc",
+     "q": "terminal navigation charge for international flights",
+     "path": "charges:GEN 4.2", "contains": ["4.2.2", "AIRAC AMDT", "NAMA"]},
+    # Unpublished price: still refused.
+    {"name": "fuel_price",       "q": "how much does Jet A-1 cost at Lagos",
+     "path": "out_of_scope"},
 ]
 
 
