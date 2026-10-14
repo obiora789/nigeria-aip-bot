@@ -20,6 +20,19 @@ defers to the chart — it does not guess.
 
 ---
 
+## Results
+
+| Metric | Value |
+|---|---|
+| Aerodromes covered | 36 |
+| Indexed facts | 3,618 |
+| Entity reachability | 1,264 / 1,281 queries (~98%) |
+| Faithfulness suite | 68 questions, 8 categories |
+| Production queries logged | 363 across 23 aerodromes (Jul–Sep 2026) |
+| Routed to abstention or clarification | ~20% |
+
+---
+
 ## How an answer is produced
 
 ```
