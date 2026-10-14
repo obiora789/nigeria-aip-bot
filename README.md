@@ -67,6 +67,16 @@ the same way, so retrieval is confined to one scope regardless of what kind of
 thing it is — the guarantee that a fact can never be returned for a different
 entity holds for a waypoint exactly as it does for a runway.
 
+---
+
+## Testing and evaluation
+
+- `check_enr_reachability.py` — entity reachability harness (1,281 queries, six entity types)
+- `test_offline.py` — offline unit and integration tests
+- `e2e.py` — end-to-end pipeline tests against a live instance
+- `run_stress_set.py` — stress and adversarial query set
+- `observability.py` — per-query instrumentation: intent, retrieval path, similarity score, feedback
+
 ## Module map
 
 ### Bot runtime
