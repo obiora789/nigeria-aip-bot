@@ -13,7 +13,8 @@ value.** Where it can't be confident, it abstains, shows the verbatim source, or
 defers to the chart — it does not guess.
 
 
-[Vannie — RAG retrieval system Demo](https://github.com/user-attachments/assets/c31418f3-f868-4a80-8cfa-8d73362b3aa9)
+[Vannie — RAG retrieval system Demo](https://github.com/user-attachments/assets/e9310430-1e15-4aed-909e-5460f9070873)
+
 
 
 [▶ Watch the full 3-minute demo](https://youtu.be/-o0cmGC5JdI)
