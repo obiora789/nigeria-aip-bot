@@ -52,6 +52,76 @@ _RWY_INV_RE = re.compile(
 # onto another's letdown and assert values that don't match the source.
 _APPROACH_PROC_RE = re.compile(
     r"\b(holding|letdown|let[\s-]?down|missed[\s-]*approach|approach procedure)\b", re.I)
+# Instrument-approach types, matched against the MODEL's procedure_type field
+# (never the raw text). "GENERIC" is an approach asked with no type named.
+_APPROACH_TYPES = ("ILS", "LOC", "VOR", "NDB", "RNAV", "RNP", "GNSS", "GLS")
+
+
+def _approach_type(pt):
+    """'ILS' / 'VOR/DME' / 'RNAV (GNSS)' -> that type; 'IAP' -> 'GENERIC';
+    'Approach', 'SID', 'Tower', None -> None.
+
+    'Approach' on its own is NOT a procedure: like 'Tower' and 'ATIS' it names
+    an ATC UNIT. Confirmed by the 40-aerodrome check: treating it as a generic
+    approach procedure sent "PHSIA approach frequency" to the plate flow and
+    replied with an RNAV chart. An untyped approach PROCEDURE is tagged 'IAP'
+    instead, which nothing else can mean."""
+    if not pt:
+        return None
+    up = str(pt).upper()
+    for t in _APPROACH_TYPES:
+        if re.search(rf"\b{t}\b", up):
+            return t
+    if up.strip() in ("IAP", "INSTRUMENT APPROACH", "INSTRUMENT APPROACH PROCEDURE",
+                      "APPROACH PROCEDURE"):
+        return "GENERIC"
+    return None
+
+
+def _aerodromes_named_in(raw):
+    """Every aerodrome with a published name, alias, VOR ident or ICAO code
+    present as a whole word in the user's text. Unlike resolver.match_name()
+    this does NOT keep only the longest match, so "Lagos to Port Harcourt"
+    names two aerodromes, not one. A name inside a longer matched name
+    ("port harcourt" in "port harcourt shell") is not counted separately."""
+    try:
+        resolver.load_index()
+        norm = f" {resolver._normalize(raw or '')} "
+        hits = [(alias, icao) for alias, icao in resolver._ALIASES
+                if f" {alias} " in norm]
+        # "port harcourt shell" also contains "port harcourt": a name that is
+        # only part of a longer matched name is not a separate mention.
+        found = {icao for alias, icao in hits
+                 if not any(other != alias and f" {alias} " in f" {other} "
+                            for other, _ in hits)}
+        found |= {c for c in _DN_RE.findall((raw or "").upper()) if c in resolver.VALID_ICAO}
+        return found
+    except Exception:  # noqa: BLE001 — never let a guard break extraction
+        return set()
+
+
+def _asks_declared(raw):
+    """synthesize._DECLARED_RE (TORA/TODA/ASDA/LDA), imported lazily like
+    _asks_minima. If it cannot be imported, nothing changes."""
+    try:
+        import synthesize
+        return bool(synthesize._DECLARED_RE.search(raw or ""))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _asks_minima(raw):
+    """synthesize._MINIMA_RE, the existing safety rule for minima. Imported
+    lazily so agent.py has no import-time dependency on synthesize; if it
+    cannot be imported, nothing is excluded (the minima question then reaches
+    the plate flow, which shows the plate that carries those minima)."""
+    try:
+        import synthesize
+        return bool(synthesize._MINIMA_RE.search(raw or ""))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 # A genuine greeting/smalltalk — the ONLY thing that should get the canned reply.
 _REAL_GREETING_RE = re.compile(
     r"^\s*(hi|hello|hey|yo|howdy|good (morning|afternoon|evening)|greetings|"
@@ -256,6 +326,31 @@ def _apply_corrections(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
         found = [c for c in _DN_RE.findall(raw.upper()) if c in resolver.VALID_ICAO]
         if found:
             ex.icao_code = found[0]
+    # 2a) THE AERODROME MUST BE ONE THE USER ACTUALLY NAMED.
+    #     Confirmed across all 40 aerodromes (check_approach_routing.py):
+    #     "Soku VOR approach" was answered as SOKOTO. The model "corrected"
+    #     Soku (DNSK) to the better-known Sokoto (DNSO) — a confident answer
+    #     about the wrong aerodrome, the worst failure this bot can make.
+    #
+    #     Test: is any published name of the model's aerodrome present, as a
+    #     whole word, in what the user typed (or its ICAO code)? If not, and the
+    #     text names exactly one aerodrome, that one is used. Membership against
+    #     the alias table, as everywhere else here; nothing is inferred.
+    #     Untouched: the model's choice whenever its aerodrome IS named
+    #     ("Sokoto", "DNSO", a VOR ident like ABC), and any text naming zero or
+    #     several aerodromes (follow-ups, "Lagos to Port Harcourt").
+    _named_here = _aerodromes_named_in(raw)
+    if len(_named_here) == 1:
+        _want = next(iter(_named_here))
+        _got = ex.icao_code if ex.icao_code in resolver.VALID_ICAO else None
+        if _got is None and ex.aerodrome_name:
+            _hits = resolver.match_name(ex.aerodrome_name)
+            _got = next(iter(_hits)) if len(_hits) == 1 else None
+        if _got and _got != _want:
+            log.info("model chose %s but the user named %s — using %s",
+                     _got, _want, _want)
+            ex.icao_code = _want
+            ex.aerodrome_name = None
     # 2c) A PUBLISHED ENTITY NAMED IN THE QUERY, recognised by MEMBERSHIP.
     #
     #     Fires ONLY when the query produced no subject at all — both fields
@@ -544,6 +639,54 @@ def _apply_corrections(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
             ex.intent = "chart_retrieval"
             if not ex.icao_code and len(cands) == 1 and _may_adopt_icao:
                 ex.icao_code = next(iter(cands))
+    # 6b2) AN INSTRUMENT APPROACH ASKED AS "WHAT IS ..." IS STILL AN APPROACH.
+    #     Confirmed live: "What is the ILS approach in Kano" came back as a
+    #     text lookup, the subsection classifier picked AD 2.17, and the facts
+    #     path answered with the TMA's "Kano Approach" CALL SIGN — the word
+    #     matched, the meaning did not. An approach procedure is never
+    #     synthesised or looked up as text; its one safe destination is the
+    #     plate flow, which asks type and runway.
+    #
+    #     Reads the MODEL's fields, not the raw text: the model has already
+    #     named the approach type in procedure_type. Restricted to
+    #     procedure_lookup, so "ILS category at Lagos" (aerodrome_fact, AD 2.19
+    #     navaid data) and "ILS frequency at Kano" (frequency_retrieval) are
+    #     untouched.
+    #     An untyped approach the model tagged IAP is routed from
+    #     aerodrome_fact too: the model itself has said it is a procedure.
+    #     A FREQUENCY question is never routed, whatever its tags.
+    #
+    #     MINIMA ARE EXCLUDED. "approach minima at Kano" is procedure_lookup
+    #     with an approach type, and its established destination is AD 2.22
+    #     shown verbatim (synthesize's minima rule). That rule is reused, not
+    #     copied, so the two can never disagree.
+    _apt = _approach_type(getattr(ex, "procedure_type", None))
+    if ex.intent != "frequency_retrieval" and \
+            ((ex.intent == "procedure_lookup" and _apt) or
+            (ex.intent == "aerodrome_fact" and _apt == "GENERIC")) \
+            and not _asks_minima(raw):
+        cands = resolver.match_name(raw)
+        if ex.icao_code in resolver.VALID_ICAO or ex.aerodrome_name or len(cands) == 1:
+            ex.intent = "chart_retrieval"
+            if not ex.icao_code and len(cands) == 1 and _may_adopt_icao:
+                ex.icao_code = next(iter(cands))
+    # 6b3) DECLARED DISTANCES ARE NEVER A CHART. Measured on the stress set
+    #     (2026-10-20): 'lda at Uyo RWY 03' and 'toda at Zaria RWY 23' came
+    #     back as chart_retrieval and were answered with a plate, where August
+    #     answered them from the structured AD 2.13 record. The structured
+    #     record is the safe destination: AD 2.13 values differ per runway end.
+    #     Reuses synthesize._DECLARED_RE, the existing rule for this field, so
+    #     the two cannot disagree. A user who asks for a chart or plate by name
+    #     still gets one.
+    if _asks_declared(raw):
+        if ex.intent == "chart_retrieval" and not _CHART_NOUN_RE.search(raw):
+            ex.intent = "runway_data"
+        if hasattr(ex, "ad2_subsection"):
+            ex.ad2_subsection = "2.13"
+    # A bare "approach" names no type. Passed on, clarify would look for a
+    # chart TYPE called "approach" and find none; cleared, it asks which.
+    if _apt == "GENERIC":
+        ex.procedure_type = None
     # 6c) A REFUSAL needs positive evidence. If the model said out_of_scope but
     #     the query resolves to exactly one Nigerian aerodrome and the model
     #     gave no reason that puts the answer outside the AIP (live source,
@@ -614,12 +757,26 @@ _SYSTEM = (
     "transition altitude, VOR/DME and ILS identifiers and frequencies, the runway "
     "in use (AD 2.22.2 publishes a runway-in-use statement for every aerodrome — "
     "set ad2_subsection 2.22).\n"
-    "- procedure_lookup: SID/STAR/approach/missed-approach procedure text, minima.\n"
+    "- procedure_lookup: SID/STAR text, approach and take-off minima, and the "
+    "other AD 2.22 procedures (radar, VFR, departure, emergency). NOT an "
+    "instrument approach — that is chart_retrieval.\n"
     "- chart_retrieval: the user wants to SEE a chart/plate. Covers ILS, RNAV, "
     "RNAV(GNSS), RNP, VOR, NDB, SID/departure, STAR/arrival, aerodrome, "
     "parking/docking/stand, obstacle, terrain, area, and en-route charts. Verbs like "
     "show/pull/display/'plate for'/'chart for' signal this, as does naming a plate "
     "type even without a verb ('the RNAV (GNSS) approach for Kano').\n"
+    "  ANY INSTRUMENT APPROACH at an aerodrome is chart_retrieval, however it "
+    "is asked: 'what is the ILS approach in Kano', 'what is the approach in "
+    "Kano', 'VOR approach for Abuja runway 22', 'how do I fly the approach "
+    "into Sokoto'. Set procedure_type to the type named (ILS, VOR, RNAV, RNP, "
+    "NDB), or 'IAP' when no type is named; Vannie then asks which type "
+    "and runway and sends the plate. 'Approach' as an ATC UNIT is different "
+    "and is NEVER chart_retrieval: 'PHSIA approach frequency', 'frequency of "
+    "Kano Approach' and 'Lagos approach freq' are frequency_retrieval with "
+    "procedure_type 'Approach'; its call sign is AD 2.17.\n"
+    "  DECLARED DISTANCES (TORA, TODA, ASDA, LDA) are runway data (AD 2.13), "
+    "NEVER chart_retrieval, even when a runway is named: 'lda at Uyo RWY 03', "
+    "'toda at Zaria RWY 23'.\n"
     "- icao_lookup: a pure name<->code mapping, e.g. 'what city is DNAA?', 'what is "
     "DNBC?', 'ICAO code for Port Harcourt?'. Fill icao_code or aerodrome_name.\n"
     "- airspace_lookup (ENR): FIR/UIR/TMA/CTR limits, airways/routes, waypoints, "

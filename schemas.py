@@ -207,7 +207,11 @@ class AIPQueryExtraction(BaseModel):
 
     procedure_type: Optional[str] = Field(
         None,
-        description="e.g. 'ILS', 'RNAV', 'SID', 'STAR', 'Tower', 'ATIS'. Leave null if none.",
+        description=("e.g. 'ILS', 'RNAV', 'SID', 'STAR', 'Tower', 'ATIS'. For an "
+                     "instrument approach PROCEDURE asked with no type ('what is the "
+                     "approach in Kano') use 'IAP'. 'Approach' means the Approach ATC "
+                     "UNIT, like 'Tower' ('Kano approach frequency'). Leave null if "
+                     "none."),
     )
 
     runway: Optional[str] = Field(
@@ -244,7 +248,9 @@ class AIPQueryExtraction(BaseModel):
             "2.6; lighting is 2.14/2.15. If a query is vague ('facilities', "
             "'info', 'notes', 'details') return null rather than 2.5 | "
             "2.6 rescue and fire fighting, RFF category, removal of disabled aircraft | "
-            "2.7 seasonal availability, clearing | 2.8 aprons, taxiways, apron/taxiway "
+            "2.7 seasonal availability and CLEARING of the movement area: clearance "
+            "priorities, clearing equipment (snow, rain, debris — never an ATC "
+            "clearance) | 2.8 aprons, taxiways, apron/taxiway "
             "surface and strength, altimeter/VOR/INS check locations | 2.9 surface "
             "movement guidance, markings, stop bars, stand ID signs | 2.10 aerodrome "
             "obstacles | 2.11 meteorological information, MET office, TAF, trend "
@@ -255,12 +261,15 @@ class AIPQueryExtraction(BaseModel):
             "threshold/centreline/edge/end lights | 2.15 other lighting, ABN/IBN "
             "beacon, wind direction indicator, secondary power supply | 2.16 helicopter "
             "landing area, TLOF, FATO | 2.17 ATS airspace: CTR/TMA lateral and vertical "
-            "limits, airspace classification, ATS unit call sign, transition altitude | "
+            "limits, airspace classification, ATS unit call sign (e.g. 'Kano Approach' — "
+            "the ATC UNIT, never an approach procedure), transition altitude | "
             "2.18 ATS communication facilities, tower/ground/approach/ATIS frequencies "
             "and call signs | 2.19 radio navigation and landing aids: VOR, DME, ILS, "
             "NDB, localizer, glide path — frequencies, idents, positions | 2.20 local "
             "aerodrome regulations, taxiing limitations, parking, training flights | "
-            "2.21 noise abatement | 2.22 flight procedures: runway in use, holding, "
+            "2.21 noise abatement | 2.22 flight procedures: ATC clearances for VFR "
+            "flights, instrument approach "
+            "procedures (ILS, VOR, RNAV, RNP, NDB approaches), runway in use, holding, "
             "letdown, missed approach, approach and take-off minima, OCA/H, circling, "
             "radar procedures, VFR procedures, PBN | 2.23 additional information, bird and wildlife "
             "hazards | 2.24 charts"
