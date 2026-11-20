@@ -20,8 +20,8 @@ jobs:
       TELEGRAM_BOT_TOKEN: "eval-not-used"
       QUERY_LOG_ENABLED: "0"    # don't pollute the query log with eval traffic
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install dependencies
@@ -32,7 +32,7 @@ jobs:
         run: python eval_set.py
       - name: Upload results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: vannie-eval-results
           path: vannie_eval_results.csv
