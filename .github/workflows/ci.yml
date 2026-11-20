@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           # Match Render's runtime so version-specific bugs surface here, not live.
           python-version: "3.12"
