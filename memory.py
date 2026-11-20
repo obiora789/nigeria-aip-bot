@@ -23,7 +23,18 @@ log = logging.getLogger("vannie.memory")
 
 
 def _hash(chat_id) -> str:
-    return hashlib.sha256(f"vannie:{chat_id}".encode()).hexdigest()[:16]
+    """Key for this chat's context row.
+
+    Keyed with CHAT_HASH_PEPPER (audit item, 2026-10-27). The old constant
+    "vannie:" prefix is public in this file and Telegram IDs are sequential,
+    so every row could be mapped back to a chat in seconds — the flaw
+    observability._hash_chat already documents for the query log. The ":ctx:"
+    part keeps these keys different from the query log's. Without a pepper the
+    old form is kept so context still works (observability warns at startup).
+    Changing the key orphans old rows, which expire within CONTEXT_TTL_MIN."""
+    pepper = getattr(config, "CHAT_HASH_PEPPER", "") or ""
+    raw = f"{pepper}:ctx:{chat_id}" if pepper else f"vannie:{chat_id}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
 def _past(ts: str) -> bool:

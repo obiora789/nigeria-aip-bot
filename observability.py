@@ -65,9 +65,59 @@ def _hash_chat(chat_id) -> str | None:
     return hashlib.sha256(f"{pepper}:{chat_id}".encode()).hexdigest()[:16]
 
 
+# ── audit trail (2026-10-27) ──────────────────────────────────────────────────
+# Each row also records WHAT was answered and WHICH system answered it: the
+# reply text, the pinned model names, a fingerprint of every prompt and output
+# schema, and the deployed commit. With the AIRAC cycle already logged, any
+# reply can be explained and reproduced later. Needs sql/14_audit_trail.sql;
+# until that has run, rows are still written without these columns.
+AUDIT_COLUMNS = ("reply", "models", "prompt_version", "app_version")
+REPLY_MAX = 8000
+_audit_columns_ok = True
+_prompt_version = None
+
+
+def prompt_version() -> str:
+    """12-character fingerprint of every instruction the models are given.
+    It changes whenever a prompt or an output schema changes, with no manual
+    version number to forget."""
+    global _prompt_version
+    if _prompt_version is not None:
+        return _prompt_version
+    parts = []
+    try:
+        import json
+        import agent
+        import disambiguate
+        import schemas
+        parts += [getattr(agent, "_SYSTEM", ""), getattr(config, "SYNTHESIS_SYSTEM", ""),
+                  getattr(disambiguate, "JUDGE_SYSTEM", "")]
+        for name in ("AIPQueryExtraction", "AmbiguityCheck"):
+            model = getattr(schemas, name, None)
+            if model is not None:
+                parts.append(json.dumps(model.model_json_schema(), sort_keys=True))
+        _prompt_version = hashlib.sha256("\x00".join(map(str, parts)).encode()).hexdigest()[:12]
+    except Exception:  # noqa: BLE001 — never block logging
+        log.exception("prompt_version failed")
+        return "unknown"
+    return _prompt_version
+
+
+def _models() -> str:
+    """e.g. 'extract=gpt-6-luna[none];synth=gpt-6-luna[low];embed=...' — the
+    reasoning effort is part of what produced an answer, so it is logged too."""
+    def one(model, role):
+        effort = config.reasoning_effort_for(model, role)
+        return f"{model}[{effort}]" if effort else str(model)
+    return (f"extract={one(config.EXTRACTION_MODEL, 'extraction')};"
+            f"synth={one(config.SYNTHESIS_MODEL, 'synthesis')};"
+            f"embed={config.EMBEDDING_MODEL}")
+
+
 def log_query(*, chat_id=None, query="", intent=None, icao=None, path="unknown",
-              similarity=None, charts=0, qid=None) -> None:
+              similarity=None, charts=0, qid=None, reply=None) -> None:
     """Insert one query-log row. Best-effort; never raises."""
+    global _audit_columns_ok
     if not config.QUERY_LOG_ENABLED:
         return
     row = {
@@ -82,10 +132,28 @@ def log_query(*, chat_id=None, query="", intent=None, icao=None, path="unknown",
         "airac": config.AIRAC_CYCLE,
         "qid": qid,
     }
+    if _audit_columns_ok:
+        row.update({"reply": (reply or "")[:REPLY_MAX] or None,
+                    "models": _models(), "prompt_version": prompt_version(),
+                    "app_version": config.APP_VERSION or None})
     try:
         supabase.table("vannie_query_log").insert(row).execute()
-    except Exception:  # noqa: BLE001 — telemetry must never break the bot
-        log.exception("query-log insert failed (path=%s)", path)
+    except Exception as e:  # noqa: BLE001 — telemetry must never break the bot
+        missing = _audit_columns_ok and any(c in str(e) for c in AUDIT_COLUMNS)
+        if not missing:
+            log.exception("query-log insert failed (path=%s)", path)
+            return
+        # The audit columns are not in the table yet: keep logging without
+        # them, and say loudly what to run. Restart after running the SQL.
+        _audit_columns_ok = False
+        log.error("query log has no audit columns — run sql/14_audit_trail.sql "
+                  "in Supabase, then restart. Logging continues without them.")
+        for c in AUDIT_COLUMNS:
+            row.pop(c, None)
+        try:
+            supabase.table("vannie_query_log").insert(row).execute()
+        except Exception:  # noqa: BLE001
+            log.exception("query-log insert failed (path=%s)", path)
 
 
 def record_feedback(qid: str, verdict: str) -> None:
@@ -219,6 +287,43 @@ def prune_logs(before_days: int) -> int:
     except Exception:  # noqa: BLE001
         log.exception("prune_logs failed")
         return 0
+
+
+def delete_chat_logs(chat_id):
+    """A pilot's right to erasure (/deletemydata): delete every query-log row
+    keyed to this chat. Returns the number deleted, or None when rows cannot be
+    linked to a chat at all (no CHAT_HASH_PEPPER, so no chat key was stored)."""
+    key = _hash_chat(chat_id)
+    if key is None:
+        return None
+    resp = supabase.table("vannie_query_log").delete().eq("chat_hash", key).execute()
+    n = len(resp.data or [])
+    log.info("delete_chat_logs: deleted %d rows for one chat", n)
+    return n
+
+
+def prune_context() -> int:
+    """Delete conversation-context rows that have expired. load() already
+    ignores them; this removes them from storage. Returns the number deleted."""
+    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    try:
+        resp = (supabase.table("conversation_context").delete()
+                .lt("expires_at", now).execute())
+        n = len(resp.data or [])
+        log.info("prune_context: deleted %d expired rows", n)
+        return n
+    except Exception:  # noqa: BLE001
+        log.exception("prune_context failed")
+        return 0
+
+
+def run_retention() -> dict:
+    """The daily retention pass (main._retention_loop): query-log rows older
+    than LOG_RETENTION_DAYS, and expired conversation context."""
+    out = {"log_rows": 0, "context_rows": prune_context()}
+    if config.LOG_RETENTION_DAYS > 0:
+        out["log_rows"] = prune_logs(config.LOG_RETENTION_DAYS)
+    return out
 
 
 def wipe_logs() -> int:

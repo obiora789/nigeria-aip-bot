@@ -51,6 +51,26 @@ class GroundedAnswer(BaseModel):
         default="", description="Arithmetic shown as 'A op B = C', else empty")
 
 
+class AmbiguityCheck(BaseModel):
+    """disambiguate.judge's answer: is this one of the six known bare
+    double-meaning questions? (disambiguate.FAMILIES)
+
+    Generated in field order: the model copies the topic FIRST, so the
+    evidence comes before the label. The model never writes button text or
+    rewritten questions; those are fixed in disambiguate.py."""
+    topic: str = Field(
+        description="What the question asks about, copied exactly, without the "
+                    "place and question words: 'approach', 'approach frequency', "
+                    "'landing fee', 'clearance priorities'.")
+    family: Literal["none", "approach", "minima", "clearance", "lighting",
+                    "taxiing", "charges"] = Field(
+        description="Which bare double-meaning question this is. Not 'none' only "
+                    "when the topic is ONE word naming one of the six; 'none' for "
+                    "almost every question.")
+    place: str = Field(
+        description="The aerodrome or city exactly as typed; empty string if none.")
+
+
 class AIPQueryExtraction(BaseModel):
     """Forces strict JSON. The model extracts parameters only — it does not answer."""
 
@@ -207,11 +227,53 @@ class AIPQueryExtraction(BaseModel):
 
     procedure_type: Optional[str] = Field(
         None,
-        description=("e.g. 'ILS', 'RNAV', 'SID', 'STAR', 'Tower', 'ATIS'. For an "
-                     "instrument approach PROCEDURE asked with no type ('what is the "
-                     "approach in Kano') use 'IAP'. 'Approach' means the Approach ATC "
-                     "UNIT, like 'Tower' ('Kano approach frequency'). Leave null if "
-                     "none."),
+        description="e.g. 'ILS', 'RNAV', 'SID', 'STAR', 'Tower', 'ATIS'. Leave null if none.",
+    )
+
+    # WHAT AN "APPROACH" QUESTION WANTS, decided by the model, read by the
+    # backstop. Replaces two failed attempts to decide it from wording:
+    #   - a procedure_type convention ('Approach' = the unit, 'IAP' = the
+    #     procedure), which sent "Show me sokoto approach" and "What is sokoto
+    #     approach" to Sokoto's AD 2.18 communications (2026-10-21);
+    #   - patterns over the pilot's words for minima and the approach type.
+    # The word "approach" names three different things in this AIP; only the
+    # meaning of the whole question separates them, which is the model's job.
+    approach_request: Optional[Literal["procedure", "minima", "unit"]] = Field(
+        None,
+        description=(
+            "Set ONLY when the question is about an approach at an aerodrome; "
+            "null otherwise.\n"
+            "procedure — the instrument approach itself: its plate, or its "
+            "holding, letdown and missed approach. Meant when the question says "
+            "'THE approach', names an approach type, or asks for a plate, chart "
+            "or how to fly it: 'what is the approach in Kano', 'what is the ILS "
+            "approach in Kano', 'approach plate for Sokoto', 'how do I fly the "
+            "approach into Yola'.\n"
+            "An approach TYPE before 'approach' ('Abuja VOR approach', 'Kano ILS "
+            "approach') is ALWAYS procedure, never unit. Approach radar control "
+            "and radar procedures are NOT an approach request (null).\n"
+            "unit — the Approach ATC UNIT, as 'Sokoto Approach' is a call sign "
+            "like 'Sokoto Tower'. Meant when the question asks for its "
+            "frequency, call sign or how to contact it, AND it is the default "
+            "when a place name is followed by 'approach' with nothing that "
+            "points to a procedure: 'Sokoto approach', 'what is Sokoto "
+            "approach', 'Sokoto approach frequency'. When such a question could "
+            "also mean the plate — 'Sokoto approach', 'what is Sokoto approach', "
+            "'Show me Sokoto approach', i.e. anything without frequency, call "
+            "sign or contact in it — keep 'unit' here (Vannie separately offers the pilot the "
+            "plate as a choice).\n"
+            "minima — approach or landing minima: DA/H, OCA/H, MDA, RVR or "
+            "visibility minima ('ILS minima for Kano runway 24')."
+        ),
+    )
+    approach_type: Optional[Literal["ILS", "VOR", "RNAV", "RNP", "NDB"]] = Field(
+        None,
+        description=(
+            "The instrument approach type the question names, when "
+            "approach_request is set: ILS (also LOC/localizer), VOR (also "
+            "VOR/DME), RNAV (also GNSS/RNAV(GNSS)), RNP, NDB. Null when no type "
+            "is named ('what is the approach in Kano') — Vannie then asks."
+        ),
     )
 
     runway: Optional[str] = Field(

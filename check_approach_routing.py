@@ -45,17 +45,25 @@ from concurrent.futures import ThreadPoolExecutor
 import resolver
 from agent import extract_query_parameters
 import synthesize
+import disambiguate
 
 APPROACH_PHRASINGS = [
     "What is the approach in {x}",
     "What is the ILS approach in {x}",
     "{x} VOR approach",
     "RNAV approach for {x}",
+    # NOT here: "{x} approach", "What is {x} approach", "Show me {x} approach".
+    # Those have two readings (the Approach ATC unit or the plate): Vannie
+    # answers the unit and offers the plate as a button (disambiguate.py,
+    # option B) — check_ambiguity.py measures them at every aerodrome.
+    # "ASK" in this script's output means "treated as a double meaning".
 ]
 CONTROL_PHRASINGS = [
     "{x} approach frequency",
     "frequency of {x} Approach",
+    "what frequency is {x} Approach on",
     "transition altitude at {x}",
+    "ILS minima for {x}",
 ]
 
 
@@ -93,7 +101,9 @@ def route(row):
         return {**row, "dest": "extraction_failed", "got_icao": None, "detail": ""}
     got = _resolved_icao(ex) or next(iter(resolver.match_name(q)), None)
     detail = f"intent={ex.intent} type={ex.procedure_type} sub={ex.ad2_subsection}"
-    if ex.intent == "chart_retrieval":
+    if disambiguate.ask(q):
+        dest = "ASK"
+    elif ex.intent == "chart_retrieval":
         dest = "PLATE"
     else:
         status, payload = synthesize.synthesize_decision(q, [], ex)
@@ -106,7 +116,8 @@ def full(row):
     import run_stress_set
     r = run_stress_set.run_pipeline(row["q"])
     path = r.get("path") or "unknown"
-    dest = "PLATE" if path in ("chart", "chart_not_found") else path
+    dest = ("PLATE" if path in ("chart", "chart_not_found")
+            else "ASK" if path == "ambiguous:asked" else path)
     first = (r.get("reply") or "").strip().splitlines()
     return {**row, "dest": dest, "got_icao": r.get("icao"),
             "detail": f"path={path} | {first[0][:70] if first else ''}",
@@ -117,7 +128,9 @@ def judge(r):
     plate = r["dest"] == "PLATE"
     if r["kind"] == "approach":
         return plate and r.get("got_icao") == r["icao"]
-    return not plate
+    # A clear question must be answered: sent to the plate flow is wrong, and
+    # so is asking the pilot to choose when there was nothing to choose.
+    return not plate and r["dest"] != "ASK"
 
 
 def main():

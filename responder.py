@@ -630,7 +630,7 @@ def subsection_reply(res: Resolution, section: str, text: str,
     footer = (f"\n\n———\nSource: Nigeria AIP · {section} · {config.AIRAC_CYCLE}\n"
               f"{config.DISCLAIMER}")
     head = f"{res.label} — {section}\n\n"
-    return (head + body)[:_SAFE_LIMIT - len(footer)] + footer
+    return head + body + footer
 
 
 def info_block_reply(res: Resolution, section: str, body: str) -> str:
@@ -641,7 +641,7 @@ def info_block_reply(res: Resolution, section: str, body: str) -> str:
     answer risks cutting it short for no safety benefit."""
     footer = (f"\n\n———\nSource: Nigeria AIP · {section} · {config.AIRAC_CYCLE}\n"
               f"{config.DISCLAIMER}")
-    return f"{res.label} — {section}\n\n{body}"[:_SAFE_LIMIT - len(footer)] + footer
+    return f"{res.label} — {section}\n\n{body}" + footer
 
 
 def facts_reply(res: Resolution, facts: list, query: str = "") -> str:
@@ -684,7 +684,7 @@ def facts_reply(res: Resolution, facts: list, query: str = "") -> str:
     body = "\n".join(lines).rstrip()
     footer = (f"\n\n———\nSource: Nigeria AIP · {cite} · {config.AIRAC_CYCLE}\n"
               f"{config.DISCLAIMER}")
-    return body[:_SAFE_LIMIT - len(footer)] + footer
+    return body + footer
 
 
 def not_found() -> str:
@@ -715,6 +715,16 @@ def unresolved(res: Resolution) -> str:
     return (
         f"{res.reason} I only cover aerodromes published in the Nigerian AIP. "
         "If you have the ICAO code (starts with DN), send that.\n\n"
+        f"{config.DISCLAIMER}"
+    )
+
+
+def data_unavailable() -> str:
+    """The AIP database could not be read (database.DataUnavailable). Must
+    never read like "not published": the data may well be there."""
+    return (
+        "I couldn't reach the AIP database just now, so I won't answer from "
+        "partial data. Please try again in a minute, or consult the official AIP.\n\n"
         f"{config.DISCLAIMER}"
     )
 

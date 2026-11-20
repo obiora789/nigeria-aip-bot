@@ -44,8 +44,17 @@ jobs:
           python -c "import e2e"
           python -c "import harness"
 
-      - name: Offline unit tests (deterministic safety-critical paths)
-        run: pytest test_offline.py -q
+      - name: Offline unit tests (every test file, as run_all_checks.sh does)
+        # All test_*.py, not only test_offline.py: the disambiguation, scope,
+        # approach-routing and charges tests guard live behaviour too.
+        run: pytest -q
+
+      - name: Known-vulnerability scan of the pinned dependencies
+        # Blocks the deploy if a pinned package has a published vulnerability.
+        # Fix: raise the version in requirements.in, run pin_requirements.sh.
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt --progress-spinner off
 
   deploy:
     # Gate: only after tests pass, only on a real push to main.

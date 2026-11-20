@@ -1,0 +1,16 @@
+# Dependabot (audit item, 2026-10-27): weekly pull requests when a pinned
+# dependency or a GitHub Action has a newer or security-fixed version. Each PR
+# runs CI (tests + pip-audit) before it can be merged.
+# Dependabot edits requirements.txt only; when you accept one, raise the same
+# package in requirements.in so the next pin_requirements.sh keeps it.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

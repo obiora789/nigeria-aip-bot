@@ -10,6 +10,7 @@ changes — it is part of the AIRAC discipline.
 """
 import logging
 import re
+import time
 from typing import Dict, List, Set, Tuple
 
 from models import Resolution
@@ -271,6 +272,15 @@ _ENR_ID_RE = re.compile(
     r"^(?:DN[PRD]\s?\d{1,3}|[A-Z]{5}|(?:[A-Z]/)?U?[A-Z]\d{1,3}[A-Z]?)$", re.I)
 
 
+def _reraise_if_unavailable(e: Exception) -> None:
+    """A failed database read must never become "I don't have 'X' in the
+    Nigerian AIP" (2026-11-19). database.DataUnavailable goes up to
+    main.process, which tells the pilot the database could not be reached.
+    Checked by name so this module keeps importing database lazily."""
+    if type(e).__name__ == "DataUnavailable":
+        raise e
+
+
 def _lookup_enr_scope(name: str):
     """('ENR_AREA', 'DND45') if `name` is a published ENR entity, else None.
 
@@ -303,7 +313,8 @@ def _lookup_enr_scope(name: str):
         try:
             from database import find_aip_scope
             rows = find_aip_scope(airspace_target)
-        except Exception:                              # noqa: BLE001
+        except Exception as e:                         # noqa: BLE001
+            _reraise_if_unavailable(e)
             return None
         if len(rows) == 1:
             return rows[0].get("scope_kind"), rows[0].get("scope_id")
@@ -320,7 +331,8 @@ def _lookup_enr_scope(name: str):
             from database import find_aip_scope
             rows = [r for r in (find_aip_scope(dct_target) or [])
                     if r.get("scope_kind") == "ENR_FRA_DCT"]
-        except Exception:                              # noqa: BLE001
+        except Exception as e:                         # noqa: BLE001
+            _reraise_if_unavailable(e)
             rows = []
         if len(rows) == 1:
             return rows[0].get("scope_kind"), rows[0].get("scope_id")
@@ -362,7 +374,8 @@ def _lookup_enr_scope(name: str):
     try:
         from database import find_aip_scope
         rows = find_aip_scope(token)
-    except Exception:                                  # noqa: BLE001
+    except Exception as e:                             # noqa: BLE001
+        _reraise_if_unavailable(e)
         return None
     if len(rows) != 1:
         # AN EXACT ID MATCH BEATS A PARTIAL ONE. This used to return None on
@@ -392,6 +405,11 @@ def _lookup_enr_scope(name: str):
 
 
 _PUBLISHED_ENTITIES = None
+# After a failed read the partial set is served for a short while, then the
+# full set is read again (2026-11-09): see published_entities().
+_PUBLISHED_PARTIAL = None
+_PUBLISHED_RETRY_AT = 0.0
+PUBLISHED_RETRY_SEC = 60.0
 # alias TOKEN -> the airspace's REAL stored scope_id. "ABUJA TMA" is not a
 # database key; "ABUJA Terminal Control Area (TMA)" is. This is what lets
 # _lookup_enr_scope() query the database by the id it actually indexed under,
@@ -514,9 +532,11 @@ def published_entities() -> dict:
     _airspace_aliases(). Every alias maps back to the entity's REAL stored
     scope_id (in _AIRSPACE_ALIAS_TARGET), never to the alias text itself, so
     resolve() still looks the real record up by its true id."""
-    global _PUBLISHED_ENTITIES
+    global _PUBLISHED_ENTITIES, _PUBLISHED_PARTIAL, _PUBLISHED_RETRY_AT
     if _PUBLISHED_ENTITIES is not None:
         return _PUBLISHED_ENTITIES
+    if _PUBLISHED_PARTIAL is not None and time.monotonic() < _PUBLISHED_RETRY_AT:
+        return _PUBLISHED_PARTIAL
     out = {v.upper(): "ENR_NAVAID" for v in VOR_IDENTS.values()}
     global _AIRSPACE_ALIAS_TARGET, _DCT_ALIAS_TARGET
     _AIRSPACE_ALIAS_TARGET = {}
@@ -552,8 +572,19 @@ def published_entities() -> dict:
             out.setdefault(alias, "ENR_FRA_DCT")
             _DCT_ALIAS_TARGET[alias] = sid
     except Exception:                                  # noqa: BLE001
-        pass
+        # NEVER CACHE A PARTIAL SET (2026-11-09). This used to `pass` and then
+        # cache whatever had been read, so one dropped connection at startup
+        # left a whole kind of ENR entity (every route, say) unrecognised —
+        # answered "not in the AIP" — until the next restart, with no trace.
+        # Serve the partial set for PUBLISHED_RETRY_SEC, then read again.
+        log.exception("published_entities: ENR names could not all be read — "
+                      "using %d known names for %.0fs, then retrying",
+                      len(out), PUBLISHED_RETRY_SEC)
+        _PUBLISHED_PARTIAL = out
+        _PUBLISHED_RETRY_AT = time.monotonic() + PUBLISHED_RETRY_SEC
+        return out
     _PUBLISHED_ENTITIES = out
+    _PUBLISHED_PARTIAL = None
     return out
 
 

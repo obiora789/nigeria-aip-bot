@@ -10,6 +10,7 @@ The heavy work runs in a background task so we acknowledge Telegram within
 milliseconds; otherwise Telegram retries the update and we'd pay twice.
 """
 import asyncio
+import contextvars
 import copy
 import hmac
 import logging
@@ -24,7 +25,7 @@ import cache
 import config
 import resolver
 from agent import asks_live, extract_query_parameters, get_embedding
-from database import (get_aerodrome_data, get_charts, get_charts_smart,
+from database import (DataUnavailable, get_aerodrome_data, get_charts, get_charts_smart,
                       search_facts_scoped,
                       get_declared_distances, get_lighting_data,
                       get_runway_physical_data, get_section_text,
@@ -40,16 +41,44 @@ import procedures
 import toc
 import scope_refusal
 import charges
+import disambiguate
 from responder import (ambiguous, answer, chart_intro, chart_not_found,
-                       comms_reply, declared_distance_reply, error, grounded_reply,
+                       comms_reply, data_unavailable, declared_distance_reply, error,
+                       grounded_reply,
                        facts_reply, info_block_reply, lighting_data_reply, low_confidence,
                        navaid_reply, not_found, not_in_aip, runway_data_reply,
                        rwy_char_reply, subsection_reply, unresolved)
 from telegram import (answer_callback, clarify_runway_kb, clarify_scope_kb,
                       clarify_type_kb,
-                      feedback_kb, send_charts, send_message, verify_secret)
+                      feedback_kb, verify_secret)
+from telegram import send_charts as _tg_send_charts
+from telegram import send_message as _tg_send_message
 
 logging.basicConfig(level=logging.INFO)
+
+# ── audit trail: every reply process() sends is logged with its question ──────
+# (2026-10-27). process() opens a buffer; these wrappers copy each outgoing
+# message into it; the finally block logs the joined text as the row's reply.
+# A context variable keeps concurrent chats apart. run_stress_set.py replaces
+# these two names to capture replies, exactly as it did before.
+_REPLIES: contextvars.ContextVar = contextvars.ContextVar("vannie_replies", default=None)
+
+
+def _capture(text) -> None:
+    buf = _REPLIES.get()
+    if buf is not None:
+        buf.append(text or "")
+
+
+async def send_message(chat_id, text, reply_markup=None):
+    _capture(text)
+    await _tg_send_message(chat_id, text, reply_markup=reply_markup)
+
+
+async def send_charts(chat_id, charts, requested_runway=None):
+    if charts:
+        _capture(f"[{len(charts)} chart(s) sent]")
+    await _tg_send_charts(chat_id, charts, requested_runway=requested_runway)
 log = logging.getLogger("vannie.main")
 
 app = FastAPI(title="Vannie — Nigeria AIP Reference Assistant")
@@ -76,6 +105,35 @@ async def _warm() -> None:
     # Periodic background monitor so degradation alerts even without a restart.
     if config.DEEP_CHECK_INTERVAL_SEC > 0:
         asyncio.create_task(_health_monitor())
+    # Audit items (2026-10-27): say loudly what is misconfigured.
+    if not config.TELEGRAM_WEBHOOK_SECRET:
+        if config.ALLOW_INSECURE_WEBHOOK:
+            log.warning("TELEGRAM_WEBHOOK_SECRET unset and ALLOW_INSECURE_WEBHOOK=1 "
+                        "— webhook OPEN (development only)")
+        else:
+            log.error("TELEGRAM_WEBHOOK_SECRET is not set — every Telegram update "
+                      "will be REFUSED (403). Set it and re-register the webhook.")
+    for w in config.model_shutdown_warnings():
+        log.warning("MODEL: %s", w)
+    if not config.PRIVACY_CONTACT:
+        log.warning("PRIVACY_CONTACT is not set — /privacy shows no contact")
+    log.info("models: %s | prompts %s | app %s", observability._models(),
+             observability.prompt_version(), config.APP_VERSION or "unknown")
+    if config.RETENTION_INTERVAL_SEC > 0:
+        asyncio.create_task(_retention_loop())
+
+
+async def _retention_loop() -> None:
+    """Retention (audit item, 2026-10-27): once at startup, then every
+    RETENTION_INTERVAL_SEC, delete query-log rows older than LOG_RETENTION_DAYS
+    and expired conversation context."""
+    while True:
+        try:
+            out = await asyncio.to_thread(observability.run_retention)
+            log.info("retention: %s", out)
+        except Exception:  # noqa: BLE001
+            log.exception("retention pass errored")
+        await asyncio.sleep(config.RETENTION_INTERVAL_SEC)
 
 
 async def _health_monitor() -> None:
@@ -294,6 +352,51 @@ async def handle_feedback(cb: dict) -> None:
                     chat_id,
                     "Sorry — I couldn't finish that. Please ask again, naming "
                     "the aerodrome or the navaid.")
+            return
+
+        if data.startswith("alt:") and chat_id is not None:
+            # "Did you mean ...?" under a default answer (disambiguate.py).
+            # The callback carries the family and the place, so there is no
+            # stored state to expire or be overwritten.
+            if cid:
+                await answer_callback(cid)          # stop the spinner at once
+            try:
+                got = disambiguate.from_callback(data)
+                if not got:
+                    await send_message(chat_id, "That button is no longer valid — please ask again.")
+                    return
+                family, question = got
+                await process(chat_id, question, from_choice=True,
+                              log_as=f"[alt:{family}] {question}")
+            except Exception:  # noqa: BLE001 — surface, never vanish
+                log.exception("alternative-reading callback failed")
+                await send_message(chat_id, "Sorry — I couldn't finish that. "
+                                            "Please ask again more specifically.")
+            return
+
+        if data.startswith("amb:") and chat_id is not None:
+            # Ask-first buttons from messages sent before 2026-10-26.
+            parts = data.split(":")
+            if len(parts) < 3:
+                if cid:
+                    await answer_callback(cid)
+                return
+            idx, qid = parts[1], parts[2]
+            if cid:
+                await answer_callback(cid)          # stop the spinner at once
+            try:
+                ctx = await asyncio.to_thread(memory.load, chat_id)
+                question = disambiguate.chosen_question(ctx.get("pending") or {},
+                                                        idx, qid)
+                if not question:
+                    # qid guard: a stale button must not act on a replaced request.
+                    await send_message(chat_id, "That request expired — please ask again.")
+                    return
+                await process(chat_id, question, from_choice=True)
+            except Exception:  # noqa: BLE001 — surface, never vanish
+                log.exception("ambiguity choice callback failed")
+                await send_message(chat_id, "Sorry — I couldn't finish that. "
+                                            "Please ask again more specifically.")
             return
 
         if data.startswith("clar:") and chat_id is not None:
@@ -550,7 +653,10 @@ async def _admin_health_report() -> str:
         f"• Supabase: {'OK' if 'Supabase' not in fails else 'FAIL'}",
         f"• Cache: {'Redis' if redis_ok else 'in-memory'}",
         f"• AIRAC: {config.AIRAC_CYCLE}",
-    ])
+        f"• Models: {observability._models()}",
+        f"• Prompts: {observability.prompt_version()} · App: {config.APP_VERSION or 'unknown'}",
+        f"• Audit columns: {'OK' if observability._audit_columns_ok else 'MISSING — run sql/14_audit_trail.sql'}",
+    ] + [f"⚠ {w}" for w in config.model_shutdown_warnings()])
 
 
 async def _admin_stats_report() -> str:
@@ -568,14 +674,77 @@ async def _admin_stats_report() -> str:
     ])
 
 
-async def process(chat_id: int, text: str, force_scope=None) -> None:
+def _airspace_redirect(ex, res, query: str):
+    """An airspace question that is really about one aerodrome's OWN airspace
+    ("vertical limits of the Kano control zone") is answered from that
+    aerodrome's AD 2.17: returns the aerodrome's Resolution, else None.
+
+    Its own function (2026-11-19) so check_enr_reachability.py can apply the
+    same step the live bot applies after resolve() — the audit could not tell
+    whether it also captures a genuine ENR airspace ("KANO EAST SECTOR
+    vertical limits"), and only measurement can.
+    """
+    if not (res.is_national and res.reference == "AIRSPACE"):
+        return None
+    # A NAMED ENR AIRSPACE KEEPS ITS OWN RECORD (measured 2026-11-20).
+    # check_enr_reachability.py --fields: 54 of 84 questions about a TMA or
+    # sector ("LAGOS TMA vertical limits", "lateral limits of KANO EAST
+    # SECTOR") were resolved to the ENR 2.1 entity and then sent here to the
+    # aerodrome's AD 2.17 because the name contains "Lagos"/"Kano". The
+    # redirect exists for airspace with no record of its own (a CTR), so it
+    # only applies when resolve() found no specific entity.
+    if res.scope_id:
+        return None
+    _sub = synthesize._normalise_subsection(getattr(ex, "ad2_subsection", None))
+    _kw = subsection_router.detect_subsection(query)
+    if not (_sub or _kw):
+        return None
+    # Prefer what the LLM extracted, but fall back to scanning the
+    # RAW QUERY for any known aerodrome name or alias. Depending on
+    # ex.aerodrome_name alone is fragile: for "lagos control zone"
+    # the extractor can read the whole phrase as an airspace NAME
+    # and leave aerodrome_name null, which silently disabled this
+    # redirect and sent the query to ENR 1.1 at 63%.
+    _hint = res.aerodrome_hint or ex.aerodrome_name
+    _scan_icao = None
+    if not _hint:
+        # match_name() returns ICAO CODES, so feed it back as
+        # icao_code — assigning it to aerodrome_name would fail,
+        # since 'DNMM' is not an alias of itself.
+        _scan = resolver.match_name(query)
+        if len(_scan) == 1:
+            _scan_icao = next(iter(_scan))
+    if not (_hint or _scan_icao):
+        return None
+    _ex2 = ex.model_copy() if hasattr(ex, "model_copy") else copy.copy(ex)
+    _ex2.intent = "aerodrome_fact"
+    if _scan_icao:
+        _ex2.icao_code = _scan_icao
+        _ex2.aerodrome_name = None
+    else:
+        _ex2.aerodrome_name = _hint
+    _redirect = resolver.resolve(_ex2)
+    if not _redirect.icao:
+        return None
+    log.info("airspace query is about %s's own %s -> %s",
+             _hint or _scan_icao, _sub or _kw, _redirect.icao)
+    return _redirect
+
+
+async def process(chat_id: int, text: str, force_scope=None,
+                  from_choice: bool = False, alt_button=None,
+                  log_as=None) -> None:
     """`force_scope` is (scope_kind, scope_id) chosen from a clarification
     button. It PINS the resolution, so the same ambiguity cannot recur on the
     re-run and the pilot is never asked the same question twice."""
     """All heavy lifting; runs after the 200 ack. Never raises to the caller."""
     rec = {"intent": None, "icao": None, "path": "unknown",
            "similarity": None, "charts": 0, "qid": uuid.uuid4().hex[:12]}
+    _replies: list = []
+    _replies_token = _REPLIES.set(_replies)   # audit trail: what this question was told
     kb = feedback_kb(rec["qid"])   # 👍/👎 buttons
+    if alt_button:                 # "Did you mean ...?" (disambiguate.py), own row
+        kb["inline_keyboard"].append([alt_button])
 
     async def send_info(text_: str) -> None:
         """Any INFORMATIONAL reply (answer, refusal, abstention, mapping, facts,
@@ -597,6 +766,30 @@ async def process(chat_id: int, text: str, force_scope=None) -> None:
         # aerodrome once, and every later question then inherited it
         # ("Using your last aerodrome, Abuja"). A pilot needs a way out that
         # does not depend on knowing why.
+        # Privacy (audit item, 2026-10-27). Neither request is itself logged.
+        if cmd == "/privacy":
+            rec["path"], rec["skip_log"] = "privacy", True
+            await send_message(chat_id, config.privacy_notice())
+            return
+        if cmd in ("/deletemydata", "/delete_my_data"):
+            rec["path"], rec["skip_log"] = "erasure", True
+            ctx_ok = await asyncio.to_thread(memory.clear, chat_id)
+            try:
+                n = await asyncio.to_thread(observability.delete_chat_logs, chat_id)
+            except Exception:  # noqa: BLE001 — surface, never claim success
+                log.exception("erasure failed")
+                await send_message(chat_id, "I couldn't delete your records just now. "
+                                            "Please try again shortly.")
+                return
+            if n is None:
+                body = ("Done. Your logged questions are not linked to your Telegram "
+                        "ID, so there was nothing to delete against it.")
+            else:
+                body = f"Done. I deleted {n} logged question(s) linked to your Telegram ID."
+            if not ctx_ok:
+                body += " (I couldn't clear the aerodrome I was remembering; it expires on its own.)"
+            await send_message(chat_id, body)
+            return
         if cmd in ("/reset", "/clear", "/forget"):
             rec["path"] = "reset"
             ok = await asyncio.to_thread(memory.clear, chat_id)
@@ -641,7 +834,12 @@ async def process(chat_id: int, text: str, force_scope=None) -> None:
                                           runway, send_info)
                 return
 
-        # 1) extract (sync SDK -> threadpool)
+        # 1) extract (sync SDK -> threadpool). The double-meaning check is its
+        #    own short model call (disambiguate.py) and runs at the same time,
+        #    so it adds no wait. Skipped for a rewritten question (default
+        #    reading or a "Did you mean" tap): that wording has one meaning.
+        _amb = (None if from_choice else
+                asyncio.create_task(asyncio.to_thread(disambiguate.pick, text)))
         ex = await asyncio.to_thread(extract_query_parameters, text)
         if ex is None:
             rec["path"] = "error"
@@ -691,6 +889,43 @@ async def process(chat_id: int, text: str, force_scope=None) -> None:
             rec["path"] = "out_of_scope"
             await send_info(scope_refusal.out_of_scope(ex))
             return
+
+        # TWO REAL READINGS -> ANSWER THE USUAL ONE, OFFER THE OTHER.
+        # disambiguate.pick (started alongside extraction) says whether this is
+        # one of six known bare questions ("Sokoto approach", "minima for X",
+        # "clearance at X", "lighting at X", "taxiing at X", "charges at X").
+        # If so, the DEFAULT reading's rewritten question is answered through
+        # this same pipeline at once, with one "Did you mean ...?" button under
+        # the answer for the other reading — the pilot never waits on a choice
+        # (Obiora, 2026-10-26, option B). The button is left off when the AIP
+        # has nothing for the alternative at this aerodrome.
+        # Placed after the live and out-of-scope refusals (never a choice) and
+        # before every answering route, including charges.
+        # At a heliport "Soku approach" is answered as typed (Obiora,
+        # 2026-10-27): disambiguate.applies_here.
+        if _amb is not None:
+            _pick = await _amb
+            icao = None
+            if _pick:
+                family, place = _pick
+                if ex.icao_code in resolver.VALID_ICAO:
+                    icao = ex.icao_code
+                else:
+                    _hits = resolver.match_name(ex.aerodrome_name or place) or set()
+                    icao = next(iter(_hits)) if len(_hits) == 1 else None
+                if not await asyncio.to_thread(disambiguate.applies_here, family, icao):
+                    _pick = None
+            if _pick:
+                has_alt = await asyncio.to_thread(disambiguate.alternative_exists,
+                                                  family, icao)
+                rec["path"] = f"ambiguous:{family}"
+                rec["skip_log"] = True        # the default answer logs this question
+                await process(chat_id, disambiguate.default_question(family, place),
+                              from_choice=True,
+                              alt_button=(disambiguate.alt_button(family, place, icao)
+                                          if has_alt else None),
+                              log_as=f"[default:{family}] {text}")
+                return
 
         # PUBLISHED CHARGES (GEN 4) — fetched BY SECTION and shown VERBATIM.
         # A fee schedule is never left to vector search and synthesis: GEN 4.1
@@ -758,40 +993,11 @@ async def process(chat_id: int, text: str, force_scope=None) -> None:
         # lagos ctr" returned ENR 3.1 at 59% and "what is the lateral limit
         # for maiduguri ctr" returned ENR 3.1 at 54% — while DNMM's and
         # DNMA's own AD 2.17 held the exact answers.
-        if res.is_national and res.reference == "AIRSPACE":
-            _sub = synthesize._normalise_subsection(getattr(ex, "ad2_subsection", None))
-            _kw = subsection_router.detect_subsection(follow_query or text)
-            if _sub or _kw:
-                # Prefer what the LLM extracted, but fall back to scanning the
-                # RAW QUERY for any known aerodrome name or alias. Depending on
-                # ex.aerodrome_name alone is fragile: for "lagos control zone"
-                # the extractor can read the whole phrase as an airspace NAME
-                # and leave aerodrome_name null, which silently disabled this
-                # redirect and sent the query to ENR 1.1 at 63%.
-                _hint = res.aerodrome_hint or ex.aerodrome_name
-                _scan_icao = None
-                if not _hint:
-                    # match_name() returns ICAO CODES, so feed it back as
-                    # icao_code — assigning it to aerodrome_name would fail,
-                    # since 'DNMM' is not an alias of itself.
-                    _scan = resolver.match_name(follow_query or text)
-                    if len(_scan) == 1:
-                        _scan_icao = next(iter(_scan))
-                if _hint or _scan_icao:
-                    _ex2 = ex.model_copy() if hasattr(ex, "model_copy") else copy.copy(ex)
-                    _ex2.intent = "aerodrome_fact"
-                    if _scan_icao:
-                        _ex2.icao_code = _scan_icao
-                        _ex2.aerodrome_name = None
-                    else:
-                        _ex2.aerodrome_name = _hint
-                    _redirect = await asyncio.to_thread(resolver.resolve, _ex2)
-                    if _redirect.icao:
-                        log.info("airspace query is about %s's own %s -> %s",
-                                 _hint or _scan_icao, _sub or _kw, _redirect.icao)
-                        res = _redirect
-                        rec["icao"] = res.icao
-
+        _redirect = await asyncio.to_thread(_airspace_redirect, ex, res,
+                                            follow_query or text)
+        if _redirect is not None:
+            res = _redirect
+            rec["icao"] = res.icao
         if force_scope:
             _k, _sid = force_scope
             if _k == "AD":
@@ -1319,6 +1525,15 @@ async def process(chat_id: int, text: str, force_scope=None) -> None:
                     get_charts_smart, chart_icao, term, ex.runway or "")
             await send_charts(chat_id, charts[: config.MAX_CHARTS], requested_runway=ex.runway)
 
+    except DataUnavailable:
+        # The database could not be read even after retrying (2026-11-09).
+        # Say so plainly — never let a failed read look like "not published".
+        rec["path"] = "data_unavailable"
+        log.exception("process: AIP database unavailable")
+        try:
+            await send_message(chat_id, data_unavailable())
+        except Exception:  # noqa: BLE001
+            log.exception("failed to send data-unavailable message")
     except Exception:  # noqa: BLE001
         rec["path"] = "error"
         log.exception("process failed")
@@ -1328,9 +1543,13 @@ async def process(chat_id: int, text: str, force_scope=None) -> None:
             log.exception("failed to send error message")
     finally:
         try:
-            await asyncio.to_thread(
-                observability.log_query, chat_id=chat_id, query=text,
-                intent=rec["intent"], icao=rec["icao"], path=rec["path"],
-                similarity=rec["similarity"], charts=rec["charts"], qid=rec["qid"])
+            if not rec.get("skip_log"):
+                await asyncio.to_thread(
+                    observability.log_query, chat_id=chat_id, query=log_as or text,
+                    intent=rec["intent"], icao=rec["icao"], path=rec["path"],
+                    similarity=rec["similarity"], charts=rec["charts"], qid=rec["qid"],
+                    reply="\n\n".join(_replies))
         except Exception:  # noqa: BLE001
             log.exception("query log failed")
+        finally:
+            _REPLIES.reset(_replies_token)

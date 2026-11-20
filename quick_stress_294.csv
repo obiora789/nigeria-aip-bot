@@ -1,0 +1,295 @@
+id,icao,subsection,question,expected_behaviour
+S14533,DNPO,AD 2.5,what is the bank and post office for Port Harcuort,answer
+S03976,DNMM,AD 2.12,Lagos dimensions,clarify
+S05861,DNCA,AD 2.4,what is the repair facilities for visiting aircraft for calabar,answer
+S04676,DNMN,AD 2.5,what is the hotels for Minna,answer
+S00556,DNAA,AD 2.4,what is the cargo-hnadling facilities for Abuja,answer
+S07199,DNDS,AD 2.11,landing foreacst at Dutse,answer
+S04931,DNFD,AD 2.3,security at Forcados,answer
+S13429,DNAS,AD 2.15,anemometer at Asaba,answer
+S14555,DNPO,AD 2.8,Port Harcourt remarks,clarify
+S10943,DNKT,AD 2.11,ats units at katsina,answer
+S05802,DNCA,AD 2.2,geoid undultaion at Calabar,answer
+S11080,DNKT,AD 2.20,airport regulations at Katsina,answer
+S08406,DNET,AD 2.1,aerodrome name at Ado Ekiti,answer
+S07166,DNBE,AD 2.5,what is tourist office Benin,answer
+S02355,DNKT,AD 2.4,de-icing facilities at Katsina,answer
+S07138,DNKT,AD 2.1,aerodrome name at Katsina,answer
+S13802,DNES,AD 2.8,what is altimeter checkpoint Escravos,answer
+S03943,DNBC,AD 2.10,obstacle at Bauchi 2.10.1 In approach and take-off areas OB,answer
+S11989,DNDS,AD 2.9,"use of aircraft stand id signs, twy guide lines and visual docking/parking guidance system of aircraft stands at Dutse",answer
+S13054,DNMK,AD 2.8,Makurdi altimeter checkpoint?,answer
+S02851,DNPO,AD 2.22,what is letdown procedure Port Harcourt,answer
+S02213,DNBY,AD 2.7,Amassoma clearing equimpent,answer
+S06756,DNAI,AD 2.19,Uyo hours operation,answer
+S01206,DNAS,AD 2.13,tora for rwy 29 at asaba,answer
+S03056,DNMA,AD 2.5,what is the tourist office for Maiduguri,answer
+S09970,DNKA,AD 2.15,Kaduna ldi anemoemter,answer
+S10405,DNMN,AD 2.19,what is the llz frequency at minna,answer
+S09643,DNAK,AD 2.12,Akure dimensions,answer
+S13099,DNES,AD 2.12,Escravos dimensions,answer
+S08451,DNKS,AD 2.9,what is the other runway protection measures for Kashimbila?,answer
+S02680,DNGO,AD 2.10,what is the obstacle for Gombe,clarify
+S09944,DNMN,AD 2.4,what is the de-icing facilities for Minna,answer
+S02387,DNKN,AD 2.15,Kano twy lighitng,answer
+S06906,DNSO,AD 2.18,what is the TWR frequency at Sokoto,answer
+S10853,DNIL,AD 2.3,Ilorin met brieifng office,answer
+S14786,DNMA,AD 2.3,health and sanitation at Maiduguri?,answer
+S02806,DNPO,AD 2.23,what is the additional information for Port Harcourt,answer
+S01099,DNES,AD 2.22,transition from ugnon Escravos,answer
+S15449,DNMN,AD 2.3,what is the met briefing office for Minna?,answer
+S05477,DNAA,AD 2.23,what is additional information Abuja,answer
+S09136,DNJO,AD 2.9,jos rwy and twy markings and lgt,answer
+S02814,DNIM,AD 2.20,spillage at Owerri,answer
+S11333,DNCA,AD 2.16,Calabar lighting,answer
+S03134,DNIL,AD 2.2,variation for Ilorin,answer
+S06612,DNBE,AD 2.13,remarks at Benin RWY 05,answer
+S12495,DNKA,AD 2.2,traffic type at kaduna,answer
+S13798,DNES,AD 2.6,removal capability at Escravos,answer
+S06677,DNIL,AD 2.23,Ilorin additional information,clarify
+S00747,DNBY,AD 2.18,what is the TWR frequency at Amassoma,answer
+S04143,DNJO,AD 2.2,magnetic varitaion at Jos,answer
+S00708,DNOG,AD 2.1,city at ogun,answer
+S02580,DNMK,AD 2.15,what is the twy lighitng for Makurdi,answer
+S02697,DNSU,AD 2.19,what is the longitude for Osubi,clarify
+S12080,DNAS,AD 2.10,what is the obstacle for Asaba,clarify
+S05782,DNAS,AD 2.3,ais briefing office at Asaba,answer
+S13818,DNFB,AD 2.6,remarks at Bonny?,clarify
+S11334,DNCA,AD 2.16,what is the lighting for Calabar,answer
+S01849,DNCA,AD 2.12,what is the dimensions for Calabar,answer
+S12302,DNBB,AD 2.23,Bebi additional information?,answer
+S03654,DNSO,AD 2.20,what is the parking area for small aircraft (general aviation) for Sokoto,answer
+S09300,DNZA,AD 2.3,health and sanitation at Zaria?,answer
+S03197,DNIL,AD 2.15,what is the secondary power for Ilorin?,answer
+S13929,DNAA,AD 2.22,abuja oxoru 1n (oxor1n),answer
+S04350,DNKN,AD 2.22,approach radar contrlolers are expected to:- at Kano 2.22.4.7.3,answer
+S01810,DNKN,AD 2.22,whats Kanos transition from enger,answer
+S05879,DNCA,AD 2.6,Calabar rff category,answer
+S04974,DNBY,AD 2.1,Amassoma aerodrome name?,answer
+S00815,DNBY,AD 2.19,Amassoma hours of operation?,answer
+S13053,DNMK,AD 2.8,altimeter checkpoint at Makurdi,answer
+S02807,DNPO,AD 2.23,Port Harcourt additional information,clarify
+S09259,DNET,AD 2.5,what is the bank and post office for Ado Ekiti,answer
+S06374,DNAK,AD 2.2,what is the arp site description for Akure,answer
+S13122,DNZA,AD 2.8,altimeter checkopint at Zaria,answer
+S01137,DNCA,AD 2.19,operation for Calabar,answer
+S07729,DNBY,AD 2.5,Amassoma restaurants,answer
+S15321,DNMN,AD 2.12,what is the dimensions for Minna,answer
+S06107,DNIL,AD 2.6,rescue equipment at Ilorin,answer
+S11957,DNDS,AD 2.4,what is the fuel and oil types for Dutse,answer
+S13517,DNMM,AD 2.18,what is the acc frequency at lagos,answer
+S12002,DNOG,AD 2.9,"use of aircraft stand id signs, twy guide lines and visual dockingp/arking guidance system of aircraft stands at Ogun",answer
+S07605,DNKA,AD 2.15,Kaduna abn ibn,answer
+S08867,DNEN,AD 2.18,frequency at Enugu,clarify
+S08221,DNES,AD 2.3,what is the ad administration for Escravos?,answer
+S11392,DNIM,AD 2.18,what is the TWR frequency at Owerri,answer
+S01205,DNCA,AD 2.20,conditions for Calabar,answer
+S03072,DNFB,AD 2.13,tora for RWY 22 at Bonny,answer
+S08347,DNFB,AD 2.12,dimensions at Bonny RWY 04/22,answer
+S06532,DNYO,AD 2.8,Yola taxiway info,answer
+S07906,DNSU,AD 2.15,what is the twy lighting for Osubi,answer
+S04662,DNIL,AD 2.18,what is the TWR frequency at Ilorin,answer
+S00319,DNBK,AD 2.8,Birnin Kebbi altimeter checkpoint?,answer
+S14224,DNGO,AD 2.20,helicpoter traffic - limitation at Gombe,answer
+S00032,DNFD,AD 2.13,Forcados remarks,clarify
+S12498,DNSO,AD 2.1,name at Sokoto,answer
+S01117,DNAN,AD 2.2,arp lat at Umueri,answer
+S12028,DNAS,AD 2.17,desigantion and lateral limits at Asaba,answer
+S03587,DNMM,AD 2.7,clearance priorities at Lagos,answer
+S04793,DNMK,AD 2.11,documentation at Makurdi,answer
+S14644,DNKS,AD 2.8,kashimbila apron info,answer
+S07743,DNEN,AD 2.1,city at Enguu,answer
+S00958,DNOG,AD 2.20,what is the school and training flights - techincal test flights- use of rwys for Ogun,answer
+S00984,DNGO,AD 2.2,Gombe refeernce temp,answer
+S03223,DNMM,AD 2.17,designation and lateral limits at Lagos,answer
+S13309,DNMK,AD 2.1,makurdi aerodrome name,answer
+S04874,DNAI,AD 2.9,"use of aircraft stand id signs, twy guide lines and visual docking/parking guidance system of acft stands at uyo",answer
+S02399,DNPO,AD 2.19,what is the GP/DME frequency at Port Harcourt?,answer
+S02927,DNAS,AD 2.9,what is the remarks for Asaba,clarify
+S06750,DNZA,AD 2.20,what is fuel spillage Zaria,answer
+S03447,DNGO,AD 2.19,what is the VOR/DME frequency at Gombe?,answer
+S10838,DNMN,AD 2.22,what is the runway in use for Minna,answer
+S10158,DNOG,AD 2.12,dimensions at Ogun RWY 05/23,answer
+S10510,DNAS,AD 2.17,what are the vertical limits for Asaba,answer
+S01051,DNES,AD 2.10,Escravos aerodrome obstacles?,answer
+S06109,DNIL,AD 2.6,Ilorin rescue equipment?,answer
+S03937,DNAA,AD 2.3,abuja ats reporting office (aro),answer
+S13563,DNBB,AD 2.11,what is the landing forecast for Bebi?,answer
+S06963,DNAA,AD 2.17,Abuja hours of applicbaility (or activation),answer
+S07093,DNFB,AD 2.4,what is the hangar space for visiting aircraft for Bonny,answer
+S03843,DNBC,AD 2.13,toda at Bauhci RWY 35,answer
+S05596,DNOG,AD 2.7,what is the clearance priorities for Ogun,answer
+S11461,DNIM,AD 2.6,removal capability at Owerri,answer
+S01425,DNKT,AD 2.17,whats Katsinas transtiion altitude,answer
+S06858,DNSO,AD 2.11,associated met office at Sokoto,answer
+S13335,DNKT,AD 2.20,what is the parking area for small aircraft (general aviation) for Katsina,answer
+S11281,DNCA,AD 2.16,what is the bearing for Calabar,answer
+S00142,DNAI,AD 2.4,Uyo repair facilities visiting aircraft,answer
+S00908,DNCA,AD 2.16,dimensions surface strength at Calabar,answer
+S10239,DNOG,AD 2.3,what is the met briefing office for ogun,answer
+S14752,DNMM,AD 2.22,what is the atc clearances for vfr flights for Lagos,answer
+S05016,DNSU,AD 2.22,what is waypoint list Osubi,answer
+S11966,DNOG,AD 2.20,what is the taxiing - limitations for Ogun,answer
+S00416,DNFD,AD 2.8,taxiway info at Forcados,answer
+S07082,DNCA,AD 2.9,lgt for Calabar,answer
+S11065,DNEN,AD 2.15,what is ldi anemometer Enugu,answer
+S05178,DNBY,AD 2.19,longitude at Amassoma NDB,answer
+S13289,DNES,AD 2.7,clearance priorities at Escravos,answer
+S06492,DNKN,AD 2.22,kibta 1s (kibt1s),answer
+S04964,DNAS,AD 2.4,Asaba hangar space for visiting aircraft,answer
+S03708,DNBB,AD 2.2,what is the arp lat for bebi,answer
+S08527,DNZA,AD 2.18,what is the TWR frequency at Zaria,answer
+S11933,DNDS,AD 2.2,Dutse direction distance from city,answer
+S05686,DNFB,AD 2.6,what is the rescue equipment for Bonny,answer
+S00881,DNKA,AD 2.19,hours of operation at Kaduna VOR/DME,answer
+S06104,DNIL,AD 2.5,Ilorin medical facilities,answer
+S06508,DNYO,AD 2.7,clearance priorities at Yola?,answer
+S10802,DNKS,AD 2.18,what is the twr frequency at kashimbila,answer
+S06027,DNBE,AD 2.23,additional information at Benin,answer
+S10811,DNMN,AD 2.10,obstacle at Minna 2 | HILL |,answer
+S08486,DNMA,AD 2.11,what is the briefing consultation for Maiduguri?,answer
+S07757,DNGO,AD 2.22,Gombe rnp apch,answer
+S10556,DNAS,AD 2.6,rff category raw at Asaba,answer
+S07304,DNDS,AD 2.12,what is the dimensions for dutse,answer
+S13457,DNMM,AD 2.13,asda at lagos rwy 18l,answer
+S06137,DNSU,AD 2.7,Osubi clearing equipment?,answer
+S00548,DNKS,AD 2.3,met briefing office at Kashimbila,answer
+S11623,DNAN,AD 2.11,what is the charts and info for Umueri?,answer
+S00128,DNKT,AD 2.9,remarks at Katsina,clarify
+S15160,DNOG,AD 2.18,what is FIS frequency at Ogun,answer
+S07958,DNSU,AD 2.19,Osubi latitude,clarify
+S05776,DNSO,AD 2.1,what is the city for Sokoto,answer
+S09730,DNAK,AD 2.5,medical facilities at Akure,answer
+S01795,DNGO,AD 2.9,Gombe stop bars,answer
+S02178,DNMA,AD 2.7,clearance priorities at maiduguri,answer
+S04634,DNIL,AD 2.12,ilorin dimensions,answer
+S13189,DNES,AD 2.17,Escravos transition altitude,answer
+S01360,DNFB,AD 2.23,additional information at Bonny?,clarify
+S09501,DNKN,AD 2.22,"what is unless otherwise coordinated, or specified by lette r Kano",answer
+S03577,DNSO,AD 2.13,what is the toda for Sokoto?,answer
+S04357,DNSU,AD 2.23,osubi additional information,clarify
+S11374,DNAI,AD 2.6,what is the rescue equipment for Uyo,answer
+S13262,DNET,AD 2.4,what is the de-icing facilities for Ado Ekiti,answer
+S13206,DNES,AD 2.17,remarks at Escrvaos,answer
+S13416,DNET,AD 2.12,what is the dimensions for Ado Ekiti,answer
+S10539,DNAS,AD 2.5,what is the tourist office for Asaba,answer
+S10515,DNAS,AD 2.18,what is the ATIS frequency at Asaba,answer
+S10204,DNOG,AD 2.18,what is the ATIS frequency at Ogun,answer
+S05570,DNOG,AD 2.5,Ogun bank and post offcie,answer
+S00019,DNMN,AD 2.8,minna apron info,answer
+S04219,DNMA,AD 2.8,checkpoint at Maiduguri,answer
+S01913,DNCA,AD 2.17,vertical limits at Calabar?,answer
+S01418,DNDS,AD 2.4,facilities for Dutse,answer
+S05843,DNSU,AD 2.1,what is the aerodrome name for Osubi,answer
+S07500,DNBY,AD 2.17,what is the ats unit call sign/language(s) for Amassoma?,answer
+S08739,DNIM,AD 2.10,owerri obstacle,clarify
+S15131,DNZA,AD 2.13,toda at Zaria RWY 23,answer
+S13837,DNES,AD 2.9,markings and lgt,clarify
+S07071,DNBE,AD 2.7,clearance priorities at Benin,answer
+S01477,DNBY,AD 2.10,what is the obstacle for Amassoma?,clarify
+S03036,DNKT,AD 2.10,obstacle at katsina rwy 05/apch rwy 23/tkof | nitel mast ele,answer
+S09265,DNZA,AD 2.20,what is the parking area for small aircraft (general aviation) for Zaria?,answer
+S02173,DNCA,AD 2.16,what is the coordinates for Calabar,answer
+S03923,DNAA,AD 2.2,what is the arp lon for abuja,answer
+S00224,DNAA,AD 2.20,Abuja taxiing to and from stands?,answer
+S12868,DNKN,AD 2.12,what is the dimensions for kano,clarify
+S05405,DNFB,AD 2.11,Bonny flight documentation,answer
+S01614,DNOG,AD 2.22,takeoff and landing,clarify
+S09914,DNCA,AD 2.23,Calabar additional information,clarify
+S10548,DNAS,AD 2.6,what is the rff category for Asaba,answer
+S07576,DNFB,AD 2.4,Bonny repair facilities visiting aircraft,answer
+S07750,DNFB,AD 2.6,what is the removal capability for Bonny,answer
+S08313,DNDS,AD 2.17,designation and lateral limits at Dutse,answer
+S06184,DNBK,AD 2.19,Birnin Kebbi hours operation,answer
+S12599,DNKA,AD 2.22,what is the letdown procedure for Kaduna?,answer
+S00014,DNKN,AD 2.5,medical facilities at Kano?,answer
+S02128,DNYO,AD 2.5,restaurants at Yola,answer
+S00728,DNBY,AD 2.11,what is the suppleemntary equipment for Amassoma,answer
+S00904,DNCA,AD 2.16,what is the elevtaion raw of Calabar,answer
+S14237,DNGO,AD 2.3,Gombe fuelling,answer
+S00382,DNFD,AD 2.6,Forcados rescue equimpent,answer
+S08413,DNDS,AD 2.18,what is the TWR frequency at Dutse?,answer
+S14771,DNMA,AD 2.18,what is TWR frequency at Maiduguri,answer
+S09137,DNJO,AD 2.9,what is the rwy and twy markings and lgt for jos,answer
+S14660,DNKT,AD 2.10,katsina obstacle,clarify
+S01537,DNBY,AD 2.10,obstacle at Amassoma 6 | Tree |,answer
+S09483,DNKA,AD 2.7,Kaduna clearing equipment,answer
+S03116,DNMM,AD 2.15,ibn at Lagos,answer
+S00909,DNCA,AD 2.16,what is the dimenisons surface strength for Calabar,answer
+S06806,DNKN,AD 2.4,what is the fuelling facilities and capacity for Kano,answer
+S04107,DNMA,AD 2.17,what is the ats unit call sign/language(s) for Maiduguri,answer
+S07294,DNKT,AD 2.15,katsina secondary power,answer
+S13618,DNMM,AD 2.10,what is the obstacle for Lagos,answer
+S14596,DNSO,AD 2.23,what is the additional inforamtion for Sokoto,answer
+S04443,DNAN,AD 2.19,hours of operation at Umueri LLZ?,answer
+S10490,DNSO,AD 2.4,sokoto hangar space for visiting aircraft,answer
+S11985,DNAS,AD 2.12,dimensions at Asaba RWY 11/29,answer
+S11067,DNEN,AD 2.15,ldi anemoemter at Enugu,answer
+S04846,DNMA,AD 2.1,city at Maiduguri,answer
+S04016,DNKS,AD 2.13,kashimbila lda,answer
+S07455,DNKT,AD 2.7,Katsina clearing equipment,answer
+S01048,DNCA,AD 2.18,what is the TWR frequency at Calabar,answer
+S00807,DNAK,AD 2.11,what is the ats units for Akure?,answer
+S10583,DNZA,AD 2.15,what is the ldi anemometer for Zaria?,answer
+S12805,DNKN,AD 2.11,Kano flight documentation,answer
+S03890,DNBC,AD 2.9,Bauchi rwy markings and lgt,answer
+S00095,DNKT,AD 2.9,Katisna stop bars,answer
+S00906,DNCA,AD 2.16,declared distnaces at Calabar,answer
+S10643,DNPO,AD 2.15,what is the secondary power for Port Harcourt,answer
+S00911,DNDS,AD 2.7,Dutse clearing equipment,answer
+S13786,DNKT,AD 2.7,clearance priorities at katsina,answer
+S14273,DNOG,AD 2.9,stop bars at Ogun?,answer
+S09485,DNKA,AD 2.7,what is the clearing equipment for Kaduna?,answer
+S03963,DNKS,AD 2.1,Kashibmila aerodrome name,answer
+S04335,DNAK,AD 2.8,checkpoint for Akure,answer
+S00922,DNKA,AD 2.20,Kaduna taxiing to and from stands,answer
+S13131,DNAK,AD 2.3,Akure ais briefing office?,answer
+S12634,DNBE,AD 2.6,what is the rff category raw for Benin,answer
+S09398,DNZA,AD 2.10,what is the obstacle for Zaria?,clarify
+S03751,DNMM,AD 2.23,additional information at Lagos?,answer
+S11283,DNCA,AD 2.16,calabar bearing,answer
+S13526,DNET,AD 2.3,de-icing at Ado Ekiti?,answer
+S00910,DNCA,AD 2.16,calabar dimensions surface strength,answer
+S02172,DNCA,AD 2.16,coordinates at Calabar,answer
+S12873,DNKN,AD 2.13,what is the asda for Kano,clarify
+S00914,DNFB,AD 2.11,bonny additional information,clarify
+S05001,DNBY,AD 2.11,Amassoma ats units,answer
+S03578,DNIB,AD 2.1,what is the city for Ibadan,answer
+S01484,DNBB,AD 2.2,what is the magnetic varitaion for Bebi,answer
+S03752,DNMM,AD 2.23,Lagos additional inforamtion,answer
+S13739,DNBC,AD 2.17,what is the vertical limits for Bauchi,answer
+S11282,DNCA,AD 2.16,bearing at Calabar,answer
+S14135,DNFD,AD 2.23,additional information at Forcados,answer
+S06200,DNBK,AD 2.4,what is the hangar space for visiitng aircraft for Birnin Kebbi,answer
+S03892,DNSO,AD 2.5,Sokoto hotels?,answer
+S00389,DNFD,AD 2.7,remarks at Forcados?,clarify
+S07033,DNSO,AD 2.8,Sokoto altimeter checkpoint,answer
+S08305,DNES,AD 2.23,additional inforamtion at Escravos,answer
+S08510,DNYO,AD 2.20,Yola fuel spillage?,answer
+S09225,DNAA,AD 2.19,hours of opertaion at Abuja VOR/DME,answer
+S02041,DNGO,AD 2.17,limits at Gombe,answer
+S10887,DNSO,AD 2.10,what is the obstacle for sokoto,clarify
+S14343,DNOG,AD 2.10,ogun obstacle,clarify
+S14420,DNPO,AD 2.1,what is the aerodrome name for Port Harcourt,answer
+S04144,DNJO,AD 2.2,Jos magnetic varitaion,answer
+S07288,DNKT,AD 2.15,Katisna remarks,answer
+S14704,DNAK,AD 2.13,remarks at Akure RWY 21?,answer
+S09806,DNAK,AD 2.22,transition from usnep Akure?,answer
+S12076,DNAS,AD 2.8,altimeter checkpoint at Asaba,answer
+S02324,DNSU,AD 2.13,lda for Osubi,answer
+S05747,DNCA,AD 2.19,hours of operation at calabar vor/dme,answer
+S11255,DNCA,AD 2.13,what is the toda for Calabar,answer
+S14537,DNPO,AD 2.5,Harcourt tourist office,answer
+S02471,DNIB,AD 2.2,reference temp at Ibadan,answer
+S07103,DNKT,AD 2.1,Katsina city,answer
+S04853,DNMA,AD 2.11,units at Maiduguri,answer
+S11424,DNCA,AD 2.3,fuelling at Calabar?,answer
+S13799,DNES,AD 2.6,what is the removal capability for Escravos,answer
+S00314,DNSU,AD 2.12,what is dimensions Osubi,answer
+S00907,DNCA,AD 2.16,Calabar declared distances,answer
+S06020,DNIL,AD 2.2,what is the operator info for Ilorin,answer
+S07559,DNAN,AD 2.20,regulations at Umueri,answer
+S02052,DNGO,AD 2.17,gombe ats unit call sign/language(s),answer
+S06742,DNAI,AD 2.13,lda at Uyo RWY 03,answer
+S00902,DNCA,AD 2.16,calabar elevation raw,answer
+S01039,DNAN,AD 2.12,dimensions at Umueri RWY 06/24?,answer

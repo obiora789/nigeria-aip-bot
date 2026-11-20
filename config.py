@@ -15,7 +15,15 @@ except ImportError:                   # if python-dotenv isn't installed, fall b
 
 # --- OpenAI / models -------------------------------------------------------
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
-EXTRACTION_MODEL = os.getenv("EXTRACTION_MODEL", "gpt-4o-mini")
+# PINNED TO A DATED SNAPSHOT (audit item, 2026-10-27). The bare alias
+# "gpt-4o-mini" lets OpenAI change the model under Vannie with no code change,
+# so an answer could not be reproduced or explained later. Every prompt and
+# every measurement (run_all_checks.sh, quick_check.py) was made on this
+# snapshot. Moving to another model is a deliberate change: change it here,
+# then re-run the full checks before deploying.
+# OpenAI shuts this snapshot down on 2027-01-14 (announced 2026-10-14;
+# recommended replacement gpt-6-luna) — see MODEL_SHUTDOWN below.
+EXTRACTION_MODEL = os.getenv("EXTRACTION_MODEL", "gpt-4o-mini-2024-07-18")
 # MUST match the model that built your stored vectors (1536-dim).
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 
@@ -61,6 +69,52 @@ DASHBOARD_TOKEN = os.getenv("DASHBOARD_TOKEN", "")   # empty -> /dashboard disab
 # warns once at import rather than failing the boot (query logging is
 # non-essential; the bot must still fly).
 CHAT_HASH_PEPPER = os.getenv("CHAT_HASH_PEPPER", "")
+
+# --- Audit trail, retention, privacy (audit items, 2026-10-27) ----------------
+# Published OpenAI shutdown dates for the models above. Startup and /health warn
+# from MODEL_SHUTDOWN_WARN_DAYS before the date, so the move is planned, not a
+# surprise outage. Source: developers.openai.com/api/docs/deprecations.
+MODEL_SHUTDOWN = {
+    "gpt-4o-mini": "2027-01-14",
+    "gpt-4o-mini-2024-07-18": "2027-01-14",
+}
+MODEL_SHUTDOWN_WARN_DAYS = int(os.getenv("MODEL_SHUTDOWN_WARN_DAYS", "90"))
+
+# Which code answered: Render sets RENDER_GIT_COMMIT on every deploy.
+APP_VERSION = (os.getenv("RENDER_GIT_COMMIT") or os.getenv("APP_VERSION") or "")[:12]
+
+# Query-log rows (questions, answers, feedback) are deleted automatically after
+# this many days; 0 turns the automatic deletion off. Expired conversation
+# context is deleted on the same daily pass.
+LOG_RETENTION_DAYS = int(os.getenv("LOG_RETENTION_DAYS", "180"))
+RETENTION_INTERVAL_SEC = int(os.getenv("RETENTION_INTERVAL_SEC", "86400"))
+
+# Who pilots contact about their data (an email address). Shown in /privacy.
+PRIVACY_CONTACT = os.getenv("PRIVACY_CONTACT", "")
+
+# The webhook REFUSES every update when TELEGRAM_WEBHOOK_SECRET is unset.
+# Local development only: ALLOW_INSECURE_WEBHOOK=1 lets it through.
+ALLOW_INSECURE_WEBHOOK = os.getenv("ALLOW_INSECURE_WEBHOOK", "0") == "1"
+
+
+def model_shutdown_warnings(today=None) -> list:
+    """One line per configured model whose published shutdown is near or past."""
+    import datetime as _dt
+    today = today or _dt.date.today()
+    out = []
+    for role, name in (("extraction/judge", EXTRACTION_MODEL),
+                       ("synthesis", SYNTHESIS_MODEL)):
+        date = MODEL_SHUTDOWN.get(name)
+        if not date:
+            continue
+        days = (_dt.date.fromisoformat(date) - today).days
+        if days < 0:
+            out.append(f"{role} model {name} was shut down by OpenAI on {date}")
+        elif days <= MODEL_SHUTDOWN_WARN_DAYS:
+            out.append(f"{role} model {name} is shut down by OpenAI on {date} "
+                       f"({days} days) — move to a new model and re-run the full checks")
+    return out
+
 
 # --- Alerting: ping the operator when a credential/infra check degrades --------
 ALERT_ENABLED = os.getenv("ALERT_ENABLED", "1") == "1"
@@ -110,7 +164,53 @@ FACTS_MAX = int(os.getenv("FACTS_MAX", "6"))
 SEMANTIC_SUBSECTION_ENABLED = os.getenv("SEMANTIC_SUBSECTION_ENABLED", "0") == "1"
 SEMANTIC_SUBSECTION_MIN_SIM = float(os.getenv("SEMANTIC_SUBSECTION_MIN_SIM", "0.35"))
 SEMANTIC_SUBSECTION_MARGIN = float(os.getenv("SEMANTIC_SUBSECTION_MARGIN", "0.03"))
-SYNTHESIS_MODEL = os.getenv("SYNTHESIS_MODEL", "gpt-4o-mini")
+SYNTHESIS_MODEL = os.getenv("SYNTHESIS_MODEL", "gpt-4o-mini-2024-07-18")   # pinned: see EXTRACTION_MODEL
+
+# --- Reasoning models (2026-11-07) -------------------------------------------
+# gpt-6-luna (OpenAI's replacement for gpt-4o-mini) and other reasoning models
+# think before answering unless told not to; the default effort is "medium",
+# which adds cost (reasoning tokens bill as output) and delay. They accept
+# temperature ONLY with reasoning_effort "none". Vannie's calls are all
+# temperature 0 with structured outputs, so the closest like-for-like setting
+# is "none". Raise an effort only if measurement shows it pays for itself.
+# Extraction and the double-meaning judge share EXTRACTION_REASONING_EFFORT.
+REASONING_MODEL_PREFIXES = ("gpt-5", "gpt-6", "o1", "o3", "o4")
+REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+REASONING_EFFORT = os.getenv("REASONING_EFFORT", "none")
+EXTRACTION_REASONING_EFFORT = os.getenv("EXTRACTION_REASONING_EFFORT", REASONING_EFFORT)
+SYNTHESIS_REASONING_EFFORT = os.getenv("SYNTHESIS_REASONING_EFFORT", REASONING_EFFORT)
+for _name, _val in (("REASONING_EFFORT", REASONING_EFFORT),
+                    ("EXTRACTION_REASONING_EFFORT", EXTRACTION_REASONING_EFFORT),
+                    ("SYNTHESIS_REASONING_EFFORT", SYNTHESIS_REASONING_EFFORT)):
+    if _val not in REASONING_EFFORTS:
+        raise RuntimeError(f"{_name}={_val!r}: must be one of {', '.join(REASONING_EFFORTS)}")
+
+
+def is_reasoning_model(model) -> bool:
+    return str(model or "").startswith(REASONING_MODEL_PREFIXES)
+
+
+def reasoning_effort_for(model, role: str):
+    """The effort sent for this model and role ('extraction' or 'synthesis'),
+    or None for a model without reasoning (gpt-4o-mini)."""
+    if not is_reasoning_model(model):
+        return None
+    return SYNTHESIS_REASONING_EFFORT if role == "synthesis" else EXTRACTION_REASONING_EFFORT
+
+
+def model_params(model, role: str) -> dict:
+    """Sampling parameters for one chat call, so switching model is a settings
+    change only. gpt-4o-mini: exactly what Vannie always sent (temperature 0).
+    A reasoning model: its effort, plus temperature 0 when the effort is "none"
+    (the only case such models accept it). The effort travels in extra_body, so
+    any openai SDK version sends it."""
+    effort = reasoning_effort_for(model, role)
+    if effort is None:
+        return {"temperature": 0.0}
+    params = {"extra_body": {"reasoning_effort": effort}}
+    if effort == "none":
+        params["temperature"] = 0.0
+    return params
 SYNTHESIS_CONTEXT_CHUNKS = int(os.getenv("SYNTHESIS_CONTEXT_CHUNKS", "15"))
 
 SYNTHESIS_SYSTEM = (
@@ -148,6 +248,13 @@ SYNTHESIS_SYSTEM = (
     "no 'you should'. Do not add a disclaimer (the system adds one)."
 )
 
+# Side-by-side measurement switch for prompts_v2.py. Unset or "v1" keeps the
+# prompt above; "v2" selects the restructured prompt (and synthesize.py
+# then labels each excerpt with its aerodrome as well as its section).
+SYNTHESIS_PROMPT_VERSION = os.getenv("SYNTHESIS_PROMPT", "v1").lower()
+if SYNTHESIS_PROMPT_VERSION == "v2":
+    from prompts_v2 import SYNTHESIS_SYSTEM_V2 as SYNTHESIS_SYSTEM  # noqa: E402
+
 # Hard-filter fallback sets (used to neutralise LLM part/reference misclassification).
 AIP_PARTS = ["AD", "ENR", "GEN"]
 # Real non-ICAO reference_tag values in aip_knowledge_base. Confirm the full set:
@@ -169,7 +276,7 @@ DEDUP_TTL_SEC = int(os.getenv("DEDUP_TTL_SEC", "3600"))   # how long an update_i
 
 # --- Safety copy -----------------------------------------------------------
 DISCLAIMER = (
-    "Reference aid only — NOT an operational source. "
+    "Reference aid only (AI assistant) — NOT an operational source. "
     "Verify against the official AIP and current NOTAMs before flight. "
     "NOTAMs supersede the AIP."
 )
@@ -181,16 +288,27 @@ S8_TERRAIN_CAVEAT = (
     "and current NOTAMs before commencing the approach."
 )
 
+# AI disclosure (audit item, 2026-10-27; EU AI Act Art. 50 from 2026-08-02 for
+# EU users): say plainly that this is an AI system and which provider runs it.
+AI_NOTICE = (
+    "I'm an AI system. OpenAI models read your question and find the right part "
+    "of the stored Nigerian AIP; the values I show are taken from that AIP text, "
+    "but I can still make mistakes."
+)
+
 GREETING = (
-    "Hi, I'm Vannie — a reference assistant for the Nigerian AIP. "
+    "Hi, I'm Vannie — an AI assistant for the Nigerian AIP. "
     "Ask me about an aerodrome's published frequencies, runway data, procedures, "
     "or charts (e.g. \"Lagos tower frequency\" or \"ILS chart for DNAA runway 04\").\n\n"
-    f"{DISCLAIMER}"
+    f"{AI_NOTICE}\n\n"
+    f"{DISCLAIMER}\n"
+    "Send /privacy to see what I store."
 )
 
 HELP = (
-    "Vannie — Nigerian AIP reference assistant.\n"
+    "Vannie — Nigerian AIP reference assistant (AI).\n"
     f"Data: Nigeria AIP · {AIRAC_CYCLE}.\n\n"
+    f"How I work: {AI_NOTICE}\n\n"
     "What I can look up, per aerodrome:\n"
     "• Frequencies — tower, approach, ground, ATIS\n"
     "• Runway data — dimensions, declared distances (TORA/TODA/ASDA/LDA), PCN\n"
@@ -207,7 +325,36 @@ HELP = (
     "anything outside the published Nigerian AIP.\n\n"
     f"{DISCLAIMER}"
     "\nSend /reset any time to clear the aerodrome I am remembering."
+    "\n/privacy — what I store about you · /deletemydata — delete it"
 )
+
+def privacy_notice() -> str:
+    """The /privacy reply. Built at call time so PRIVACY_CONTACT and
+    LOG_RETENTION_DAYS always show their current values. Keep in step with
+    DATA_PROTECTION.md."""
+    keep = (f"deleted automatically after {LOG_RETENTION_DAYS} days"
+            if LOG_RETENTION_DAYS > 0 else "kept until deleted by the operator")
+    lines = [
+        "Privacy — what Vannie stores",
+        "",
+        "• Your question, my answer, the aerodrome and AIP section used, your "
+        "👍/👎, and the time. Your Telegram ID is stored only as a keyed "
+        "one-way code, never as the ID itself.",
+        "• Why: to answer you, and to find and fix wrong answers (safety review).",
+        f"• How long: {keep}. The aerodrome I remember between messages expires "
+        f"after {CONTEXT_TTL_MIN} minutes.",
+        "• Who processes it: OpenAI (USA) receives the text of your question to "
+        "understand it — OpenAI says API data is not used to train its models "
+        "and is kept up to 30 days for abuse monitoring. Supabase stores the "
+        "log; Render runs the service; Telegram carries the messages.",
+        "• Your rights: /deletemydata deletes everything stored against your "
+        "Telegram ID now. You can also ask for a copy, a correction, or "
+        "complain to the Nigeria Data Protection Commission.",
+    ]
+    if PRIVACY_CONTACT:
+        lines.append(f"• Contact: {PRIVACY_CONTACT}")
+    return "\n".join(lines)
+
 
 OUT_OF_SCOPE = (
     "I'm limited to the published Nigerian AIP. I can't help with live weather, "

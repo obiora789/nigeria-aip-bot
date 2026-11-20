@@ -58,8 +58,21 @@ _PROC = re.compile(
 _TABLE_ROW_RE = re.compile(r"\b[A-D]\s+\d{3,4}(?:\s*\(\d{2,4}\))?\s+\d{3,4}\b")
 
 
-def _looks_corrupted(body: str) -> bool:
-    return bool(_TABLE_ROW_RE.search(body)) or bool(re.search(r",\s*$", body.strip()))
+def _looks_corrupted(body: str, raw_tail: str = None) -> bool:
+    """raw_tail: the section text cut and de-junked but NOT yet stripped of its
+    final full stop. The dangling-comma test must read that, or an AIP typo
+    such as DNKN RWY 06's "(14000 ft),." — a complete sentence — looks cut off
+    once _clean() removes the full stop."""
+    tail = body if raw_tail is None else raw_tail
+    tail = tail.strip().rstrip("\u2022\u2013- \n")
+    return bool(_TABLE_ROW_RE.search(body)) or tail.endswith(",")
+
+
+def _raw_tail(seg: str) -> str:
+    """The section text as _clean() sees it before its final strip."""
+    seg = _TAIL.split(seg)[0]
+    seg = "\n".join(l for l in seg.splitlines() if not _JUNK.search(l))
+    return _SECNUM.sub("", seg)
 _SECNUM = re.compile(r"\b\d+\.\d+(?:\.\d+){1,4}\b")
 # cut a section body where a minima table, page furniture, or the next block begins.
 # Confirmed via validate_procedures.py's full 36-aerodrome run: "Airport
@@ -127,8 +140,9 @@ def _sectionise(text: str) -> dict:
             continue
         start = m.end()
         end = ms[i + 1].start() if i + 1 < len(ms) else len(text)
-        body = _clean(text[start:end])
-        if len(body) > 15 and not _looks_corrupted(body):
+        seg = text[start:end]
+        body = _clean(seg)
+        if len(body) > 15 and not _looks_corrupted(body, _raw_tail(seg)):
             out[kind] = body
     return out
 

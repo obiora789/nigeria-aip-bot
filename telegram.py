@@ -5,6 +5,7 @@ Plain text (no parse_mode) so AIP content never trips Markdown parsing. Charts
 are sent as photos when they're images and as documents otherwise (a PDF sent to
 sendPhoto fails). Webhook authenticity is checked against the secret token.
 """
+import hmac
 import logging
 from typing import List
 
@@ -20,10 +21,18 @@ _API = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}"
 
 
 def verify_secret(header_value: str | None) -> bool:
-    """If a webhook secret is configured, require an exact match."""
-    if not config.TELEGRAM_WEBHOOK_SECRET:
-        return True  # not configured (dev) — allow, but configure it in prod
-    return header_value == config.TELEGRAM_WEBHOOK_SECRET
+    """Telegram's X-Telegram-Bot-Api-Secret-Token must match exactly.
+
+    FAILS CLOSED (audit item, 2026-10-27): with no secret configured every
+    update is refused, so a missing environment variable can never leave the
+    webhook open to anyone who finds the URL. Local development only:
+    ALLOW_INSECURE_WEBHOOK=1. The comparison is constant-time, like the
+    dashboard token's: `==` on a secret leaks how much of a guess was right."""
+    secret = config.TELEGRAM_WEBHOOK_SECRET or ""
+    if not secret:
+        return bool(config.ALLOW_INSECURE_WEBHOOK)
+    return hmac.compare_digest((header_value or "").encode("utf-8"),
+                               secret.encode("utf-8"))
 
 
 def feedback_kb(qid: str) -> dict:

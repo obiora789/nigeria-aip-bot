@@ -13,8 +13,10 @@ Fixes folded in vs. the original:
 import logging
 import os
 import re
+import time
 from typing import List, Optional, Tuple
 
+import httpx
 from supabase import Client, create_client
 
 import config
@@ -27,20 +29,63 @@ supabase: Client = create_client(config.SUPABASE_URL, config.SUPABASE_KEY)
 _IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 
 
+# ── a failed read is NEVER "not published" (2026-11-09) ───────────────────────
+# Every read below used to catch any error and return "" or [] — exactly what
+# an unpublished section looks like. Measured 2026-11-07/09: Supabase dropped
+# 7 of ~1,500 reads in one quick check ("Server disconnected", an idle HTTP/2
+# connection closed by the server). Each one silently became "not in the AIP":
+# Dutse's AD 2.15 read failed and the check concluded Dutse publishes no other
+# lighting. In the live bot the same failure can say a published section is
+# missing — a wrong answer, against null-over-guess.
+#
+# Now: a dropped connection is retried (a fresh connection almost always
+# works); anything that still fails raises DataUnavailable. main.process turns
+# that into "I couldn't reach the AIP database just now", never into a
+# "not published" answer. Callers that deliberately degrade (resolver name
+# lookups, the double-meaning checks) already catch exceptions and keep doing so.
+class DataUnavailable(RuntimeError):
+    """The AIP database could not be read, after retrying. Not the same as the
+    AIP not publishing something, and must never be answered as if it were."""
+
+
+READ_ATTEMPTS = int(os.getenv("DB_READ_ATTEMPTS", "3"))
+_RETRY_PAUSES = (0.25, 0.75, 1.5)
+# httpx.TransportError covers the transient family: RemoteProtocolError
+# ("Server disconnected"), ConnectError, ReadError, WriteError and timeouts.
+_TRANSIENT = (httpx.TransportError,)
+
+
+def _execute(build, what: str):
+    """Run one Supabase read: build() returns the query or RPC builder.
+    Retries a dropped connection; raises DataUnavailable when it cannot read."""
+    last = None
+    for attempt in range(max(1, READ_ATTEMPTS)):
+        try:
+            return build().execute()
+        except _TRANSIENT as e:
+            last = e
+            if attempt + 1 < READ_ATTEMPTS:
+                log.warning("%s: %s — retrying (%d/%d)", what, type(e).__name__,
+                            attempt + 1, READ_ATTEMPTS - 1)
+                time.sleep(_RETRY_PAUSES[min(attempt, len(_RETRY_PAUSES) - 1)])
+                continue
+        except Exception as e:  # noqa: BLE001 — a bad query is not a transient
+            log.exception("%s failed", what)
+            raise DataUnavailable(f"{what}: {type(e).__name__}: {e}") from e
+    log.error("%s failed after %d attempts: %s", what, READ_ATTEMPTS, last)
+    raise DataUnavailable(f"{what}: {type(last).__name__}: {last}") from last
+
+
 def _rpc_match(embedding: list, part: str, reference: str,
                procedure_type: str, runway: str) -> List[AIPResult]:
-    try:
-        resp = supabase.rpc("match_aip_text_advanced", {
-            "query_embedding": embedding,
-            "match_filter_part": part,
-            "match_filter_reference": reference,
-            "match_procedure_type": procedure_type or "",
-            "match_runway": runway or "",
-            "match_limit": config.MATCH_LIMIT,
-        }).execute()
-    except Exception:  # noqa: BLE001
-        log.exception("match_aip_text_advanced failed (part=%s ref=%s)", part, reference)
-        return []
+    resp = _execute(lambda: supabase.rpc("match_aip_text_advanced", {
+        "query_embedding": embedding,
+        "match_filter_part": part,
+        "match_filter_reference": reference,
+        "match_procedure_type": procedure_type or "",
+        "match_runway": runway or "",
+        "match_limit": config.MATCH_LIMIT,
+    }), f"match_aip_text_advanced (part={part} ref={reference})")
     return [
         AIPResult(content=r.get("content", ""),
                   similarity=float(r.get("similarity", 0.0)),
@@ -107,15 +152,11 @@ def search_aip(embedding: list, res: Resolution,
 def get_charts(icao: str, procedure_type: str = "", runway: str = "") -> List[ChartRef]:
     if not icao:
         return []
-    try:
-        resp = supabase.rpc("get_aip_charts", {
-            "p_icao": icao,
-            "p_procedure": procedure_type or "",
-            "p_runway": runway or "",
-        }).execute()
-    except Exception:  # noqa: BLE001
-        log.exception("get_aip_charts failed (icao=%s)", icao)
-        return []
+    resp = _execute(lambda: supabase.rpc("get_aip_charts", {
+        "p_icao": icao,
+        "p_procedure": procedure_type or "",
+        "p_runway": runway or "",
+    }), f"get_aip_charts (icao={icao})")
 
     charts: List[ChartRef] = []
     for row in (resp.data or []):
@@ -181,14 +222,11 @@ def get_section_text(icao: str, section_prefix: str = "AD 2.22") -> str:
     """Reconstruct an aerodrome's full section text (e.g. AD 2.22) by fetching all
     its chunks in order and concatenating. Used by the approach-procedure
     sectioniser, which needs the whole ordered block, not a single retrieved piece."""
-    try:
-        resp = (supabase.table("aip_knowledge_base")
-                .select("content, source_page, source_chunk")
-                .eq("reference_tag", icao)
-                .like("aip_section", f"{section_prefix}%").execute())
-    except Exception:  # noqa: BLE001
-        log.exception("get_section_text failed (icao=%s)", icao)
-        return ""
+    resp = _execute(lambda: (supabase.table("aip_knowledge_base")
+                             .select("content, source_page, source_chunk")
+                             .eq("reference_tag", icao)
+                             .like("aip_section", f"{section_prefix}%")),
+                    f"get_section_text (icao={icao} section={section_prefix})")
     rows = sorted((resp.data or []),
                   key=lambda r: (r.get("source_page") or 0, r.get("source_chunk") or 0))
     return "\n".join(r.get("content", "") for r in rows)
@@ -213,20 +251,17 @@ def search_facts(embedding: list, icao: str, subsection: str = "",
     classifier already identified one.
 
     Empty list means no facts indexed for this aerodrome — the caller keeps
-    its existing behaviour rather than treating it as 'not published'."""
+    its existing behaviour rather than treating it as 'not published'. A
+    failed read raises DataUnavailable instead of returning []."""
     if not icao:
         return []
-    try:
-        resp = supabase.rpc("match_aip_facts", {
-            "query_embedding": embedding,
-            "p_icao": icao,
-            "p_subsection": subsection or None,
-            "match_limit": limit,
-        }).execute()
-        return resp.data or []
-    except Exception:  # noqa: BLE001
-        log.exception("match_aip_facts failed (icao=%s sub=%s)", icao, subsection)
-        return []
+    resp = _execute(lambda: supabase.rpc("match_aip_facts", {
+        "query_embedding": embedding,
+        "p_icao": icao,
+        "p_subsection": subsection or None,
+        "match_limit": limit,
+    }), f"match_aip_facts (icao={icao} sub={subsection})")
+    return resp.data or []
 
 
 def search_facts_scoped(embedding: list, scope_kind: str, scope_id: str,
@@ -249,18 +284,14 @@ def search_facts_scoped(embedding: list, scope_kind: str, scope_id: str,
     """
     if not embedding or not scope_kind or not scope_id:
         return []
-    try:
-        res = supabase.rpc("match_aip_facts_scoped", {
-            "query_embedding": embedding,
-            "p_scope_kind": scope_kind,
-            "p_scope_id": scope_id,
-            "p_subsection": subsection or None,
-            "match_limit": limit,
-        }).execute()
-        return res.data or []
-    except Exception:                                  # noqa: BLE001
-        log.exception("match_aip_facts_scoped failed (%s %s)", scope_kind, scope_id)
-        return []
+    res = _execute(lambda: supabase.rpc("match_aip_facts_scoped", {
+        "query_embedding": embedding,
+        "p_scope_kind": scope_kind,
+        "p_scope_id": scope_id,
+        "p_subsection": subsection or None,
+        "match_limit": limit,
+    }), f"match_aip_facts_scoped ({scope_kind} {scope_id})")
+    return res.data or []
 
 
 def list_scope_ids(scope_kind: str) -> list:
@@ -273,20 +304,18 @@ def list_scope_ids(scope_kind: str) -> list:
     either IS a published ident or it is not, and only the index knows."""
     if not scope_kind:
         return []
-    try:
-        rows, page, size = [], 0, 1000
-        while True:
-            res = (supabase.table("aip_facts").select("scope_id")
-                   .eq("scope_kind", scope_kind)
-                   .range(page * size, page * size + size - 1).execute())
-            batch = res.data or []
-            rows.extend(r["scope_id"] for r in batch if r.get("scope_id"))
-            if len(batch) < size:
-                return sorted(set(rows))
-            page += 1
-    except Exception:                                  # noqa: BLE001
-        log.exception("list_scope_ids failed (%s)", scope_kind)
-        return []
+    rows, page, size = [], 0, 1000
+    while True:
+        lo = page * size
+        res = _execute(lambda: (supabase.table("aip_facts").select("scope_id")
+                                .eq("scope_kind", scope_kind)
+                                .range(lo, lo + size - 1)),
+                       f"list_scope_ids ({scope_kind} page {page})")
+        batch = res.data or []
+        rows.extend(r["scope_id"] for r in batch if r.get("scope_id"))
+        if len(batch) < size:
+            return sorted(set(rows))
+        page += 1
 
 
 def find_aip_scope(name: str) -> list:
@@ -297,16 +326,14 @@ def find_aip_scope(name: str) -> list:
     either is a published entity or it is not, and answering "I don't have
     that" for something the AIP publishes is the failure this closes.
 
-    Returns [] on error rather than raising: a lookup miss must degrade to the
-    existing behaviour, never take down the request."""
+    A failed read raises DataUnavailable (after retrying a dropped
+    connection). Every caller (resolver, agent) catches it and degrades to
+    the existing behaviour, so a lookup outage never takes down the request."""
     if not (name or "").strip():
         return []
-    try:
-        res = supabase.rpc("find_aip_scope", {"p_name": name.strip()}).execute()
-        return res.data or []
-    except Exception:                                  # noqa: BLE001
-        log.exception("find_aip_scope failed (%s)", name)
-        return []
+    res = _execute(lambda: supabase.rpc("find_aip_scope", {"p_name": name.strip()}),
+                   f"find_aip_scope ({name})")
+    return res.data or []
 
 
 def get_subsection_text(icao: str, section: str) -> str:
@@ -324,14 +351,11 @@ def get_subsection_text(icao: str, section: str) -> str:
     Equality matching is also correct for AD 2.22 itself: vectorise_aip_v3.py
     splits it into several chunks for embedding length, but they all carry
     aip_section = "AD 2.22" and differ only by source_chunk."""
-    try:
-        resp = (supabase.table("aip_knowledge_base")
-                .select("content, source_page, source_chunk")
-                .eq("reference_tag", icao)
-                .eq("aip_section", section).execute())
-    except Exception:  # noqa: BLE001
-        log.exception("get_subsection_text failed (icao=%s section=%s)", icao, section)
-        return ""
+    resp = _execute(lambda: (supabase.table("aip_knowledge_base")
+                             .select("content, source_page, source_chunk")
+                             .eq("reference_tag", icao)
+                             .eq("aip_section", section)),
+                    f"get_subsection_text (icao={icao} section={section})")
     rows = sorted((resp.data or []),
                   key=lambda r: (r.get("source_page") or 0, r.get("source_chunk") or 0))
     return "\n".join(r.get("content", "") for r in rows)
@@ -361,15 +385,12 @@ def get_declared_distances(icao: str) -> list:
     Empty list means this aerodrome has no aip_structured row for 2.13 (rare
     — validated at ingestion): the caller falls back to the refuse-to-source
     guard, same as before."""
-    try:
-        resp = (supabase.table("aip_structured")
-                .select("record")
-                .eq("icao_code", icao)
-                .eq("subsection", "2.13")
-                .order("record_index").execute())
-    except Exception:  # noqa: BLE001
-        log.exception("get_declared_distances failed (icao=%s)", icao)
-        return []
+    resp = _execute(lambda: (supabase.table("aip_structured")
+                             .select("record")
+                             .eq("icao_code", icao)
+                             .eq("subsection", "2.13")
+                             .order("record_index")),
+                    f"get_declared_distances (icao={icao})")
     out = []
     for row in (resp.data or []):
         r = row["record"]
@@ -401,16 +422,13 @@ def get_runway_physical_data(icao: str) -> list:
     Empty list means this aerodrome has no aip_structured row for 2.12 (rare) —
     the caller falls back to the existing verbatim/refuse-to-source path, the
     same way get_declared_distances' callers do."""
-    try:
-        resp = (supabase.table("aip_structured")
-                .select("record")
-                .eq("icao_code", icao)
-                .eq("subsection", "2.12")
-                .order("record_index").execute())
-        return [row["record"] for row in (resp.data or [])]
-    except Exception:  # noqa: BLE001
-        log.exception("get_runway_physical_data failed (icao=%s)", icao)
-        return []
+    resp = _execute(lambda: (supabase.table("aip_structured")
+                             .select("record")
+                             .eq("icao_code", icao)
+                             .eq("subsection", "2.12")
+                             .order("record_index")),
+                    f"get_runway_physical_data (icao={icao})")
+    return [row["record"] for row in (resp.data or [])]
 
 
 def get_lighting_data(icao: str) -> list:
@@ -436,16 +454,13 @@ def get_lighting_data(icao: str) -> list:
     Empty list means this aerodrome has no aip_structured row for 2.14 at
     all (should not happen — validated at ingestion): the caller falls back
     to the existing verbatim path."""
-    try:
-        resp = (supabase.table("aip_structured")
-                .select("record")
-                .eq("icao_code", icao)
-                .eq("subsection", "2.14")
-                .order("record_index").execute())
-        return [row["record"] for row in (resp.data or [])]
-    except Exception:  # noqa: BLE001
-        log.exception("get_lighting_data failed (icao=%s)", icao)
-        return []
+    resp = _execute(lambda: (supabase.table("aip_structured")
+                             .select("record")
+                             .eq("icao_code", icao)
+                             .eq("subsection", "2.14")
+                             .order("record_index")),
+                    f"get_lighting_data (icao={icao})")
+    return [row["record"] for row in (resp.data or [])]
 
 
 def get_aerodrome_data(icao: str) -> str:
@@ -454,14 +469,11 @@ def get_aerodrome_data(icao: str) -> str:
     procedures / the chart index — we keep only 'AD 2.2' (and its 'AD 2.2.x'
     sub-items) and drop 'AD 2.2<digit>'. Used to answer paired fields like
     reference temperature that the general vector search under-retrieves."""
-    try:
-        resp = (supabase.table("aip_knowledge_base")
-                .select("content, source_page, source_chunk, aip_section")
-                .eq("reference_tag", icao)
-                .like("aip_section", "AD 2.2%").execute())
-    except Exception:  # noqa: BLE001
-        log.exception("get_aerodrome_data failed (icao=%s)", icao)
-        return ""
+    resp = _execute(lambda: (supabase.table("aip_knowledge_base")
+                             .select("content, source_page, source_chunk, aip_section")
+                             .eq("reference_tag", icao)
+                             .like("aip_section", "AD 2.2%")),
+                    f"get_aerodrome_data (icao={icao})")
     rows = [r for r in (resp.data or [])
             if not re.match(r"AD 2\.2\d", r.get("aip_section") or "")]
     rows.sort(key=lambda r: (r.get("source_page") or 0, r.get("source_chunk") or 0))
@@ -475,12 +487,9 @@ def get_charts_smart(icao: str, term: str = "", runway: str = "") -> List[ChartR
     exist, else return all type matches so send_charts can add the S5 warning —
     a request for RWY 04 should still show the RWY 22 plate, flagged, not nothing."""
     from responder import runway_serves  # lazy import to avoid a cycle
-    try:
-        resp = supabase.table("aip_charts").select(
-            "chart_url, procedure_type, runway, icao_code").eq("icao_code", icao).execute()
-    except Exception:  # noqa: BLE001
-        log.exception("aip_charts direct fetch failed (icao=%s)", icao)
-        return []
+    resp = _execute(lambda: supabase.table("aip_charts").select(
+        "chart_url, procedure_type, runway, icao_code").eq("icao_code", icao),
+        f"aip_charts direct fetch (icao={icao})")
     charts: List[ChartRef] = []
     for row in (resp.data or []):
         url = row.get("chart_url")

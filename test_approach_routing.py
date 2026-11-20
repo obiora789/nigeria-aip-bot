@@ -31,62 +31,67 @@ def _bs(raw, **kw):
     return agent._backstop(AIPQueryExtraction(**base), raw)
 
 
-def test_approach_type_reads_the_models_field():
+def test_no_wording_patterns_decide_approach_routing():
+    """GUARD. The owner's rule: these queries are routed on the model's
+    judgement, never on patterns over the pilot's words. Three such helpers
+    existed (approach type from procedure_type text, minima words, declared-
+    distance words) and were removed."""
     import agent
-    for pt, want in [("ILS", "ILS"), ("VOR/DME", "VOR"), ("RNAV (GNSS)", "RNAV"),
-                     ("rnp", "RNP"), ("NDB", "NDB"), ("IAP", "GENERIC"),
-                     ("instrument approach", "GENERIC"),
-                     # 'Approach' is the ATC unit, like 'Tower' — never a procedure
-                     ("APPROACH", None), ("Approach", None), ("SID", None), ("STAR", None),
-                     ("Tower", None), ("ATIS", None), (None, None), ("", None)]:
-        assert agent._approach_type(pt) == want, (pt, agent._approach_type(pt))
+    for name in ("_approach_type", "_asks_minima", "_asks_declared", "_APPROACH_TYPES"):
+        assert not hasattr(agent, name), f"{name} is back"
 
 
-def test_typed_approach_asked_as_text_goes_to_the_plate_flow():
-    """The exact live failure: 'What is the ILS approach in Kano'."""
+def test_procedure_answer_reaches_the_plate_flow():
+    """When the model's approach_request is 'procedure' — e.g. the pilot tapped
+    'approach plate' on the Sokoto choice — that wins over the intent, and an
+    untyped request goes to the plate flow to ask the type. (Bare 'Sokoto
+    approach' itself is now a two-way choice: test_disambiguation.py.)"""
+    for q, intent in [("Show me sokoto approach", "frequency_retrieval"),
+                      ("What is sokoto approach", "aerodrome_fact"),
+                      ("sokoto approach", "procedure_lookup")]:
+        ex = _bs(q, intent=intent, approach_request="procedure", aerodrome_name="Sokoto")
+        assert ex.intent == "chart_retrieval", (q, ex.intent)
+        assert ex.procedure_type is None, "no type named: the plate flow must ASK"
+
+
+def test_typed_approach_carries_its_type_to_the_plate_flow():
     ex = _bs("What is the ILS approach in Kano", intent="procedure_lookup",
-             procedure_type="ILS", aerodrome_name="Kano")
-    assert ex.intent == "chart_retrieval", ex.intent
-    assert ex.procedure_type == "ILS", "the named type must reach clarify"
+             approach_request="procedure", approach_type="ILS",
+             procedure_type="ILS approach", aerodrome_name="Kano")
+    assert ex.intent == "chart_retrieval" and ex.procedure_type == "ILS"
 
 
-def test_untyped_approach_goes_to_the_plate_flow_and_asks_the_type():
-    """'What is the approach in Kano' — no type named. Routed to the plate
-    flow with the type cleared, so clarify ASKS rather than searching for a
-    chart type called 'IAP'."""
-    for intent in ("procedure_lookup", "aerodrome_fact"):
-        ex = _bs("What is the approach in Kano", intent=intent,
-                 procedure_type="IAP", aerodrome_name="Kano")
-        assert ex.intent == "chart_retrieval", (intent, ex.intent)
-        assert ex.procedure_type is None, "a generic 'approach' must not reach clarify as a type"
+def test_the_approach_unit_stays_a_frequency_question():
+    """'Sokoto approach frequency' is the ATC unit. Even if the intent came
+    back as a chart, the model's 'unit' answer turns it back."""
+    for intent in ("frequency_retrieval", "chart_retrieval"):
+        ex = _bs("Sokoto approach frequency", intent=intent,
+                 approach_request="unit", aerodrome_name="Sokoto")
+        assert ex.intent == "frequency_retrieval", (intent, ex.intent)
 
 
-def test_approach_unit_and_navaid_questions_are_untouched():
-    """'Kano Approach' the ATC unit, an ILS frequency and an ILS category are
-    not approach-procedure questions and must keep their own routes."""
-    assert _bs("Kano approach frequency", intent="frequency_retrieval",
-               procedure_type="Approach", aerodrome_name="Kano").intent == "frequency_retrieval"
-    assert _bs("ILS frequency at Kano", intent="frequency_retrieval",
-               procedure_type="ILS", aerodrome_name="Kano").intent == "frequency_retrieval"
-    assert _bs("ILS category at Lagos", intent="aerodrome_fact",
-               procedure_type="ILS", aerodrome_name="Lagos").intent == "aerodrome_fact"
-    assert _bs("SID for Lagos runway 18R", intent="procedure_lookup",
-               procedure_type="SID", aerodrome_name="Lagos").intent == "procedure_lookup"
+def test_questions_that_are_not_about_an_approach_are_untouched():
+    for q, intent, kw in [
+            ("ILS frequency at Kano", "frequency_retrieval", {"procedure_type": "ILS"}),
+            ("ILS category at Lagos", "aerodrome_fact", {"procedure_type": "ILS"}),
+            ("SID for Lagos runway 18R", "procedure_lookup", {"procedure_type": "SID"})]:
+        ex = _bs(q, intent=intent, aerodrome_name=q.split()[-1] if "Kano" in q else "Lagos", **kw)
+        assert ex.intent == intent, (q, ex.intent)
 
 
 def test_prompt_and_schema_name_the_approach_rule():
-    """GUARD. procedure_lookup used to claim 'approach procedure text', which
-    is how 'What is the ILS approach' landed there; AD 2.17's 'ATS unit call
-    sign' gave the classifier nothing to separate the unit from the
-    procedure."""
-    import agent, schemas, inspect
-    assert "ANY INSTRUMENT APPROACH at an aerodrome is chart_retrieval" in agent._SYSTEM
+    import agent, inspect, re, schemas
+    assert "AN INSTRUMENT APPROACH at an aerodrome is chart_retrieval" in agent._SYSTEM
+    # 'Sokoto approach' is the ATC unit by default AND offered as a choice
+    # (test_disambiguation.py), never silently the plate.
+    assert "'Show me Sokoto approach'" in agent._SYSTEM
     assert "SID/STAR/approach/missed-approach procedure text" not in agent._SYSTEM
-    src = inspect.getsource(schemas)
-    assert "the ATC UNIT, never an approach procedure" in src
-    assert "instrument approach " in src and "procedures (ILS, VOR, RNAV, RNP, NDB approaches)" in src
-    assert "use 'IAP'" in src
-    assert "'PHSIA approach frequency'" in agent._SYSTEM
+    src = re.sub(r'"\s*\n\s*"', "", inspect.getsource(schemas))
+    assert "approach_request: Optional[Literal[\"procedure\", \"minima\", \"unit\"]]" in src
+    assert "use 'IAP'" not in src
+    fields = list(getattr(schemas.AIPQueryExtraction, "model_fields", None)
+                  or schemas.AIPQueryExtraction.__annotations__)
+    assert "approach_request" in fields and "approach_type" in fields
 
 
 def test_the_aerodrome_name_is_not_filtered_out_of_unscoped_facts():
@@ -99,46 +104,16 @@ def test_the_aerodrome_name_is_not_filtered_out_of_unscoped_facts():
     assert '!= "2.1"' not in src, "the AD 2.1 filter is back — it hides real AD 2.1 answers"
 
 
-def _with_synthesize_rules():
-    """The offline harness has no synthesize.py; give agent the two rules it
-    reuses, exactly as written there."""
-    import re, sys, types
-    if "synthesize" in sys.modules and hasattr(sys.modules["synthesize"], "_DECLARED_RE"):
-        return None
-    fake = types.ModuleType("synthesize")
-    fake._MINIMA_RE = re.compile(r"\bminim", re.I)
-    fake._DECLARED_RE = re.compile(
-        r"\b(tora|toda|asda|lda|declared distance|take-?off run available|"
-        r"take-?off distance available|accelerate[\s-]?stop distance|"
-        r"landing distance available)", re.I)
-    prev = sys.modules.get("synthesize")
-    sys.modules["synthesize"] = fake
-    return prev or "absent"
-
-
-def _restore(prev):
-    import sys
-    if prev == "absent":
-        sys.modules.pop("synthesize", None)
-    elif prev is not None:
-        sys.modules["synthesize"] = prev
-
-
 def test_declared_distances_never_become_a_chart():
     """Stress set, 2026-10-20: 'lda at Uyo RWY 03' and 'toda at Zaria RWY 23'
-    were answered with a plate; August answered them from AD 2.13."""
-    prev = _with_synthesize_rules()
-    try:
-        for q, place in [("lda at Uyo RWY 03", "Uyo"), ("toda at Zaria RWY 23", "Zaria"),
-                         ("tora for rwy 29 at asaba", "Asaba")]:
-            ex = _bs(q, intent="chart_retrieval", aerodrome_name=place, runway=q.split()[-1])
-            assert ex.intent != "chart_retrieval", (q, ex.intent)
-            assert ex.ad2_subsection == "2.13", (q, ex.ad2_subsection)
-        # Asked for by name, a chart is still a chart.
-        ex = _bs("show me the LDA chart for Uyo", intent="chart_retrieval", aerodrome_name="Uyo")
-        assert ex.intent == "chart_retrieval"
-    finally:
-        _restore(prev)
+    were answered with a plate. Decided on the model's subsection (AD 2.13)."""
+    for q, place in [("lda at Uyo RWY 03", "Uyo"), ("toda at Zaria RWY 23", "Zaria")]:
+        ex = _bs(q, intent="chart_retrieval", aerodrome_name=place, ad2_subsection="2.13")
+        assert ex.intent == "runway_data", (q, ex.intent)
+    # An approach question the model filed under 2.13 by mistake stays a chart.
+    ex = _bs("ILS approach Uyo", intent="chart_retrieval", aerodrome_name="Uyo",
+             ad2_subsection="2.13", approach_request="procedure", approach_type="ILS")
+    assert ex.intent == "chart_retrieval"
 
 
 def test_clearance_priorities_are_ad_2_7_not_atc_clearances():
@@ -154,21 +129,11 @@ def test_clearance_priorities_are_ad_2_7_not_atc_clearances():
 
 
 def test_minima_keep_their_verbatim_route():
-    """'approach minima at Kano' must stay on AD 2.22 verbatim (synthesize's
-    minima rule), not be turned into a plate request."""
-    import re, sys, types
-    real = sys.modules.get("synthesize")
-    if real is None or not hasattr(real, "_MINIMA_RE"):
-        fake = types.ModuleType("synthesize")
-        fake._MINIMA_RE = re.compile(r"\bminim", re.I)
-        sys.modules["synthesize"] = fake
-    try:
-        ex = _bs("ILS approach minima at Kano", intent="procedure_lookup",
-                 procedure_type="ILS", aerodrome_name="Kano")
-        assert ex.intent == "procedure_lookup", ex.intent
-    finally:
-        if real is None:
-            sys.modules.pop("synthesize", None)
+    """'ILS minima for Kano' stays procedure_lookup (AD 2.22 verbatim), on the
+    model's approach_request='minima', not on the word."""
+    ex = _bs("ILS approach minima at Kano", intent="procedure_lookup",
+             approach_request="minima", approach_type="ILS", aerodrome_name="Kano")
+    assert ex.intent == "procedure_lookup", ex.intent
 
 
 # --- the aerodrome must be the one the user named ------------------------------
@@ -215,12 +180,37 @@ def test_no_aerodrome_in_the_text_changes_nothing():
 
 def test_approach_unit_frequency_never_becomes_a_plate():
     """Confirmed by the 40-aerodrome full run: 'PHSIA approach frequency' was
-    answered with an RNAV chart. 'Approach' there is the ATC UNIT. Whatever
-    intent the model gives it, it must not reach the plate flow."""
-    for intent in ("aerodrome_fact", "frequency_retrieval", "procedure_lookup"):
+    answered with an RNAV chart. The model's 'unit' answer keeps it a
+    frequency question whatever intent came back."""
+    for intent in ("aerodrome_fact", "frequency_retrieval", "chart_retrieval"):
         ex = _bs("PHSIA approach frequency", intent=intent,
-                 procedure_type="Approach", aerodrome_name="PHSIA")
+                 approach_request="unit", aerodrome_name="PHSIA")
         assert ex.intent != "chart_retrieval", (intent, ex.intent)
-    ex = _bs("Kano ILS approach frequency", intent="frequency_retrieval",
-             procedure_type="ILS", aerodrome_name="Kano")
-    assert ex.intent == "frequency_retrieval"
+
+
+def test_prompt_separates_typed_approach_unit_frequency_and_radar():
+    """Measured 2026-10-21 at all 40 aerodromes: 'X VOR approach' came back as
+    the ATC unit, approach-frequency questions offered a needless choice, and
+    'approach radar' went to a plate. The prompt now states each case; the
+    model decides, nothing here reads wording."""
+    import agent, re
+    s = re.sub(r"\s+", " ", agent._SYSTEM)
+    assert "An approach TYPE before 'approach' always means the procedure" in s
+    assert "So is a question that asks for a frequency, call sign or how to contact it" in s
+    assert "Approach RADAR control and radar procedures are procedure_lookup" in s
+
+
+def test_prompt_refuses_requests_that_are_not_aip_questions():
+    """'book me a flight to Lagos' was accepted (false accept, measure_intent)."""
+    import agent, re
+    s = re.sub(r"\s+", " ", agent._SYSTEM)
+    assert "(d) NOT AN AIP QUESTION" in s and "one of these four must be true" in s
+
+
+def test_a_booking_refusal_is_not_overridden_for_naming_lagos():
+    """(d) uses planning_or_flow, which _refusal_has_basis already accepts, so
+    the 'refusal with no basis' override (6c) leaves it refused even though
+    the text names exactly one Nigerian aerodrome."""
+    ex = _bs("book me a flight to Lagos", intent="out_of_scope",
+             out_of_scope_reason="planning_or_flow", aerodrome_name="Lagos")
+    assert ex.intent == "out_of_scope"

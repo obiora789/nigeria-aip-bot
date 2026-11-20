@@ -42,10 +42,36 @@ def _nums(s: str) -> set:
     return {m.replace(",", "") for m in _NUM.findall(s)}
 
 
+# The unit or hemisphere written right after a number ("3 500 ft", "2°W",
+# "118.1 MHZ", "090022.41N"). Used to stop a verified value being restated
+# with a different unit or hemisphere (2026-11-19).
+_UNIT_AFTER = re.compile(
+    r"(\d[\d,]*(?:\.\d+)?)\s*(°\s*[NSEW]\b|°|ft\b|m\b|nm\b|fl\b|mhz\b|khz\b|kg\b|t\b|%|[NSEW]\b)",
+    re.I)
+# Runway designators an answer may name when its excerpt names them.
+_DESIGNATOR = re.compile(r"\b(?:RWY|RUNWAY|THR)\s*(\d{2})[LRC]?(?:\s*/\s*(\d{2})[LRC]?)?", re.I)
+# AIP section references ("AD 2.17", "ENR 3.1") are not values.
+_SECTION_REF = re.compile(r"\b(?:AD|ENR|GEN)\s*\d+(?:\.\d+)*", re.I)
+
+
+def _units(s: str) -> dict:
+    """{number: {unit, ...}} for each number written with a unit in s."""
+    s = re.sub(r"(\d)\s+(\d{3})(?!\d)", r"\1\2", s or "")
+    out: dict = {}
+    for num, unit in _UNIT_AFTER.findall(s):
+        out.setdefault(num.replace(",", ""), set()).add(re.sub(r"\s+", "", unit).lower())
+    return out
+
+
 def _fmt_context(results: List[AIPResult]) -> str:
     blocks = []
     for i, r in enumerate(results[: config.SYNTHESIS_CONTEXT_CHUNKS], 1):
-        tag = r.aip_section or r.reference_tag or "AIP"
+        if getattr(config, "SYNTHESIS_PROMPT_VERSION", "v1") == "v2":
+            # Aerodrome AND section: the prompt tells the model to use only
+            # the right aerodrome's rows, so it must be able to see it.
+            tag = " \u00b7 ".join(x for x in (r.reference_tag, r.aip_section) if x) or "AIP"
+        else:
+            tag = r.aip_section or r.reference_tag or "AIP"
         blocks.append(f"--- Excerpt {i} [{tag}] ---\n{r.content.strip()}")
     return "\n\n".join(blocks)
 
@@ -65,7 +91,7 @@ def generate_grounded_answer(question: str, results: List[AIPResult]) -> Grounde
             messages=[{"role": "system", "content": config.SYNTHESIS_SYSTEM},
                       {"role": "user", "content": user}],
             response_format=GroundedAnswer,
-            temperature=0,
+            **config.model_params(config.SYNTHESIS_MODEL, "synthesis"),
         )
         return resp.choices[0].message.parsed
     except Exception:  # noqa: BLE001
@@ -105,7 +131,15 @@ def verify_grounded_answer(ans: GroundedAnswer, results: List[AIPResult]) -> Tup
         AND the fact's value itself appears verbatim (whitespace-collapsed) in
         THAT excerpt, AND every arithmetic step's operands come from a
         successfully-verified fact, AND every number in the final answer text
-        is either from a verified fact or a shown computation result.
+        is from a verified fact's VALUE, a shown computation result, or a
+        runway designator its verified excerpt names, AND a number taken from
+        a fact keeps that fact's unit or hemisphere.
+
+    2026-11-19: the answer's numbers used to be checked against EVERY number
+    in any excerpt with one verified fact. Measured on an AD 2.17-shaped
+    excerpt, that passed "transition altitude 1 500 ft" (the CTR limit),
+    "3 500 m" for "3 500 ft", "2°E" for "2°W", and any number at all once a
+    trivial fact ("D") verified.
     Any violation -> (False, issues); the caller must then NOT show this answer.
     """
     issues: List[str] = []
@@ -118,6 +152,7 @@ def verify_grounded_answer(ans: GroundedAnswer, results: List[AIPResult]) -> Tup
         return (False, issues)
 
     cited_nums = set()
+    fact_units: dict = {}
     for f in ans.facts_used:
         idx = getattr(f, "source_excerpt", None)
         if not idx or not (1 <= idx <= len(results)):
@@ -136,15 +171,15 @@ def verify_grounded_answer(ans: GroundedAnswer, results: List[AIPResult]) -> Tup
             issues.append(f"fact '{f.what}' value {f.value!r} is not verbatim "
                           f"in its cited excerpt #{idx}")
             continue
-        # This excerpt has now EARNED trust: at least one of its facts verified
-        # verbatim against it. Admit the excerpt's WHOLE number set (not just
-        # the literal fact.value numbers) into cited_nums — this lets the final
-        # answer restate an incidental identifier from that same trusted
-        # excerpt (a runway designator like "18R" in "RWY 18R/36L is longer")
-        # without requiring a separate facts_used line for every digit, while
-        # still refusing any number from an excerpt no fact ever verified
-        # against (that's what CASE 3 / the tampered-PCN case below catch).
-        cited_nums |= exc_nums
+        # The fact verified. Its OWN numbers (not the whole excerpt's) may
+        # appear in the answer, with the unit or hemisphere the fact gives
+        # them. A runway designator the excerpt names ("RWY 18R/36L") may be
+        # restated too, so a comparison can say which runway it means.
+        cited_nums |= fact_nums
+        for num, units in _units(f.value).items():
+            fact_units.setdefault(num, set()).update(units)
+        for a, b in _DESIGNATOR.findall(excerpt):
+            cited_nums |= {x for x in (a, b) if x}
 
     computed = set()
     comp = (ans.computation or "").strip()
@@ -170,9 +205,15 @@ def verify_grounded_answer(ans: GroundedAnswer, results: List[AIPResult]) -> Tup
             except ValueError:
                 issues.append("computation operands are not numeric")
 
-    for n in _nums(ans.answer):
+    answer_text = _SECTION_REF.sub(" ", ans.answer or "")
+    for n in _nums(answer_text):
         if n not in cited_nums and n not in computed:
             issues.append(f"answer asserts ungrounded number {n}")
+    for num, units in _units(answer_text).items():
+        published = fact_units.get(num)
+        if published and num not in computed and not units <= published:
+            issues.append(f"answer gives {num} as {sorted(units)}; the AIP "
+                          f"value is {sorted(published)}")
 
     return (not issues, issues)
 

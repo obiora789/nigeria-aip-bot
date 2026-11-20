@@ -16,6 +16,22 @@ import config
 import resolver
 from schemas import AIPQueryExtraction
 
+# FAIL LOUDLY IF schemas.py IS OLDER THAN THIS FILE. The backstop reads these
+# fields with getattr(), so against an old schema it does not crash — it just
+# quietly stops routing approach questions and offering choices. Confirmed
+# 2026-10-21: a newer agent.py beside an older schemas.py did exactly that.
+# Failing at import stops a deploy with mismatched files from going live;
+# Render keeps the previous version running instead.
+_REQUIRED_FIELDS = {"needs_live_source", "out_of_scope_reason", "gen4_charge",
+                    "approach_request", "approach_type"}
+_have = set(getattr(AIPQueryExtraction, "model_fields", None) or {}) \
+    or set(getattr(AIPQueryExtraction, "__annotations__", {}))
+if _REQUIRED_FIELDS - _have:
+    raise ImportError(
+        "schemas.py is older than agent.py — missing field(s) "
+        f"{sorted(_REQUIRED_FIELDS - _have)}. Copy the schemas.py delivered "
+        "with this agent.py.")
+
 log = logging.getLogger("vannie.agent")
 client = OpenAI(api_key=config.OPENAI_API_KEY)
 
@@ -52,32 +68,6 @@ _RWY_INV_RE = re.compile(
 # onto another's letdown and assert values that don't match the source.
 _APPROACH_PROC_RE = re.compile(
     r"\b(holding|letdown|let[\s-]?down|missed[\s-]*approach|approach procedure)\b", re.I)
-# Instrument-approach types, matched against the MODEL's procedure_type field
-# (never the raw text). "GENERIC" is an approach asked with no type named.
-_APPROACH_TYPES = ("ILS", "LOC", "VOR", "NDB", "RNAV", "RNP", "GNSS", "GLS")
-
-
-def _approach_type(pt):
-    """'ILS' / 'VOR/DME' / 'RNAV (GNSS)' -> that type; 'IAP' -> 'GENERIC';
-    'Approach', 'SID', 'Tower', None -> None.
-
-    'Approach' on its own is NOT a procedure: like 'Tower' and 'ATIS' it names
-    an ATC UNIT. Confirmed by the 40-aerodrome check: treating it as a generic
-    approach procedure sent "PHSIA approach frequency" to the plate flow and
-    replied with an RNAV chart. An untyped approach PROCEDURE is tagged 'IAP'
-    instead, which nothing else can mean."""
-    if not pt:
-        return None
-    up = str(pt).upper()
-    for t in _APPROACH_TYPES:
-        if re.search(rf"\b{t}\b", up):
-            return t
-    if up.strip() in ("IAP", "INSTRUMENT APPROACH", "INSTRUMENT APPROACH PROCEDURE",
-                      "APPROACH PROCEDURE"):
-        return "GENERIC"
-    return None
-
-
 def _aerodromes_named_in(raw):
     """Every aerodrome with a published name, alias, VOR ident or ICAO code
     present as a whole word in the user's text. Unlike resolver.match_name()
@@ -98,28 +88,6 @@ def _aerodromes_named_in(raw):
         return found
     except Exception:  # noqa: BLE001 — never let a guard break extraction
         return set()
-
-
-def _asks_declared(raw):
-    """synthesize._DECLARED_RE (TORA/TODA/ASDA/LDA), imported lazily like
-    _asks_minima. If it cannot be imported, nothing changes."""
-    try:
-        import synthesize
-        return bool(synthesize._DECLARED_RE.search(raw or ""))
-    except Exception:  # noqa: BLE001
-        return False
-
-
-def _asks_minima(raw):
-    """synthesize._MINIMA_RE, the existing safety rule for minima. Imported
-    lazily so agent.py has no import-time dependency on synthesize; if it
-    cannot be imported, nothing is excluded (the minima question then reaches
-    the plate flow, which shows the plate that carries those minima)."""
-    try:
-        import synthesize
-        return bool(synthesize._MINIMA_RE.search(raw or ""))
-    except Exception:  # noqa: BLE001
-        return False
 
 
 # A genuine greeting/smalltalk — the ONLY thing that should get the canned reply.
@@ -486,6 +454,12 @@ def _apply_corrections(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
         _up = _tok.upper()
         if _up in resolver.VALID_ICAO or _up not in _known_raw:
             continue
+        if not _model_named(ex, _up):
+            # A TWO-LETTER ident is also an English word ("be", "ok", "go",
+            # "ma") — measured 2026-11-19: "What will the transition level be
+            # at Kano?" became navaid BE with DNKN dropped. Take one only when
+            # the model itself named it as the subject.
+            continue
         if resolver.match_name(_up) and _up not in _vor_idents:
             continue          # an ordinary aerodrome alias — leave it alone
         if _up in _vor_idents and not resolver._ident_is_also_navaid(_up):
@@ -540,6 +514,8 @@ def _apply_corrections(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
                 up = tok.upper()
                 if up in resolver.VALID_ICAO:
                     continue
+                if not _model_named(ex, up):
+                    continue      # "is it ok to land?" is not navaid OK
                 if up in known:
                     ex.aerodrome_name = up
                     break
@@ -639,54 +615,50 @@ def _apply_corrections(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
             ex.intent = "chart_retrieval"
             if not ex.icao_code and len(cands) == 1 and _may_adopt_icao:
                 ex.icao_code = next(iter(cands))
-    # 6b2) AN INSTRUMENT APPROACH ASKED AS "WHAT IS ..." IS STILL AN APPROACH.
-    #     Confirmed live: "What is the ILS approach in Kano" came back as a
-    #     text lookup, the subsection classifier picked AD 2.17, and the facts
-    #     path answered with the TMA's "Kano Approach" CALL SIGN — the word
-    #     matched, the meaning did not. An approach procedure is never
-    #     synthesised or looked up as text; its one safe destination is the
-    #     plate flow, which asks type and runway.
+    # 6b2) AN APPROACH QUESTION GOES WHERE THE MODEL SAYS IT BELONGS.
+    #     The word "approach" names three things in this AIP: the instrument
+    #     approach (plate + AD 2.22 holding/letdown/missed), the Approach ATC
+    #     unit (AD 2.18 frequency, AD 2.17 call sign) and approach minima. Only
+    #     the meaning of the whole question tells them apart, so the model
+    #     decides (schemas.approach_request) and this step acts on its answer.
+    #     Nothing here reads the pilot's wording.
     #
-    #     Reads the MODEL's fields, not the raw text: the model has already
-    #     named the approach type in procedure_type. Restricted to
-    #     procedure_lookup, so "ILS category at Lagos" (aerodrome_fact, AD 2.19
-    #     navaid data) and "ILS frequency at Kano" (frequency_retrieval) are
-    #     untouched.
-    #     An untyped approach the model tagged IAP is routed from
-    #     aerodrome_fact too: the model itself has said it is a procedure.
-    #     A FREQUENCY question is never routed, whatever its tags.
+    #     Confirmed live failures this replaces:
+    #       "What is the ILS approach in Kano" -> AD 2.17 call sign block
+    #       "Show me sokoto approach"          -> AD 2.18 tower frequency
+    #     An approach procedure is never synthesised or looked up as text; its
+    #     one safe destination is the plate flow, which asks type and runway.
     #
-    #     MINIMA ARE EXCLUDED. "approach minima at Kano" is procedure_lookup
-    #     with an approach type, and its established destination is AD 2.22
-    #     shown verbatim (synthesize's minima rule). That rule is reused, not
-    #     copied, so the two can never disagree.
-    _apt = _approach_type(getattr(ex, "procedure_type", None))
-    if ex.intent != "frequency_retrieval" and \
-            ((ex.intent == "procedure_lookup" and _apt) or
-            (ex.intent == "aerodrome_fact" and _apt == "GENERIC")) \
-            and not _asks_minima(raw):
+    #     approach_request is the model's dedicated answer to "which of the
+    #     three?", so it wins over the general intent when they disagree —
+    #     "Show me sokoto approach" came back as a frequency question. The
+    #     opposite case (a real frequency question tagged 'procedure') is
+    #     measured by check_approach_routing.py's controls at every aerodrome.
+    #     Minima keep their own route (AD 2.22 verbatim).
+    _ar = getattr(ex, "approach_request", None)
+    if _ar == "procedure":
         cands = resolver.match_name(raw)
         if ex.icao_code in resolver.VALID_ICAO or ex.aerodrome_name or len(cands) == 1:
             ex.intent = "chart_retrieval"
+            # The plate flow takes its type from procedure_type. The model's
+            # approach_type is a fixed choice (ILS/VOR/RNAV/RNP/NDB) or null;
+            # null makes clarify ASK which type rather than search for one.
+            ex.procedure_type = getattr(ex, "approach_type", None)
             if not ex.icao_code and len(cands) == 1 and _may_adopt_icao:
                 ex.icao_code = next(iter(cands))
+    elif _ar == "unit" and ex.intent == "chart_retrieval":
+        ex.intent = "frequency_retrieval"
+
     # 6b3) DECLARED DISTANCES ARE NEVER A CHART. Measured on the stress set
     #     (2026-10-20): 'lda at Uyo RWY 03' and 'toda at Zaria RWY 23' came
     #     back as chart_retrieval and were answered with a plate, where August
-    #     answered them from the structured AD 2.13 record. The structured
-    #     record is the safe destination: AD 2.13 values differ per runway end.
-    #     Reuses synthesize._DECLARED_RE, the existing rule for this field, so
-    #     the two cannot disagree. A user who asks for a chart or plate by name
-    #     still gets one.
-    if _asks_declared(raw):
-        if ex.intent == "chart_retrieval" and not _CHART_NOUN_RE.search(raw):
-            ex.intent = "runway_data"
-        if hasattr(ex, "ad2_subsection"):
-            ex.ad2_subsection = "2.13"
-    # A bare "approach" names no type. Passed on, clarify would look for a
-    # chart TYPE called "approach" and find none; cleared, it asks which.
-    if _apt == "GENERIC":
-        ex.procedure_type = None
+    #     answered them from the structured AD 2.13 record. Decided on the
+    #     model's own subsection choice (AD 2.13), not on the wording: when the
+    #     model says the answer is in AD 2.13 and no approach was asked about,
+    #     a chart is the wrong destination.
+    _sub = str(getattr(ex, "ad2_subsection", "") or "").upper().replace("AD", "").strip()
+    if ex.intent == "chart_retrieval" and _sub == "2.13" and not _ar:
+        ex.intent = "runway_data"
     # 6c) A REFUSAL needs positive evidence. If the model said out_of_scope but
     #     the query resolves to exactly one Nigerian aerodrome and the model
     #     gave no reason that puts the answer outside the AIP (live source,
@@ -765,15 +737,26 @@ _SYSTEM = (
     "parking/docking/stand, obstacle, terrain, area, and en-route charts. Verbs like "
     "show/pull/display/'plate for'/'chart for' signal this, as does naming a plate "
     "type even without a verb ('the RNAV (GNSS) approach for Kano').\n"
-    "  ANY INSTRUMENT APPROACH at an aerodrome is chart_retrieval, however it "
-    "is asked: 'what is the ILS approach in Kano', 'what is the approach in "
-    "Kano', 'VOR approach for Abuja runway 22', 'how do I fly the approach "
-    "into Sokoto'. Set procedure_type to the type named (ILS, VOR, RNAV, RNP, "
-    "NDB), or 'IAP' when no type is named; Vannie then asks which type "
-    "and runway and sends the plate. 'Approach' as an ATC UNIT is different "
-    "and is NEVER chart_retrieval: 'PHSIA approach frequency', 'frequency of "
-    "Kano Approach' and 'Lagos approach freq' are frequency_retrieval with "
-    "procedure_type 'Approach'; its call sign is AD 2.17.\n"
+    "  AN INSTRUMENT APPROACH at an aerodrome is chart_retrieval with "
+    "approach_request='procedure': 'what is the approach in Kano', 'what is "
+    "the ILS approach in Kano', 'approach plate for Sokoto', 'how do I fly the "
+    "approach into Yola'. Set approach_type to the type named, or null; "
+    "Vannie then asks which type and runway and sends the plate.\n"
+    "  An approach TYPE before 'approach' always means the procedure: 'Abuja "
+    "VOR approach', 'Kano ILS approach', 'RNP approach Gombe' are "
+    "chart_retrieval, approach_request='procedure', with that approach_type — "
+    "never the ATC unit, and never a choice.\n"
+    "  A place name followed by 'approach' with no type ('Sokoto approach', "
+    "'what is Sokoto approach', 'Show me Sokoto approach') is the Approach ATC "
+    "UNIT, like 'Sokoto Tower': frequency_retrieval with "
+    "approach_request='unit' (Vannie separately offers the pilot the plate as "
+    "a choice). So is a question that asks for a frequency, call sign or how "
+    "to contact it ('Sokoto approach frequency', 'frequency of Kano "
+    "Approach', 'what frequency is Lagos Approach on').\n"
+    "  Approach or landing MINIMA are procedure_lookup with "
+    "approach_request='minima'. Approach RADAR control and radar procedures "
+    "are procedure_lookup with approach_request null — they are not an "
+    "instrument approach.\n"
     "  DECLARED DISTANCES (TORA, TODA, ASDA, LDA) are runway data (AD 2.13), "
     "NEVER chart_retrieval, even when a runway is named: 'lda at Uyo RWY 03', "
     "'toda at Zaria RWY 23'.\n"
@@ -799,7 +782,7 @@ _SYSTEM = (
     "terse phrasing ('abuja twr freq', 'how high is abuja', 'longest rwy lagos') is "
     "still IN SCOPE — classify it normally.\n\n"
     "OUT OF SCOPE is a POSITIVE classification, not a leftover bucket. Before you "
-    "may answer out_of_scope, one of these three must be true. Check them "
+    "may answer out_of_scope, one of these four must be true. Check them "
     "explicitly:\n"
     "  (a) LIVE — the ANSWER is a state that changes from day to day and is "
     "promulgated by NOTAM, ATIS, METAR or a controller, so the AIP cannot hold "
@@ -827,6 +810,9 @@ _SYSTEM = (
     "en-route, terminal navigation — and are IN SCOPE (national_lookup, set "
     "gen4_charge).\n"
     "  (c) PLACE — the airport is OUTSIDE Nigeria.\n"
+    "  (d) NOT AN AIP QUESTION — a request to DO something rather than look "
+    "something up: book or change a flight, a flight's departure time, a "
+    "ticket, a hotel booking (reason planning_or_flow).\n"
     "Any ONE of these being YES means out_of_scope, and (c) is decisive on its "
     "own: if the airport is not Nigerian, answer out_of_scope no matter how "
     "ordinary the question is — 'ILS frequency at Heathrow' and 'runway length "
@@ -887,21 +873,46 @@ _SYSTEM = (
 )
 
 
+def _extraction_messages(user_text: str):
+    """The messages sent to the extraction model.
+
+    prompts_v2 (EXTRACTION_PROMPT=v2) was measured worse than this prompt on
+    every check on 2026-10-21 and has been removed: for gpt-4o-mini, a rule
+    stated in the system prompt with examples is followed more reliably than
+    the same rule stated only in a schema field description."""
+    return [{"role": "system", "content": _SYSTEM},
+            {"role": "user", "content": user_text[:2000]}]
+
+
+def _model_named(ex, token: str) -> bool:
+    """May a word of the pilot's raw text be taken as the subject?
+
+    Tokens of three or more characters: yes — that is the measured fix for
+    entities the model put in the wrong field. A two-letter token: only when
+    the model's own extraction already named it, because two-letter navaid
+    idents (BE, GO, OK, MA, IL, ...) are ordinary English words. The model
+    decides; the raw text never overrides it with a two-letter word."""
+    if len(token) > 2:
+        return True
+    named = {(ex.aerodrome_name or "").strip().upper(), (ex.icao_code or "").strip().upper()}
+    return token.upper() in named
+
+
 def extract_query_parameters(user_text: str) -> Optional[AIPQueryExtraction]:
     """Returns the parsed parameters, or None if extraction fails (caller abstains)."""
     try:
         response = retry_call(
             client.beta.chat.completions.parse,
             model=config.EXTRACTION_MODEL,
-            messages=[
-                {"role": "system", "content": _SYSTEM},
-                {"role": "user", "content": user_text[:2000]},
-            ],
+            messages=_extraction_messages(user_text),
             response_format=AIPQueryExtraction,
-            temperature=0.0,
+            **config.model_params(config.EXTRACTION_MODEL, "extraction"),
         )
         return _backstop(response.choices[0].message.parsed, user_text)
-    except Exception:  # noqa: BLE001 — never let an LLM/API hiccup crash the request
+    except Exception as e:  # noqa: BLE001 — never let an LLM/API hiccup crash the request
+        if type(e).__name__ == "DataUnavailable":
+            raise                 # main says "couldn't reach the database", not "not found"
+
         log.exception("extraction failed")
         return None
 
