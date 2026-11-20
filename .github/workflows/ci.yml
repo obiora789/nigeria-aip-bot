@@ -21,7 +21,7 @@ jobs:
       TELEGRAM_BOT_TOKEN: test
       QUERY_LOG_ENABLED: "0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
