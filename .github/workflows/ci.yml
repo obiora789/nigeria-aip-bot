@@ -12,6 +12,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # The offline tests take under a minute; a hang must fail fast, not run
+    # for 14 minutes as on 2026-11-20 (see conftest.py).
+    timeout-minutes: 10
     # Dummy creds so modules import without secrets. The offline tests do NO
     # network I/O — clients are built lazily, nothing connects at import.
     env:

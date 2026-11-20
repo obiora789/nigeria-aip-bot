@@ -10,7 +10,13 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    groups:                     # one PR a week for all Python packages, not one each
+      python-packages:
+        patterns: ["*"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:                     # one PR a week for all workflow actions
+      github-actions:
+        patterns: ["*"]

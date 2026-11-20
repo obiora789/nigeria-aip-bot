@@ -56,10 +56,20 @@ class FakeDB:
 
 
 def _with_db(fake):
-    import observability
-    real = observability.supabase
-    observability.supabase = fake
+    """Swap in the fake query-log table and switch logging ON for this test.
+
+    CI runs with QUERY_LOG_ENABLED=0 (measured 2026-11-20: these tests failed
+    there and passed on the Mac). They test logging, so they turn it on
+    themselves rather than depend on the machine's setting."""
+    import config, observability
+    real = (observability.supabase, config.QUERY_LOG_ENABLED)
+    observability.supabase, config.QUERY_LOG_ENABLED = fake, True
     return real
+
+
+def _restore(real):
+    import config, observability
+    observability.supabase, config.QUERY_LOG_ENABLED = real
 
 
 # ------------------------------------------------------------ 2. audit trail
@@ -72,7 +82,7 @@ def test_every_logged_question_carries_its_answer_and_what_produced_it():
         observability.log_query(chat_id=1, query="Lagos tower frequency", path="comms",
                                 qid="q1", reply="Lagos — AD 2.18 ... 118.1 MHz")
     finally:
-        observability.supabase = real
+        _restore(real)
     row = db.calls[-1][2]
     assert row["reply"].startswith("Lagos — AD 2.18")
     assert config.EXTRACTION_MODEL in row["models"] and config.SYNTHESIS_MODEL in row["models"]
@@ -93,7 +103,7 @@ def test_logging_survives_a_table_without_the_audit_columns():
         assert observability._audit_columns_ok is False, "says what to run"
         observability.log_query(chat_id=1, query="q2", path="comms", reply="r2")
     finally:
-        observability.supabase = real
+        _restore(real)
         observability._audit_columns_ok = True
     rows = [c[2] for c in db.calls if c[1] == "insert"]
     assert [r["query"] for r in rows] == ["q", "q2"], "no question lost"
@@ -107,7 +117,7 @@ def test_long_replies_are_truncated_not_dropped():
     try:
         observability.log_query(query="q", reply="x" * 20000)
     finally:
-        observability.supabase = real
+        _restore(real)
     assert len(db.calls[-1][2]["reply"]) == observability.REPLY_MAX
 
 
@@ -219,7 +229,7 @@ def test_erasure_deletes_this_chats_rows_only():
         assert observability.delete_chat_logs(42) is None, "unlinkable rows: say so"
     finally:
         config.CHAT_HASH_PEPPER = pep
-        observability.supabase = real
+        _restore(real)
 
 
 def test_retention_deletes_old_logs_and_expired_context():
@@ -239,7 +249,7 @@ def test_retention_deletes_old_logs_and_expired_context():
         assert [c[0] for c in db.calls] == ["conversation_context"], "0 = keep logs"
     finally:
         config.LOG_RETENTION_DAYS = days
-        observability.supabase = real
+        _restore(real)
 
 
 def test_context_keys_use_the_secret_pepper():
