@@ -32,5 +32,5 @@ python-multipart>=0.0.13
 #               vectorise_aip_v2.py. Confirmed via
 #               `grep -rl "^import fitz" *.py` — 29 files, not a stray import.
 pypdfium2>=4.30
-pdfplumber>=0.11
+pdfplumber>=0.11.10
 PyMuPDF>=1.24
