@@ -214,3 +214,50 @@ def test_a_booking_refusal_is_not_overridden_for_naming_lagos():
     ex = _bs("book me a flight to Lagos", intent="out_of_scope",
              out_of_scope_reason="planning_or_flow", aerodrome_name="Lagos")
     assert ex.intent == "out_of_scope"
+
+
+# --- "approach procedures" asks type and runway (measured live 2026-11-21) ---
+# "Approach procedures in sokoto" and "What is sokoto approach procedures"
+# dumped Sokoto's whole AD 2.22 (every holding, letdown and missed approach,
+# for every runway) while "Sokoto approach plate" asked ILS/RNAV/VOR, then
+# the runway. The prompt told the model that "the other AD 2.22 procedures"
+# were procedure_lookup and gave no "approach procedures" example, so the
+# model never answered approach_request='procedure' for them.
+
+_PROC_QUESTIONS = ["Approach procedures in sokoto", "What is sokoto approach procedures",
+                   "Missed approach procedure at Ilorin",
+                   "instrument approach procedure for Kano"]
+
+
+def test_the_prompt_sends_approach_procedures_to_the_approach_flow():
+    import agent, schemas
+    s = agent._SYSTEM
+    assert "'approach procedures in Sokoto'" in s and "'what is Sokoto approach procedures'" in s
+    assert "AD 2.22 procedures that are NOT an instrument approach" in s
+    assert "are NOT procedure_lookup: they are chart_retrieval" in s
+    desc = schemas.AIPQueryExtraction.model_fields["approach_request"].description
+    assert "approach procedure(s)" in desc and "'approach procedures in Sokoto'" in desc
+
+
+def test_the_models_procedure_answer_reaches_the_type_and_runway_choice():
+    """Whatever general intent and AD 2.22 subsection the model also gives,
+    approach_request='procedure' with no type goes to the plate flow, which
+    asks the type and then the runway."""
+    for q in _PROC_QUESTIONS:
+        place = q.split()[-1]
+        ex = _bs(q, intent="procedure_lookup", approach_request="procedure",
+                 ad2_subsection="2.22", aerodrome_name=place)
+        assert ex.intent == "chart_retrieval", (q, ex.intent)
+        assert ex.procedure_type is None, (q, "no type named: the flow must ASK")
+
+
+def test_the_older_wording_check_does_not_divert_them_to_ad222_text():
+    """main.py's chart branch clears the plate flow for AD 2.22 questions it
+    reads as 'not an approach'. It must not catch these."""
+    import subsection_router as r
+    from types import SimpleNamespace as N
+    import main
+    for q in _PROC_QUESTIONS:
+        diverted = r.detect_subsection(q) == "AD 2.22" and not r.is_approach_query(q)
+        assert not diverted, q
+        assert main._is_approach(N(procedure_type=None), q), q

@@ -23,7 +23,8 @@ from schemas import AIPQueryExtraction
 # Failing at import stops a deploy with mismatched files from going live;
 # Render keeps the previous version running instead.
 _REQUIRED_FIELDS = {"needs_live_source", "out_of_scope_reason", "gen4_charge",
-                    "approach_request", "approach_type"}
+                    "approach_request", "approach_type", "sid_request", "sid_name",
+                    "aerodrome_overview"}
 _have = set(getattr(AIPQueryExtraction, "model_fields", None) or {}) \
     or set(getattr(AIPQueryExtraction, "__annotations__", {}))
 if _REQUIRED_FIELDS - _have:
@@ -450,9 +451,17 @@ def _apply_corrections(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
     _entity_hit = False
     _vor_idents = set(resolver.VOR_IDENTS.values())
     _known_raw = {} if _dct_hit else resolver.published_entities()
+    # A SID is named after its end fix ("PISBA 1Q"), and that fix is a
+    # published waypoint. When the model says the question is about an
+    # aerodrome's SID, the SID's own words are not the subject: measured
+    # 2026-11-21, "PISBA 1Q SID at Lagos" lost Lagos to waypoint PISBA here.
+    _sid_words = (set(re.findall(r"[A-Z0-9]+", (getattr(ex, "sid_name", None) or "").upper()))
+                  if getattr(ex, "sid_request", False) else set())
     for _tok in re.findall(r"\b[A-Za-z](?:[A-Za-z0-9]|/)*[A-Za-z0-9]\b", raw or ""):
         _up = _tok.upper()
         if _up in resolver.VALID_ICAO or _up not in _known_raw:
+            continue
+        if _up in _sid_words:
             continue
         if not _model_named(ex, _up):
             # A TWO-LETTER ident is also an English word ("be", "ok", "go",
@@ -648,6 +657,18 @@ def _apply_corrections(ex: AIPQueryExtraction, raw: str) -> AIPQueryExtraction:
                 ex.icao_code = next(iter(cands))
     elif _ar == "unit" and ex.intent == "chart_retrieval":
         ex.intent = "frequency_retrieval"
+    # 6b2-sid) A SID QUESTION GOES TO THE SID CHOICE, as an approach question
+    #     goes to the approach choice. The model decides (schemas.sid_request);
+    #     nothing here reads the pilot's wording. main.py asks the runway, then
+    #     the SID, from the aerodrome's own AD 2.22 headings (sids.py).
+    #     An approach answer wins if the model somehow set both.
+    if getattr(ex, "sid_request", False) and _ar != "procedure":
+        cands = resolver.match_name(raw)
+        if ex.icao_code in resolver.VALID_ICAO or ex.aerodrome_name or len(cands) == 1:
+            ex.intent = "chart_retrieval"
+            ex.procedure_type = "SID"
+            if not ex.icao_code and len(cands) == 1 and _may_adopt_icao:
+                ex.icao_code = next(iter(cands))
 
     # 6b3) DECLARED DISTANCES ARE NEVER A CHART. Measured on the stress set
     #     (2026-10-20): 'lda at Uyo RWY 03' and 'toda at Zaria RWY 23' came
@@ -729,9 +750,12 @@ _SYSTEM = (
     "transition altitude, VOR/DME and ILS identifiers and frequencies, the runway "
     "in use (AD 2.22.2 publishes a runway-in-use statement for every aerodrome — "
     "set ad2_subsection 2.22).\n"
-    "- procedure_lookup: SID/STAR text, approach and take-off minima, and the "
-    "other AD 2.22 procedures (radar, VFR, departure, emergency). NOT an "
-    "instrument approach — that is chart_retrieval.\n"
+    "- procedure_lookup: STAR text, approach and take-off minima, and the "
+    "AD 2.22 procedures that are NOT an instrument approach or a SID (radar, "
+    "VFR, runway in use, noise abatement, emergency). An aerodrome's APPROACH "
+    "PROCEDURE(S) — the instrument approach, its holding, letdown or missed "
+    "approach — and its SIDs are NOT procedure_lookup: they are "
+    "chart_retrieval (below).\n"
     "- chart_retrieval: the user wants to SEE a chart/plate. Covers ILS, RNAV, "
     "RNAV(GNSS), RNP, VOR, NDB, SID/departure, STAR/arrival, aerodrome, "
     "parking/docking/stand, obstacle, terrain, area, and en-route charts. Verbs like "
@@ -740,8 +764,30 @@ _SYSTEM = (
     "  AN INSTRUMENT APPROACH at an aerodrome is chart_retrieval with "
     "approach_request='procedure': 'what is the approach in Kano', 'what is "
     "the ILS approach in Kano', 'approach plate for Sokoto', 'how do I fly the "
-    "approach into Yola'. Set approach_type to the type named, or null; "
-    "Vannie then asks which type and runway and sends the plate.\n"
+    "approach into Yola', 'approach procedures in Sokoto', 'what is Sokoto "
+    "approach procedures', 'instrument approach procedure for Kano', "
+    "'missed approach procedure at Ilorin', 'holding procedure for the Abuja "
+    "ILS'. Each published approach has its own holding, letdown and missed "
+    "approach, for one type and one runway, so these are never answered as "
+    "one block of AD 2.22 text. Set approach_type to the type named, or null; "
+    "Vannie then asks which type and runway and sends the plate with that "
+    "approach's own procedures.\n"
+    "  A message that ONLY names an aerodrome and asks nothing about it — "
+    "'Kano', 'Lagos airport', 'DNMM', 'DNAA', 'tell me about Sokoto' — sets "
+    "aerodrome_overview=true (intent aerodrome_fact, every other field "
+    "null): Vannie sends the same summary card for every aerodrome. If "
+    "anything at all is asked (a frequency, runways, a chart, the ICAO "
+    "code, where it is), aerodrome_overview is false. A four-letter code "
+    "typed on its own ('DNAA', 'DNKN?') asks nothing: it is "
+    "aerodrome_overview=true, NOT icao_lookup — the card's first line gives "
+    "the name and the code anyway.\n"
+    "  A STANDARD INSTRUMENT DEPARTURE (SID) at an aerodrome is chart_retrieval "
+    "with sid_request=true: 'SID Lagos', 'Lagos SIDs', 'what are the "
+    "departures from Abuja', 'SID for runway 18R at Lagos', 'IBA 1Q "
+    "departure'. Set sid_name only when one SID is named, and runway when a "
+    "runway is named. Each SID is for one runway, so Vannie asks the runway, "
+    "then the SID, and sends that one SID. Take-off minima, the departure "
+    "frequency and STARs are not a SID request.\n"
     "  An approach TYPE before 'approach' always means the procedure: 'Abuja "
     "VOR approach', 'Kano ILS approach', 'RNP approach Gombe' are "
     "chart_retrieval, approach_request='procedure', with that approach_type — "
@@ -760,8 +806,10 @@ _SYSTEM = (
     "  DECLARED DISTANCES (TORA, TODA, ASDA, LDA) are runway data (AD 2.13), "
     "NEVER chart_retrieval, even when a runway is named: 'lda at Uyo RWY 03', "
     "'toda at Zaria RWY 23'.\n"
-    "- icao_lookup: a pure name<->code mapping, e.g. 'what city is DNAA?', 'what is "
-    "DNBC?', 'ICAO code for Port Harcourt?'. Fill icao_code or aerodrome_name.\n"
+    "- icao_lookup: a pure name<->code mapping that the message ASKS for, e.g. "
+    "'what city is DNAA?', 'what is DNBC?', 'ICAO code for Port Harcourt?'. "
+    "Fill icao_code or aerodrome_name. A bare code with no question ('DNAA') is "
+    "not icao_lookup; it is aerodrome_overview (above).\n"
     "- airspace_lookup (ENR): FIR/UIR/TMA/CTR limits, airways/routes, waypoints, "
     "prohibited/restricted/danger areas, en-route navaids, cruising levels. Use ONLY "
     "for airspace itself, not an aerodrome's own data. When the query NAMES a "

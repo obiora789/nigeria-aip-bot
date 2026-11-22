@@ -140,6 +140,17 @@ def save_scope_pending(chat_id, icao, ident, query, qid, last_icao=None) -> None
                     "query": query, "qid": qid})
 
 
+def save_sid_pending(chat_id, icao, label, runway, name, qid, options=None,
+                     last_icao=None) -> None:
+    """Remember a SID request awaiting a runway or SID tap (or the same thing
+    typed). `options` are the buttons offered, so a typed reply can be matched
+    against exactly what was offered. qid guards against stale taps."""
+    _write(chat_id, last_icao=last_icao or icao, last_query=None,
+           pending={"kind": "sid_clar", "icao": icao, "label": label,
+                    "runway": runway or "", "name": name or "", "qid": qid,
+                    "options": list(options or [])})
+
+
 def save_chart_pending(chat_id, icao, label, ptype, runway, qid, last_icao=None) -> None:
     """Remember an under-specified chart request awaiting a clarifying answer
     (a button tap or a bare type/runway token). qid guards against stale taps;

@@ -52,6 +52,11 @@ APPROACH_PHRASINGS = [
     "What is the ILS approach in {x}",
     "{x} VOR approach",
     "RNAV approach for {x}",
+    # Measured live 2026-11-21: these dumped AD 2.22 text instead of asking
+    # the approach type and runway like the plate questions above.
+    "Approach procedures in {x}",
+    "What is {x} approach procedures",
+    "Missed approach procedure at {x}",
     # NOT here: "{x} approach", "What is {x} approach", "Show me {x} approach".
     # Those have two readings (the Approach ATC unit or the plate): Vannie
     # answers the unit and offers the plate as a button (disambiguate.py,

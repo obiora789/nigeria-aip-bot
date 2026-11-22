@@ -225,6 +225,94 @@ def chart_intro(res, ex) -> str:
             f"{config.DISCLAIMER}")
 
 
+def _plain_number(v) -> str:
+    """199.0 -> '199', 893.1 -> '893.1'. Only drops a trailing '.0' that the
+    float storage added; never rounds (D7 in the audit: values stored as
+    floats are fixed at ingestion in car 3)."""
+    t = str(v).strip()
+    return t[:-2] if t.endswith(".0") else t
+
+
+def overview_reply(res, ad22: list, runways: list, comms: list) -> str:
+    """The same summary card for every aerodrome, whatever it is called
+    (Obiora, 2026-11-21: "Kebbi", "Lagos", "Sokoto", "Kano" each got a
+    different section). Every line is an exact read of a structured record,
+    shown as stored; a section with nothing stored says so instead of
+    borrowing from elsewhere."""
+    head = f"{res.label} — {res.icao}"
+    lines = [head, ""]
+
+    lines.append("Aerodrome (AD 2.2)")
+    a = (ad22 or [{}])[0]
+    arp = (a.get("arp_site_description") or "").strip()
+    m, ft = a.get("elevation_m"), a.get("elevation_ft")
+    if arp:
+        lines.append(f"Reference point: {arp}")
+    if m is not None or ft is not None:
+        parts = [f"{_plain_number(m)} m" if m is not None else "",
+                 f"{_plain_number(ft)} ft" if ft is not None else ""]
+        lines.append("Elevation: " + " / ".join(p for p in parts if p))
+    if not arp and m is None and ft is None:
+        lines.append("Not in my stored copy — see AD 2.2.")
+
+    lines += ["", "Runways (AD 2.12)"]
+    if runways:
+        for r in runways:
+            L, W = r.get("length_m"), r.get("width_m")
+            dims = (f"{_plain_number(L)} x {_plain_number(W)} m" if L and W
+                    else "dimensions not stored")
+            lines.append(f"RWY {r.get('designation', '?')} — {dims}")
+    else:
+        lines.append("Not in my stored copy — see AD 2.12.")
+
+    lines += ["", "ATS communications (AD 2.18)"]
+    shown = 0
+    for c in comms or []:
+        freqs = ", ".join(f"{f.get('value')} {f.get('unit', '')}".strip()
+                          for f in (c.get("frequencies") or []))
+        if c.get("service") and freqs:
+            lines.append(f"{c['service']}: {freqs}")
+            shown += 1
+    if not shown:
+        lines.append("Not in my stored copy — see AD 2.18.")
+
+    return ("\n".join(lines) + f"\n\n\u2014\u2014\u2014\nSource: Nigeria AIP \u00b7 "
+            f"AD 2.2, 2.12, 2.18 \u00b7 {config.AIRAC_CYCLE}\n{config.DISCLAIMER}\n\n"
+            f"Tap a topic for more:")
+
+
+def sid_reply(res, sid, description, chart_stored: bool = True) -> str:
+    """One SID: its published description verbatim when sids.description()
+    proved it belongs to this SID, otherwise a pointer to where the pilot
+    can read it. The coding table is never shown as text (sids.py explains
+    why). The pointer names a chart only when one is actually being sent:
+    measured 2026-11-21, no aerodrome has a SID chart page stored, and a
+    pointer to a chart Vannie does not send is no answer."""
+    code = f" ({sid.code})" if sid.code else ""
+    head = f"{sid.name}{code} — SID from {res.label} RWY {sid.runway}"
+    where = ("the SID chart below" if chart_stored
+             else f"the SID chart in the official AIP ({res.label} AD 2.24)")
+    if description:
+        body = f"Published description (verbatim from AD 2.22):\n{description}"
+        if not chart_stored:
+            body += f"\n\nI don't have this SID's chart stored — see {where}."
+    else:
+        body = (f"The route, altitudes and speeds: see {where}. I don't show this "
+                "SID's AD 2.22 coding table as text: in my stored copy it can't "
+                "be matched to this SID with certainty.")
+    return (f"{head}\n\n{body}\n\n\u2014\u2014\u2014\nSource: Nigeria AIP \u00b7 "
+            f"AD 2.22 \u00b7 {config.AIRAC_CYCLE}\n{config.DISCLAIMER}")
+
+
+def sid_charts_intro(res, runway=None) -> str:
+    """Names the runway when the SID chart for that runway was found;
+    otherwise says every SID page is being sent."""
+    if runway:
+        return f"SID chart for {res.label} RWY {runway} \u00b7 {config.AIRAC_CYCLE}"
+    return (f"SID chart(s) for {res.label} \u00b7 {config.AIRAC_CYCLE} \u2014 every "
+            f"SID page published for {res.label}; the runway is printed on each chart.")
+
+
 def chart_not_found(res, ex) -> str:
     head = f"{ex.procedure_type} " if getattr(ex, "procedure_type", None) else ""
     return (f"I don't have a {head}chart for {res.label} in the AIP "

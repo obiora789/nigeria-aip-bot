@@ -29,7 +29,7 @@ from database import (DataUnavailable, get_aerodrome_data, get_charts, get_chart
                       search_facts_scoped,
                       get_declared_distances, get_lighting_data,
                       get_runway_physical_data, get_section_text,
-                      get_subsection_text, search_aip, search_facts)
+                      get_structured, get_subsection_text, search_aip, search_facts)
 from models import AIPResult, Resolution, SearchOutcome
 import synthesize
 import subsection_router
@@ -38,6 +38,8 @@ import memory
 import clarify
 import observability
 import procedures
+import sids
+from clarify import _rwy_eq
 import toc
 import scope_refusal
 import charges
@@ -47,9 +49,11 @@ from responder import (ambiguous, answer, chart_intro, chart_not_found,
                        grounded_reply,
                        facts_reply, info_block_reply, lighting_data_reply, low_confidence,
                        navaid_reply, not_found, not_in_aip, runway_data_reply,
-                       rwy_char_reply, subsection_reply, unresolved)
+                       overview_reply, rwy_char_reply, sid_charts_intro, sid_reply,
+                       subsection_reply,
+                       unresolved)
 from telegram import (answer_callback, clarify_runway_kb, clarify_scope_kb,
-                      clarify_type_kb,
+                      clarify_type_kb, overview_kb, sid_name_kb, sid_runway_kb,
                       feedback_kb, verify_secret)
 from telegram import send_charts as _tg_send_charts
 from telegram import send_message as _tg_send_message
@@ -399,6 +403,63 @@ async def handle_feedback(cb: dict) -> None:
                                             "Please ask again more specifically.")
             return
 
+        if data.startswith("ov:") and chat_id is not None:
+            # A topic under the aerodrome summary card. The callback carries the
+            # topic and the ICAO, so there is no stored state to expire.
+            if cid:
+                await answer_callback(cid)
+            try:
+                parts = data.split(":")
+                topic, icao = (parts[1], parts[2]) if len(parts) == 3 else ("", "")
+                if topic not in OVERVIEW_TOPICS or icao not in resolver.VALID_ICAO:
+                    await send_message(chat_id, "That button is no longer valid — please ask again.")
+                    return
+                question = OVERVIEW_TOPICS[topic].format(icao=icao)
+                await process(chat_id, question, from_choice=True,
+                              log_as=f"[overview:{topic}] {question}")
+            except Exception:  # noqa: BLE001 — surface, never vanish
+                log.exception("overview topic callback failed")
+                await send_message(chat_id, "Sorry — I couldn't finish that. Please ask again.")
+            return
+
+        if data.startswith("sid:") and chat_id is not None:
+            parts = data.split(":")
+            if len(parts) < 4:
+                if cid:
+                    await answer_callback(cid)
+                return
+            dim, val, qid = parts[1], parts[2], parts[3]
+            if cid:
+                await answer_callback(cid, val)
+            try:
+                ctx = await asyncio.to_thread(memory.load, chat_id)
+                pending = ctx.get("pending") or {}
+                if pending.get("kind") != "sid_clar" or pending.get("qid") != qid:
+                    await send_message(chat_id, "That SID request expired — please ask again.")
+                    return
+                runway = val if dim == "rwy" else (pending.get("runway") or "")
+                name = val if dim == "name" else (pending.get("name") or "")
+                res = SimpleNamespace(icao=pending["icao"],
+                                      label=pending.get("label") or pending["icao"])
+                new_qid = uuid.uuid4().hex[:12]
+                await asyncio.to_thread(
+                    observability.log_query, chat_id=chat_id,
+                    query=f"[sid {dim}={val}] {runway} {name}".strip(),
+                    intent="chart_retrieval", icao=pending["icao"], path="sid",
+                    qid=new_qid)
+                kb = feedback_kb(new_qid)
+
+                async def send_info(text_: str) -> None:
+                    await send_message(chat_id, text_, reply_markup=kb)
+
+                await _run_sid_decision(chat_id, res, pending["icao"], runway, name,
+                                        send_info)
+            except Exception:  # noqa: BLE001 — surface, never vanish
+                log.exception("SID choice callback failed")
+                await send_message(chat_id, "Sorry — I couldn't finish that SID request. "
+                                            "Please ask again (e.g. \"SID Lagos RWY 18R\").")
+            return
+
         if data.startswith("clar:") and chat_id is not None:
             parts = data.split(":")
             if len(parts) < 4:
@@ -551,6 +612,88 @@ async def _run_chart_decision(chat_id, res, chart_icao, ptype, runway, send_info
     await _send_approach_procedures(chat_id, shim, res, send_info)
     await send_charts(chat_id, d.charts, requested_runway=runway or None)
     return "send"
+
+
+async def _run_sid_decision(chat_id, res, icao, runway, name, send_info) -> bool:
+    """SIDs work like approaches (Obiora, 2026-11-21): ask the runway, then the
+    SID, then send that one SID — its published description when it proves it
+    belongs to that SID (sids.description), and the aerodrome's SID chart
+    pages. Options come from the aerodrome's own AD 2.22 headings, never from
+    the pilot's wording. Returns False when the aerodrome publishes no SID
+    headings, so the caller keeps its existing behaviour instead of claiming
+    there is no SID."""
+    text = await asyncio.to_thread(get_section_text, icao, "AD 2.22")
+    d = sids.decide(sids.catalogue(text), runway or "", name or "")
+    if d.action == "none":
+        return False
+    if d.action in ("ask_runway", "no_runway"):
+        qid = uuid.uuid4().hex[:12]
+        await asyncio.to_thread(memory.save_sid_pending, chat_id, icao, res.label,
+                                "", name or "", qid, d.options)
+        lead = (f"I can't find a SID for RWY {d.runway} at {res.label} in my copy "
+                f"of AD 2.22. " if d.action == "no_runway" else "")
+        await send_message(chat_id, f"{lead}SIDs from {res.label} — which runway? Tap one:",
+                           reply_markup=sid_runway_kb(d.options, qid))
+        return True
+    if d.action == "ask_sid":
+        qid = uuid.uuid4().hex[:12]
+        await asyncio.to_thread(memory.save_sid_pending, chat_id, icao, res.label,
+                                d.runway, "", qid, d.options)
+        await send_message(chat_id,
+                           f"SIDs from {res.label} RWY {d.runway} — which one? Tap one:",
+                           reply_markup=sid_name_kb(d.options, qid))
+        return True
+    sid = d.sids[0]
+    every = await asyncio.to_thread(get_charts_smart, icao, "", "")
+    charts = [c for c in every if "sid" in (c.procedure_type or "").lower()]
+    await send_info(sid_reply(res, sid, sids.description(text, sid), bool(charts)))
+    if charts:
+        # SID pages carry their runway once labelled correctly
+        # (16_fix_chart_labels.sql); send that runway's page when there is
+        # one, otherwise every SID page with a note saying so.
+        same = [c for c in charts if c.runway and _rwy_eq(sid.runway, c.runway)]
+        await send_info(sid_charts_intro(res, sid.runway if same else None))
+        await send_charts(chat_id, (same or charts)[: config.MAX_CHARTS])
+    return True
+
+
+# Topic buttons under the summary card: each runs a fixed question through the
+# normal pipeline, so every topic keeps its existing safe handler. The ICAO is
+# used rather than a name so the question resolves to exactly this aerodrome.
+OVERVIEW_TOPICS = {
+    "rwy": "Runway physical characteristics at {icao}",
+    "freq": "ATS communication frequencies at {icao}",
+    "app": "Approach plate for {icao}",
+    "sid": "SID {icao}",
+    "adc": "Aerodrome chart for {icao}",
+    "met": "Meteorological information provided at {icao}",
+    "hrs": "Operational hours at {icao}",
+}
+
+
+async def _send_overview(chat_id, res, qid) -> None:
+    """The same summary card for every aerodrome (Obiora, 2026-11-21), then
+    topic buttons. Only topics this aerodrome actually has are offered:
+    approaches only where an approach chart is stored and it is not a
+    heliport, SIDs only where a SID chart is stored."""
+    ad22, rwys, comms, charts = await asyncio.gather(
+        asyncio.to_thread(get_structured, res.icao, "2.2"),
+        asyncio.to_thread(get_runway_physical_data, res.icao),
+        asyncio.to_thread(get_structured, res.icao, "2.18"),
+        asyncio.to_thread(get_charts_smart, res.icao, "", ""))
+    kinds = " | ".join((c.procedure_type or "").lower() for c in charts)
+    heliport = await asyncio.to_thread(disambiguate.is_heliport, res.icao)
+    topics = ["rwy", "freq"]
+    if "approach" in kinds and not heliport:
+        topics.append("app")
+    if "sid" in kinds:
+        topics.append("sid")
+    if "aerodrome" in kinds:
+        topics.append("adc")
+    topics += ["met", "hrs"]
+    kb = overview_kb(res.icao, topics)
+    kb["inline_keyboard"] += feedback_kb(qid)["inline_keyboard"]
+    await send_message(chat_id, overview_reply(res, ad22, rwys, comms), reply_markup=kb)
 
 
 _AVIATION_INTENTS = {"chart_retrieval", "procedure_lookup", "frequency_retrieval",
@@ -814,6 +957,27 @@ async def process(chat_id: int, text: str, force_scope=None,
             await send_message(chat_id, report)
             return
 
+        # Typed answer to a pending SID choice: a runway, or one of the SIDs
+        # that were offered (compared with the offered buttons, nothing else).
+        p_s = {}
+        if len(text.split()) <= 3:          # a reply to buttons is a few words at most
+            ctx_s = await asyncio.to_thread(memory.load, chat_id)
+            p_s = ctx_s.get("pending") or {}
+        if p_s.get("kind") == "sid_clar":
+            typed = re.sub(r"\s+", "", text).upper()
+            offered = {re.sub(r"\s+", "", o).upper().replace("RWY", ""): o
+                       for o in (p_s.get("options") or [])}
+            pick = offered.get(typed.replace("RWY", "").replace("RUNWAY", ""))
+            if pick:
+                is_rwy = not p_s.get("runway")   # runway buttons are offered first
+                res_shim = SimpleNamespace(icao=p_s["icao"],
+                                           label=p_s.get("label") or p_s["icao"])
+                rec["path"], rec["icao"] = "sid", p_s["icao"]
+                await _run_sid_decision(chat_id, res_shim, p_s["icao"],
+                                        pick if is_rwy else p_s.get("runway") or "",
+                                        "" if is_rwy else pick, send_info)
+                return
+
         # Free-text answer to a pending chart clarification ("VOR", "18L") — treat
         # like a button tap so pilots who type instead of tapping still get through.
         if _BARE_CLAR_RE.match(text.strip()):
@@ -1049,6 +1213,19 @@ async def process(chat_id: int, text: str, force_scope=None,
         if ctx_note:
             await send_message(chat_id, ctx_note)
 
+        # A BARE AERODROME NAME gets the summary card — the model's decision
+        # (schemas.aerodrome_overview), honoured only when it asked for nothing
+        # else, and never when this message continued an earlier request.
+        if (getattr(ex, "aerodrome_overview", False) and res.icao and ctx_note is None
+                and (res.scope_kind or "AD") == "AD"
+                and not (ex.procedure_type or ex.runway
+                         or getattr(ex, "ad2_subsection", None)
+                         or getattr(ex, "approach_request", None)
+                         or getattr(ex, "sid_request", False))):
+            rec["path"] = "overview"
+            await _send_overview(chat_id, res, rec["qid"])
+            return
+
         # ICAO <-> name mapping: answer deterministically from the static table.
         # No retrieval, no LLM — the safest possible path.
         # ONLY for aerodromes. This branch answers from resolver.AERODROMES,
@@ -1074,6 +1251,15 @@ async def process(chat_id: int, text: str, force_scope=None,
         if ex.intent == "chart_retrieval":
             ql = text.lower()
             chart_icao = res.icao
+            # A SID question (the model's sid_request) goes to the SID choice:
+            # runway, then SID, as an approach goes to the approach choice.
+            if (getattr(ex, "sid_request", False) and res.icao
+                    and (res.scope_kind or "AD") == "AD"):
+                rec["path"] = "sid"
+                if await _run_sid_decision(chat_id, res, res.icao, ex.runway or "",
+                                           getattr(ex, "sid_name", None) or "",
+                                           send_info):
+                    return
             # AD 2.22 content that is NOT an instrument approach (take-off
             # minima, PBN coding tables, VFR rules within the TMA) has no
             # corresponding AD 2.24 plate — showing an arbitrary approach chart

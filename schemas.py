@@ -248,7 +248,11 @@ class AIPQueryExtraction(BaseModel):
             "'THE approach', names an approach type, or asks for a plate, chart "
             "or how to fly it: 'what is the approach in Kano', 'what is the ILS "
             "approach in Kano', 'approach plate for Sokoto', 'how do I fly the "
-            "approach into Yola'.\n"
+            "approach into Yola'. Asking for an aerodrome's approach procedure(s) "
+            "is ALSO procedure, with or without a type: 'approach procedures in "
+            "Sokoto', 'what is Sokoto approach procedures', 'missed approach "
+            "procedure at Ilorin' — each approach publishes its own holding, "
+            "letdown and missed approach, so Vannie asks which type and runway.\n"
             "An approach TYPE before 'approach' ('Abuja VOR approach', 'Kano ILS "
             "approach') is ALWAYS procedure, never unit. Approach radar control "
             "and radar procedures are NOT an approach request (null).\n"
@@ -274,6 +278,42 @@ class AIPQueryExtraction(BaseModel):
             "VOR/DME), RNAV (also GNSS/RNAV(GNSS)), RNP, NDB. Null when no type "
             "is named ('what is the approach in Kano') — Vannie then asks."
         ),
+    )
+
+    # A BARE AERODROME NAME, decided by the model (2026-11-21). "Kebbi",
+    # "Lagos", "Sokoto" and "Kano" got four different sections (AD 2.11, 2.1,
+    # 2.17, 2.1): with nothing asked, the facts search returned whichever
+    # entries happened to contain the name. With this set, every aerodrome
+    # gets the same summary card with topic buttons.
+    aerodrome_overview: bool = Field(
+        False,
+        description=(
+            "True ONLY when the message names an aerodrome and asks nothing "
+            "about it: 'Kano', 'Lagos airport', 'DNMM', 'DNAA', 'Sokoto?', 'tell me "
+            "about Kano', 'Abuja info' — a code on its own counts. False whenever any field, service, procedure, "
+            "chart or value is asked for ('Kano tower frequency', 'Lagos "
+            "runways', 'ICAO code for Kano', 'where is Kano')."),
+    )
+    # A SID QUESTION, decided by the model (2026-11-21). "SID Lagos" dumped
+    # several coding tables at once — one of them a STAR — where an approach
+    # question asks the type and runway and sends one approach. With this set,
+    # Vannie asks the runway, then the SID, from what the aerodrome publishes.
+    sid_request: bool = Field(
+        False,
+        description=(
+            "True when the question asks for an aerodrome's STANDARD INSTRUMENT "
+            "DEPARTURE(S) — the SID itself, its route or its chart: 'SID Lagos', "
+            "'Lagos SIDs', 'what are the departures from Abuja', 'SID for runway "
+            "18R at Lagos', 'IBA 1Q departure', 'how do I fly the PISBA 1Q'. "
+            "False for take-off minima, the departure or clearance frequency, "
+            "noise abatement, VFR departures, and arrivals/STARs."),
+    )
+    sid_name: Optional[str] = Field(
+        None,
+        description=(
+            "When sid_request is true and the question names one SID, its "
+            "designator as typed ('IBA 1Q', 'PISB1Q', 'UMUNA 2S'); null otherwise. "
+            "Never invent one."),
     )
 
     runway: Optional[str] = Field(

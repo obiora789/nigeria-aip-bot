@@ -98,29 +98,9 @@ doc = fitz.open(PDF_PATH)
 # classify_page.py). Imported above. Logic and behavior unchanged.
 
 
-TITLE_PATTERNS = [
-    (r'PRECISION\s+APPROACH\s+TERRAIN',                          'Precision Approach Terrain Chart', False),
-    (r'ILS\s*(?:/\s*DME)?(?:\s+OR\s+LOC)?[^R]*RWY\s*(\d{2}[LRC]?)', 'ILS Approach Chart',          True),
-    (r'(?:RNAV|GNSS|RNP)\s*(?:\([^)]*\))?[^R]*RWY\s*(\d{2}[LRC]?)', 'RNAV Approach Chart',         True),
-    (r'VOR\s*(?:/\s*DME)?[^R]*RWY\s*(\d{2}[LRC]?)',             'VOR Approach Chart',                True),
-    (r'NDB\s*(?:/\s*DME)?[^R]*RWY\s*(\d{2}[LRC]?)',             'NDB Approach Chart',                True),
-    (r'INSTRUMENT\s+APPROACH[^R]*RWY\s*(\d{2}[LRC]?)',          'Instrument Approach Chart',          True),
-    (r'VISUAL\s+APPROACH[^R]*RWY\s*(\d{2}[LRC]?)',              'Visual Approach Chart',              True),
-    (r'OBSTACLE\s+CHART[^R]*RWY\s*(\d{2}[LRC]?)',               'Aerodrome Obstacle Chart',           True),
-    (r'STANDARD\s+(?:INSTRUMENT\s+)?DEPARTURE|SID\b.*?ICAO',    'SID Chart',                         False),
-    (r'STANDARD\s+(?:TERMINAL\s+)?ARRIVAL|STAR\b.*?ICAO',       'STAR Chart',                        False),
-    (r'AREA\s+CHART.*?ARRIVAL\s+AND\s+TRANSIT',                 'Area Chart - Arrival and Transit Routes', False),
-    (r'AREA\s+CHART.*?DEPARTURE\s+AND\s+TRANSIT',               'Area Chart - Departure and Transit Routes', False),
-    (r'AREA\s+CHART',                                            'Area Chart',                         False),
-    (r'GROUND\s+MOVEMENT\s+CHART',                              'Ground Movement Chart',               False),
-    (r'(?:AIRCRAFT\s+)?PARKING\s*(?:/\s*DOCKING)?\s*CHART',     'Parking / Docking Chart',            False),
-    (r'AERODROME\s+CHART|\bADC\b',                              'Aerodrome Chart',                    False),
-    (r'HELIPORT\s+CHART',                                       'Heliport Chart',                     False),
-    (r'HELICOPTER\s+TRAFFIC\s+CHART',                           'Helicopter Traffic Chart',            False),
-    (r'EN.?ROUTE\s+CHART|ENR\s+6',                              'En-Route Chart',                     False),
-    (r'SEARCH\s+AND\s+RESCUE',                                  'Search and Rescue Units Chart',       False),
-    (r'AERODROME\s+INDEX',                                      'Aerodrome Index Chart',               False),
-]
+# The chart-type rules live in chart_titles.py (pure, tested). SID and STAR are
+# decided BEFORE the approach patterns there — see that module for why.
+from chart_titles import TITLE_PATTERNS, classify_title  # noqa: E402
 
 def detect_from_title(page, text):
     """
@@ -164,11 +144,9 @@ def detect_from_title(page, text):
         '', title_area, flags=re.IGNORECASE
     ).strip()
 
-    for pattern, proc_type, has_runway in TITLE_PATTERNS:
-        m = re.search(pattern, title_area)
-        if m:
-            runway = m.group(1).strip() if has_runway and m.lastindex else ''
-            return proc_type, runway
+    got = classify_title(title_area)
+    if got:
+        return got
 
     # Fallback: if nothing matched in the top zone specifically, fall
     # back to a full-text search. NOTE: this fallback branch is, by
@@ -196,11 +174,9 @@ def detect_from_title(page, text):
         '', text, flags=re.IGNORECASE
     ).strip()
     fallback_area = ' '.join(clean.split()).upper()
-    for pattern, proc_type, has_runway in TITLE_PATTERNS:
-        m = re.search(pattern, fallback_area)
-        if m:
-            runway = m.group(1).strip() if has_runway and m.lastindex else ''
-            return proc_type, runway
+    got = classify_title(fallback_area)
+    if got:
+        return got
 
     return '', ''
 
@@ -250,12 +226,9 @@ def normalize_checklist_entry(name):
     vocabulary used by detect_from_title, for direct comparison. Reuses
     the same TITLE_PATTERNS the live content scan matches against, so
     a checklist entry and a scanned page are judged by identical rules."""
-    upper = name.upper()
-    for pattern, proc_type, has_runway in TITLE_PATTERNS:
-        m = re.search(pattern, upper)
-        if m:
-            runway = m.group(1).strip() if has_runway and m.lastindex else ''
-            return proc_type, runway
+    got = classify_title(name)
+    if got:
+        return got
     return name.strip()[:40], ''
 
 

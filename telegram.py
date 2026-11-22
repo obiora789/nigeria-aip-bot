@@ -59,6 +59,32 @@ def clarify_runway_kb(options, qid: str) -> dict:
     return {"inline_keyboard": _rows(btns)}
 
 
+# Topic buttons under the aerodrome summary card. Each is a fixed question
+# run through the normal pipeline (main.OVERVIEW_TOPICS), like "Did you mean".
+OVERVIEW_LABELS = {
+    "rwy": "Runways", "freq": "Frequencies", "app": "Approaches", "sid": "SIDs",
+    "adc": "Aerodrome chart", "met": "Weather services", "hrs": "Operating hours",
+}
+
+
+def overview_kb(icao: str, topics) -> dict:
+    btns = [{"text": OVERVIEW_LABELS[t], "callback_data": f"ov:{t}:{icao}"}
+            for t in topics if t in OVERVIEW_LABELS]
+    return {"inline_keyboard": _rows(btns)}
+
+
+def sid_runway_kb(options, qid: str) -> dict:
+    """Tappable runways that publish SIDs (from the aerodrome's AD 2.22)."""
+    btns = [{"text": f"RWY {r}", "callback_data": f"sid:rwy:{r}:{qid}"} for r in options]
+    return {"inline_keyboard": _rows(btns)}
+
+
+def sid_name_kb(options, qid: str) -> dict:
+    """Tappable SIDs for the chosen runway, as published ('IBA 1Q')."""
+    btns = [{"text": n, "callback_data": f"sid:name:{n}:{qid}"} for n in options]
+    return {"inline_keyboard": _rows(btns)}
+
+
 def clarify_scope_kb(icao: str, ident: str, qid: str) -> dict:
     """Aerodrome-or-navaid, as two taps.
 

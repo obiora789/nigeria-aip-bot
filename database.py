@@ -181,7 +181,9 @@ def get_charts(icao: str, procedure_type: str = "", runway: str = "") -> List[Ch
 # 'approach/plate' fallback applies only when no specific type is named (so
 # "RNAV approach" -> RNAV, not every approach chart).
 _CHART_SPECIFIC = {
-    "sid": ["departure"], "departure": ["departure"],
+    # 'SID Chart' since 2026-11-21 (16_fix_chart_labels.sql); before that SID
+    # pages were mislabelled and "sid" fell back to the Area departure chart.
+    "sid": ["sid chart"], "departure": ["sid chart", "departure"],
     "star": ["arrival", "star"], "arrival": ["arrival", "star"],
     "parking": ["parking"], "docking": ["parking"], "stand": ["parking"],
     "apron": ["parking"], "gate": ["parking"],
@@ -428,6 +430,21 @@ def get_runway_physical_data(icao: str) -> list:
                              .eq("subsection", "2.12")
                              .order("record_index")),
                     f"get_runway_physical_data (icao={icao})")
+    return [row["record"] for row in (resp.data or [])]
+
+
+def get_structured(icao: str, subsection: str) -> list:
+    """All aip_structured records for one aerodrome and subsection ('2.2',
+    '2.18', ...), in ingestion order — a plain key read, no similarity. Used by
+    the aerodrome summary card, which must show the same fields from the same
+    place for every aerodrome. Empty list = nothing stored; a failed read
+    raises DataUnavailable."""
+    resp = _execute(lambda: (supabase.table("aip_structured")
+                             .select("record")
+                             .eq("icao_code", icao)
+                             .eq("subsection", subsection)
+                             .order("record_index")),
+                    f"get_structured (icao={icao} sub={subsection})")
     return [row["record"] for row in (resp.data or [])]
 
 
