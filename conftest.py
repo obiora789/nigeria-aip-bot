@@ -20,9 +20,20 @@ bot could call points at a closed port on this machine, so each attempt fails
 instantly, and real keys from a .env can never be used by a test (no OpenAI
 spend, no reads of the live database). pytest loads this file before any test
 file, so these are in place before config.py reads them.
+
+That was not enough on GitHub (CI #67, 20 Nov: still stuck at 30% after 10
+minutes). Since supabase-py 2.29 (April 2026) the library retries a failed
+read itself, waiting 1 + 2 + 4 seconds, and GitHub installs the newest
+version while the Mac has an older one. So no test uses the real database
+client at all: before every test, the client that database.py, memory.py and
+observability.py hold is replaced by _Offline, which fails each read at once
+with the same error a dropped connection gives. Tests that need data still
+install their own fakes, as before. Measured: 38 tests make 120 reads; none
+reaches Telegram or OpenAI.
 """
 import os
 
+import httpx
 import pytest
 
 _NOWHERE = "http://127.0.0.1:9"          # closed port: refused immediately
@@ -36,16 +47,34 @@ os.environ.update({
 })
 
 
+class _Offline:
+    """Stands in for the Supabase client: any query chain, and execute()
+    fails at once like a dropped connection (database.py retries it, then
+    raises DataUnavailable — the same path a real outage takes)."""
+
+    def __getattr__(self, name):
+        return lambda *a, **k: self
+
+    def execute(self):
+        raise httpx.ConnectError("offline test: no database")
+
+
+_OFFLINE = _Offline()
+
+
 @pytest.fixture(autouse=True)
-def _fresh_enr_names():
+def _offline_and_fresh():
     try:
+        import database
+        import memory
+        import observability
         import resolver
-    except Exception:  # noqa: BLE001 — a test that never imports resolver
+    except Exception:  # noqa: BLE001 — a test that never imports the bot
         yield
         return
+    database.supabase = memory.supabase = observability.supabase = _OFFLINE
+    database._RETRY_PAUSES = (0, 0, 0)   # failed reads retry without waiting
     resolver._PUBLISHED_ENTITIES = None
     resolver._PUBLISHED_PARTIAL = None
     resolver._PUBLISHED_RETRY_AT = 0.0
-    import database
-    database._RETRY_PAUSES = (0, 0, 0)   # refused reads retry without waiting
     yield
