@@ -44,8 +44,8 @@ jobs:
         # This step alone would have caught several of our past breakages.
         run: |
           python -c "import main"
-          python -c "import e2e"
-          python -c "import harness"
+          PYTHONPATH=checks python -c "import e2e"
+          PYTHONPATH=checks python -c "import harness"
 
       - name: Offline unit tests (every test file, as run_all_checks.sh does)
         # All test_*.py, not only test_offline.py: the disambiguation, scope,
