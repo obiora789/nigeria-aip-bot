@@ -156,3 +156,6 @@ stress_set*.csv
 stress_results.csv
 before.json
 after*.json
+checks_quick_*/
+checks_*/
+checks_*.zip
