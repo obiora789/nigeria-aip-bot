@@ -76,7 +76,10 @@ def test_area_departure_and_arrival_charts_are_not_sids_or_stars():
 
 
 def test_extract_charts_uses_these_rules():
-    src = open(os.path.join(os.path.dirname(__file__) or ".", "extract_charts.py")).read()
+    # Found on the import path, not next to this file: the test and
+    # extract_charts.py live in different folders after reorganise.py.
+    import importlib.util
+    src = open(importlib.util.find_spec("extract_charts").origin).read()
     assert "from chart_titles import TITLE_PATTERNS, classify_title" in src
     assert src.count("classify_title(") >= 3, "index names and both title passes"
 
