@@ -921,6 +921,30 @@ _SYSTEM = (
 )
 
 
+# THE PUBLISHED AERODROMES, given to the model as data (2026-11-22).
+# gpt-6-luna refused "Bonny VOR approach" and "Approach procedures in Forcados"
+# as out of scope (and on 19 Nov "RNAV approach for Escravos/Forcados"), and
+# did not recognise "Bebi", "Soku", "PHSIA" or "Gbaran Ubie" as aerodromes at
+# all: small Niger Delta and oil-industry fields it knows nothing about. The
+# list comes from resolver.AERODROMES, the same table every lookup uses. It is
+# not a wording rule — the model still decides what is asked; it is only told
+# which places this AIP publishes. Placed just before the ICAO rule, which
+# still applies (a name goes in aerodrome_name, never an inferred code).
+def _aerodrome_roster() -> str:
+    names = "; ".join(resolver.aerodrome_full_name(c) or c
+                      for c in sorted(resolver.AERODROMES))
+    return ("THE 40 AERODROMES THIS AIP PUBLISHES. Every one is in Nigeria and IN "
+            "SCOPE, however small or unfamiliar — oil-industry fields, airstrips "
+            "and heliports included: " + names + ". A message naming one of these "
+            "never meets (c). A message that is ONLY one of these names "
+            "('Bebi', 'Soku', 'PHSIA') is aerodrome_overview=true.\n\n")
+
+
+_ICAO_RULE = "ICAO: only set icao_code if the user literally typed"
+assert _SYSTEM.count(_ICAO_RULE) == 1
+_SYSTEM = _SYSTEM.replace(_ICAO_RULE, _aerodrome_roster() + _ICAO_RULE)
+
+
 def _extraction_messages(user_text: str):
     """The messages sent to the extraction model.
 

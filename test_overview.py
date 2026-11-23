@@ -203,3 +203,15 @@ def test_the_structured_read_fails_loudly():
         pass
     finally:
         database.supabase, database._RETRY_PAUSES = saved
+
+
+def test_every_published_aerodrome_is_named_to_the_model_as_nigerian():
+    # gpt-6-luna refused Bonny/Forcados/Escravos as out of scope and did not
+    # know Bebi, Soku, PHSIA or Gbaran Ubie. The prompt now lists all 40 from
+    # resolver.AERODROMES (data, not a wording rule), before the ICAO rule.
+    import agent, resolver
+    roster = agent._SYSTEM.split("THE 40 AERODROMES THIS AIP PUBLISHES")[1].split("ICAO: only set")[0]
+    for icao in resolver.AERODROMES:
+        assert resolver.aerodrome_full_name(icao) in roster, icao
+    assert not any(c in roster for c in resolver.AERODROMES)   # names only: never infer a code
+    assert "never meets (c)" in roster
