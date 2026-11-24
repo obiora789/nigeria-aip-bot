@@ -23,7 +23,19 @@ OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 # then re-run the full checks before deploying.
 # OpenAI shuts this snapshot down on 2027-01-14 (announced 2026-10-14;
 # recommended replacement gpt-6-luna) — see MODEL_SHUTDOWN below.
-EXTRACTION_MODEL = os.getenv("EXTRACTION_MODEL", "gpt-4o-mini-2024-07-18")
+#
+# MOVED TO gpt-6-luna (2026-11-25). Measured on the same code before the
+# switch (full run checks_20261124_1409 against gpt-4o-mini run 2328): stress
+# PASS 180 vs 160 of 270, subsection 189 vs 154 of 266, ambiguity mistakes 4 vs
+# 9, boundary refusals 0 vs 2, false refusals 1 vs 1, approach routing all
+# correct. Live on Render from 2026-11-25 via the environment variables first.
+# gpt-6-luna HAS NO DATED SNAPSHOT (OpenAI's model page lists only the alias,
+# checked 2026-11-25), so it cannot be pinned: see NO_DATED_SNAPSHOT. Re-run
+# the quick check monthly and whenever OpenAI announces a Luna update.
+EXTRACTION_MODEL = os.getenv("EXTRACTION_MODEL", "gpt-6-luna")
+# Models OpenAI publishes ONLY as an alias. Pin a dated snapshot as soon as one
+# is listed; until then this set is the one exception to the pinning rule.
+NO_DATED_SNAPSHOT = {"gpt-6-luna"}
 # MUST match the model that built your stored vectors (1536-dim).
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 
@@ -164,7 +176,7 @@ FACTS_MAX = int(os.getenv("FACTS_MAX", "6"))
 SEMANTIC_SUBSECTION_ENABLED = os.getenv("SEMANTIC_SUBSECTION_ENABLED", "0") == "1"
 SEMANTIC_SUBSECTION_MIN_SIM = float(os.getenv("SEMANTIC_SUBSECTION_MIN_SIM", "0.35"))
 SEMANTIC_SUBSECTION_MARGIN = float(os.getenv("SEMANTIC_SUBSECTION_MARGIN", "0.03"))
-SYNTHESIS_MODEL = os.getenv("SYNTHESIS_MODEL", "gpt-4o-mini-2024-07-18")   # pinned: see EXTRACTION_MODEL
+SYNTHESIS_MODEL = os.getenv("SYNTHESIS_MODEL", "gpt-6-luna")   # see EXTRACTION_MODEL
 
 # --- Reasoning models (2026-11-07) -------------------------------------------
 # gpt-6-luna (OpenAI's replacement for gpt-4o-mini) and other reasoning models

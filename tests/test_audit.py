@@ -152,7 +152,23 @@ def test_models_are_pinned_to_dated_snapshots():
     for name in (config.EXTRACTION_MODEL, config.SYNTHESIS_MODEL):
         if os.getenv("EXTRACTION_MODEL") or os.getenv("SYNTHESIS_MODEL"):
             break                                   # an explicit override is the operator's choice
+        if name in config.NO_DATED_SNAPSHOT:
+            continue                                # OpenAI lists no dated snapshot to pin
         assert re.search(r"-\d{4}-\d{2}-\d{2}$", name), f"{name} is an alias, not a snapshot"
+
+
+def test_only_alias_only_models_may_go_unpinned():
+    # The exception is a fixed list, so a typo or a new alias cannot slip
+    # through: gpt-4o-mini (which has snapshots) is still refused.
+    import config
+    assert config.NO_DATED_SNAPSHOT == {"gpt-6-luna"}
+    assert "gpt-4o-mini" not in config.NO_DATED_SNAPSHOT
+
+
+def test_the_bot_token_is_not_logged():
+    # httpx logs each request URL at INFO, and Telegram's URL holds the token.
+    import logging, main  # noqa: F401
+    assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
 
 
 def test_the_model_shutdown_is_warned_in_time():

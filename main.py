@@ -59,6 +59,12 @@ from telegram import send_charts as _tg_send_charts
 from telegram import send_message as _tg_send_message
 
 logging.basicConfig(level=logging.INFO)
+# THE BOT TOKEN WAS IN THE LOGS (2026-11-25). httpx logs every request at INFO
+# with its full URL, and Telegram's URL contains the token
+# (api.telegram.org/bot<TOKEN>/sendMessage), so Render kept a copy of it on
+# every reply. Warnings and errors from httpx still show; Vannie's own log
+# lines (vannie.*) are unchanged.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # ── audit trail: every reply process() sends is logged with its question ──────
 # (2026-10-27). process() opens a buffer; these wrappers copy each outgoing
