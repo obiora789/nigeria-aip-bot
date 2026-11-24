@@ -77,7 +77,9 @@ def test_a_misspelt_published_name_is_not_refused_as_an_unpublished_one():
     _seed_index()
     r = resolver.resolve(_ex(aerodrome_name="Port Harcuort"))
     assert r.icao is None and "DNPM" not in (r.reason or ""), r.reason
-    for name, code in (("Obudu", "DNOB"), ("Bauchi old airstrip", "DNBA"),
+    # Not "Obudu": five letters is also a waypoint-shaped name, so it goes to
+    # the ENR lookup first, which has no database in the tests.
+    for name, code in (("Damaturu", "DNDM"), ("Bauchi old airstrip", "DNBA"),
                        ("Qua Iboe", "DNQI"), ("Kaduna Military", "DNKM")):
         r = resolver.resolve(_ex(aerodrome_name=name))
         assert r.unresolved and code in (r.reason or ""), (name, r.reason)
