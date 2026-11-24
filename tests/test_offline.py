@@ -69,6 +69,20 @@ def test_unknown_name_is_refused():
     assert r.unresolved and r.icao is None
 
 
+def test_a_misspelt_published_name_is_not_refused_as_an_unpublished_one():
+    # S14533, gpt-6-luna run 24 Nov: "Port Harcuort" matched no alias and the
+    # first-word rule sent it to DNPM, so the pilot was told Port Harcourt has
+    # no published aerodrome section. Every word of the unpublished place
+    # must now be present; the real unpublished names still refuse.
+    _seed_index()
+    r = resolver.resolve(_ex(aerodrome_name="Port Harcuort"))
+    assert r.icao is None and "DNPM" not in (r.reason or ""), r.reason
+    for name, code in (("Obudu", "DNOB"), ("Bauchi old airstrip", "DNBA"),
+                       ("Qua Iboe", "DNQI"), ("Kaduna Military", "DNKM")):
+        r = resolver.resolve(_ex(aerodrome_name=name))
+        assert r.unresolved and code in (r.reason or ""), (name, r.reason)
+
+
 def test_ambiguous_name_asks_instead_of_guessing():
     _seed_index()
     r = resolver.resolve(_ex(aerodrome_name="delta"))

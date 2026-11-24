@@ -748,8 +748,16 @@ def resolve(ex: AIPQueryExtraction) -> Resolution:
                               is_national=True,
                               scope_kind=kind, scope_id=sid)
 
+        # EVERY WORD of the unpublished place must be in the name (2026-11-24).
+        # Matching on the first word alone sent any unresolved "Port …" to
+        # DNPM: gpt-6-luna kept the user's typo "Port Harcuort", which matches
+        # no alias, and the pilot was told Port Harcourt "has no published
+        # aerodrome section" — a published aerodrome refused as the NAF base
+        # (stress row S14533). The words inside brackets are a note, not part
+        # of the name, so "Bauchi (Old Bauchi)" still needs only "Bauchi".
+        words = set(_normalize(name).split())
         for c, loc in OUT_OF_SCOPE_ICAO.items():
-            if _normalize(loc).split()[0] in _normalize(name).split():
+            if set(_normalize(re.sub(r"\(.*?\)", " ", loc)).split()) <= words:
                 return Resolution(unresolved=True,
                                   reason=(f"{loc} ({c}) has no published aerodrome "
                                           "section in the 2026 AIP."))
