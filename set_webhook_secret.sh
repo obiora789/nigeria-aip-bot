@@ -14,7 +14,11 @@ set -euo pipefail
 : "${TELEGRAM_BOT_TOKEN:?export TELEGRAM_BOT_TOKEN first}"
 : "${TELEGRAM_WEBHOOK_SECRET:?export TELEGRAM_WEBHOOK_SECRET first}"
 URL="${WEBHOOK_URL:-https://nigeria-aip-bot.onrender.com/webhook}"
-if ! [[ "$TELEGRAM_WEBHOOK_SECRET" =~ ^[A-Za-z0-9_-]{1,256}$ ]]; then
+# Length is checked separately: macOS's regex library rejects a {1,256}
+# repeat count (its limit is 255), so the old one-line pattern refused every
+# secret on a Mac, valid or not (found 2026-11-25).
+if (( ${#TELEGRAM_WEBHOOK_SECRET} < 1 || ${#TELEGRAM_WEBHOOK_SECRET} > 256 )) ||
+   ! [[ "$TELEGRAM_WEBHOOK_SECRET" =~ ^[A-Za-z0-9_-]+$ ]]; then
   echo "secret must be 1-256 characters of A-Z a-z 0-9 _ -" >&2; exit 1
 fi
 echo "Registering $URL with a secret token..."
