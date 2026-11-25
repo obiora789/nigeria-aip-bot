@@ -215,3 +215,17 @@ def test_every_published_aerodrome_is_named_to_the_model_as_nigerian():
         assert resolver.aerodrome_full_name(icao) in roster, icao
     assert not any(c in roster for c in resolver.AERODROMES)   # names only: never infer a code
     assert "never meets (c)" in roster
+
+
+def test_the_published_navaids_are_named_to_the_model():
+    # Gold run 2026-11-25: 11 of 12 two-letter NDB/locator questions failed
+    # (EK, IL, JS, KC, MA refused as out of scope). The prompt now lists the
+    # ENR 4.1 navaids as data, and says when a two-letter ident is a word.
+    import agent
+    part = agent._SYSTEM.split("THE EN-ROUTE NAVAIDS THIS AIP PUBLISHES")[1].split("ICAO: only set")[0]
+    for ident, typ, station in agent.ENR_NAVAIDS:
+        assert f"{ident} {typ} {station}" in part
+    assert "never out_of_scope" in part
+    assert "is it OK to land" in part and "BE at" in part     # the English-word guard
+    idents = [i for i, _, _ in agent.ENR_NAVAIDS]
+    assert len(idents) == len(set(idents)) == 41

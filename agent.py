@@ -945,6 +945,57 @@ assert _SYSTEM.count(_ICAO_RULE) == 1
 _SYSTEM = _SYSTEM.replace(_ICAO_RULE, _aerodrome_roster() + _ICAO_RULE)
 
 
+# THE ENR 4.1 NAVAIDS, given to the model as data (2026-11-25), like the
+# aerodrome roster above. The first gold run (444 rows from the PDF) found 11 of
+# 12 two-letter NDB/locator questions failing: "EK NDB position" and the IL,
+# JS, KC, MA locators were refused as out of scope, BA/JJ/AO/OK/GO got "Which
+# aerodrome?". The model has never heard of these idents, so it neither named
+# them nor kept them in scope, and _model_named() rightly refuses to take a
+# two-letter word from the raw text on its own. Copied from ENR 4.1 (AIRAC
+# AMDT 03/2026, pages ENR 4.1-1 to -3): regenerate with each AIRAC (car 3).
+ENR_NAVAIDS = (
+    ("ABC", "VOR/DME", "Abuja"), ("AK", "locator", "Akure"),
+    ("ANU", "DVOR/DME", "Anambra"), ("SAB", "VOR/DME", "Asaba"),
+    ("BA", "locator", "Bauchi"), ("IBS", "LLZ", "Bayelsa"),
+    ("BEN", "VOR/DME", "Benin"), ("BE", "locator", "Benin"),
+    ("BDA", "VOR/DME", "Bida"), ("CAL", "VOR/DME", "Calabar"),
+    ("EK", "NDB", "Eket"), ("ENG", "VOR/DME", "Enugu"),
+    ("ESC", "NDB", "Escravos"), ("GB", "VOR/DME", "Gboko"),
+    ("GME", "VOR/DME", "Gombe"), ("GO", "NDB", "Gombe"),
+    ("IBA", "VOR/DME", "Ibadan"), ("ILR", "DVOR/DME", "Ilorin"),
+    ("IL", "locator", "Ilorin"), ("JOS", "DVOR/DME", "Jos"),
+    ("JS", "locator", "Jos"), ("KDA", "VOR/DME", "Kaduna"),
+    ("KUA", "VOR", "Kaduna"), ("KC", "locator", "Kaduna"),
+    ("JJ", "locator", "Kainji"), ("KAN", "DVOR/DME", "Kano"),
+    ("AO", "NDB", "Kano"), ("KAT", "DVOR/DME", "Katsina"),
+    ("KIS", "VOR/DME", "Kishi"), ("LAG", "DVOR/DME", "Lagos"),
+    ("MIU", "DVOR/DME", "Maiduguri"), ("MA", "locator", "Maiduguri"),
+    ("MNA", "VOR/DME", "Minna"), ("OK", "NDB", "Okitipupa"),
+    ("OSB", "VOR", "Osubi"), ("OWR", "VOR/DME", "Owerri"),
+    ("POT", "DVOR/DME", "Port Harcourt"), ("SOK", "VOR/DME", "Sokoto"),
+    ("AKW", "VOR/DME", "Uyo"), ("YOL", "VOR/DME", "Yola"),
+    ("ZA", "locator", "Zaria"),
+)
+
+
+def _navaid_roster() -> str:
+    rows = "; ".join(f"{i} {t} {st}" for i, t, st in ENR_NAVAIDS)
+    return ("THE EN-ROUTE NAVAIDS THIS AIP PUBLISHES (ENR 4.1; ident, type, "
+            "station): " + rows + ". A question about one of these navaids — its "
+            "frequency, position or coordinates, hours, or where it is — is "
+            "airspace_lookup with the ident, exactly as listed, in aerodrome_name. "
+            "It is published AIP data and IN SCOPE, never out_of_scope. A "
+            "TWO-LETTER ident is that navaid only when the message uses it as "
+            "one: beside a navaid word (NDB, locator, L, VOR, DME) or as the thing "
+            "whose frequency or position is asked ('EK NDB position', 'frequency "
+            "of the KC locator', 'where is the OK NDB'). In ordinary English it is "
+            "just a word and names nothing: 'what will the transition level BE at "
+            "Kano', 'is it OK to land at Lagos', 'GO around'.\n\n")
+
+
+_SYSTEM = _SYSTEM.replace(_ICAO_RULE, _navaid_roster() + _ICAO_RULE)
+
+
 def _extraction_messages(user_text: str):
     """The messages sent to the extraction model.
 

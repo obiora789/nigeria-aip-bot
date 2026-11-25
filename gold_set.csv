@@ -14,6 +14,9 @@ G-ASK-004,ask,Show me the approach chart for Port Harcourt,,,,,,yes,asks the app
 G-CHART-001,chart,ILS approach chart for Abuja runway 22,,,,,,yes,type and runway given: the plate is sent
 G-CHART-002,chart,Aerodrome chart for Kano,,,,,,yes,aerodrome chart stored for DNKN
 G-SCOPE-003,refuse_scope,What is the tower frequency at Port Harcourt NAF Base?,,,,,,,DNPM has no published aerodrome section; known bug: resolves to DNPO (car 5). Unverified until Obiora confirms DNPM is unpublished
+G-WORD-001,answer,What will the transition level be at Kano?,FL 50,,AD 2.17,AD 2-DNKN-7,Transition level: FL 50,pdf,PDF page 743; English 'be' must not become navaid BE (D1)
+G-WORD-002,answer,Is it ok to ask what the transition altitude is at Lagos?,3 500 ft,5 500ft | 8 500 ft | 4 500ft,AD 2.17,AD 2-DNMM-8,5 Transition altitude 3 500 ft/1 067 m AMSL,pdf,PDF page 858; English 'ok' must not become navaid OK (D1)
+G-WORD-003,answer,"ma, what is the tower frequency at Maiduguri?",118.4,118.6 | 118.2,AD 2.18,AD 2-DNMA-5,TWR Maiduguri Tower 118.4 MHz 0600 - 1800,pdf,PDF page 820; 'ma' must not become locator MA (D1)
 G-DNAA-01,answer,What is the aerodrome elevation of Abuja?,342 m | 1 122 ft,49.475 m | 337.578 m | 78.957 m,AD 2.2,AD 2-DNAA-1,3 Elevation/Reference temperature 342 m (1 122 ft)/35.6° C (JUL),pdf,PDF page 334
 G-DNAA-02,answer,What is the reference temperature at Abuja?,35.6°,,AD 2.2,AD 2-DNAA-1,3 Elevation/Reference temperature 342 m (1 122 ft)/35.6° C (JUL),pdf,PDF page 334
 G-DNAA-03,answer,What is the fire fighting category at Abuja?,CAT 9,CAT 6 | CAT 5,AD 2.6,AD 2-DNAA-2,1 AD category for fire fighting CAT 9,pdf,PDF page 335
