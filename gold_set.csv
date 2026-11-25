@@ -1,0 +1,445 @@
+id,kind,question,must_contain,must_not_contain,section,page,source_quote,verified,notes
+G-LIVE-001,refuse_live,Are there any NOTAMs for Kano today?,,,,,,yes,Obiora's rule: live information belongs to NOTAMs
+G-LIVE-002,refuse_live,What is the current METAR at Lagos?,,,,,,yes,current weather is live
+G-LIVE-003,refuse_live,Is runway 18R at Lagos open right now?,,,,,,yes,runway status now is a NOTAM matter
+G-LIVE-004,refuse_live,What is the wind at Abuja now?,,,,,,yes,live
+G-RIU-001,not_refused,What is the runway in use at Lagos?,,,,,,yes,Obiora's rule: runway in use MUST NOT be refused
+G-RIU-002,not_refused,Which runway is in use at Abuja?,,,,,,yes,Obiora's rule: runway in use MUST NOT be refused
+G-SCOPE-001,refuse_scope,What is the ILS frequency at London Heathrow?,,,,,,yes,outside Nigeria
+G-SCOPE-002,refuse_scope,Give me the runway length for aerodrome DNZZ.,,,,,,yes,DNZZ is not a Nigerian aerodrome
+G-ASK-001,ask,Sokoto approach plate,,,,,,yes,"Obiora's rule: an approach request asks the type, then the runway"
+G-ASK-002,ask,Approach procedures in Kano,,,,,,yes,Obiora's rule (21 Nov): approach procedures ask like plates
+G-ASK-003,ask,SID Lagos,,,,,,yes,Obiora's rule (21 Nov): SIDs work like approaches; asks the runway
+G-ASK-004,ask,Show me the approach chart for Port Harcourt,,,,,,yes,asks the approach type
+G-CHART-001,chart,ILS approach chart for Abuja runway 22,,,,,,yes,type and runway given: the plate is sent
+G-CHART-002,chart,Aerodrome chart for Kano,,,,,,yes,aerodrome chart stored for DNKN
+G-SCOPE-003,refuse_scope,What is the tower frequency at Port Harcourt NAF Base?,,,,,,,DNPM has no published aerodrome section; known bug: resolves to DNPO (car 5). Unverified until Obiora confirms DNPM is unpublished
+G-DNAA-01,answer,What is the aerodrome elevation of Abuja?,342 m | 1 122 ft,49.475 m | 337.578 m | 78.957 m,AD 2.2,AD 2-DNAA-1,3 Elevation/Reference temperature 342 m (1 122 ft)/35.6° C (JUL),pdf,PDF page 334
+G-DNAA-02,answer,What is the reference temperature at Abuja?,35.6°,,AD 2.2,AD 2-DNAA-1,3 Elevation/Reference temperature 342 m (1 122 ft)/35.6° C (JUL),pdf,PDF page 334
+G-DNAA-03,answer,What is the fire fighting category at Abuja?,CAT 9,CAT 6 | CAT 5,AD 2.6,AD 2-DNAA-2,1 AD category for fire fighting CAT 9,pdf,PDF page 335
+G-DNAA-04,answer,What is the transition altitude at Abuja?,5 000 ft,5 500ft | 8 500 ft | 4 500ft,AD 2.17,AD 2-DNAA-6,5 Transition altitude 5 000 ft/1 500 m AMSL,pdf,PDF page 339
+G-DNAA-05,answer,What is the transition level at Abuja?,FL 65,,AD 2.17,AD 2-DNAA-6,Transition level: FL 65,pdf,PDF page 339
+G-DNAA-06,answer,What is the tower frequency at Abuja?,118.6,118.0 | 118.2 | 118.750,AD 2.18,AD 2-DNAA-6,TWR Abuja Tower 118.6 MHz H24 Primary frequency,pdf,PDF page 339
+G-DNAA-07,answer,What is the ATIS frequency at Abuja?,127.05,127.6 | 126.600 | 126.450,AD 2.18,AD 2-DNAA-6,ATIS Abuja ATIS 127.05 MHz H24,pdf,PDF page 339
+G-DNAA-08,answer,What are the ARP coordinates of Abuja?,090024N | 0071547E,,AD 2.2,AD 2-DNAA-1,1 ARP coordinates and site at AD 090024N 0071547E,pdf,PDF page 334
+G-DNAA-09,answer,What fuel types are available at Abuja?,Jet A1,,AD 2.4,AD 2-DNAA-1,2 Fuel and oil types Jet A1,pdf,PDF page 334
+G-DNAA-10,not_published,Are there de-icing facilities at Abuja?,,,AD 2.4,AD 2-DNAA-1,4 De-icing facilities NIL,pdf,PDF page 334; AIP: NIL
+G-DNAA-11,not_published,Are there repair facilities for visiting aircraft at Abuja?,,,AD 2.4,AD 2-DNAA-1,6 Repair facilities for visiting aircraft Not Available,pdf,PDF page 334; AIP: Not Available
+G-DNAA-12,answer,What is the threshold elevation of runway 04 at Abuja?,331 m,342 m,AD 2.12,AD 2-DNAA-4,04 035°05’ 3 610 x 45 PCR 631/F/B/X/U 085936.40N THR 331 m/1087 ft,pdf,PDF page 337; runway-end-specific: must_not is the other end's value
+G-DNAA-13,answer,What is the threshold elevation of runway 22 at Abuja?,342 m,331 m,AD 2.12,AD 2-DNAA-4,22 215°05’ 3 610 x 45 PCR 631/F/B/X/U 090112.53N THR 342 m/1 122 ft,pdf,PDF page 337; runway-end-specific: must_not is the other end's value
+G-DNAI-01,answer,uyo elevation,49.475 m | 162.32 ft,342 m | 337.578 m | 78.957 m,AD 2.2,AD 2-DNAI-1,3 Elevation/Reference temperature 49.475 m (162.32 ft)/33.6° C (JUL),pdf,PDF page 369
+G-DNAI-02,answer,Uyo aerodrome reference temperature,33.6°,,AD 2.2,AD 2-DNAI-1,3 Elevation/Reference temperature 49.475 m (162.32 ft)/33.6° C (JUL),pdf,PDF page 369
+G-DNAI-03,answer,uyo rescue and fire fighting category,CAT 9,CAT 6 | CAT 5,AD 2.6,AD 2-DNAI-2,1 AD category for fire fighting CAT 9,pdf,PDF page 370
+G-DNAI-04,answer,uyo transition altitude,3 500 ft,5 000 ft | 5 500ft | 8 500 ft | 4 500ft,AD 2.17,AD 2-DNAI-5,5 Transition altitude 3 500 ft/1 067 m AMSL,pdf,PDF page 373
+G-DNAI-05,answer,uyo transition level,FL 50,,AD 2.17,AD 2-DNAI-5,Transition level: FL 50,pdf,PDF page 373
+G-DNAI-06,answer,uyo twr freq,118.0,118.6 | 118.2 | 118.750,AD 2.18,AD 2-DNAI-5,TWR Uyo Tower 118.0 MHz 0600-2000 Primary frequency,pdf,PDF page 373
+G-DNAI-07,answer,uyo atis,127.6,127.05 | 126.600 | 126.450,AD 2.18,AD 2-DNAI-5,ATIS 127.6 MHz 0600-2000,pdf,PDF page 373
+G-DNAI-08,answer,uyo aerodrome reference point,045220N | 0080537E,,AD 2.2,AD 2-DNAI-1,1 ARP coordinates and site at AD 045220N 0080537E,pdf,PDF page 369
+G-DNAI-09,answer,What fuel types are available at Uyo?,Available on request,,AD 2.4,AD 2-DNAI-1,2 Fuel and oil types Available on request,pdf,PDF page 369
+G-DNAI-10,not_published,Are there repair facilities for visiting aircraft at Uyo?,,,AD 2.4,AD 2-DNAI-1,6 Repair facilities for visiting aircraft Not available,pdf,PDF page 369; AIP: Not available
+G-DNAK-01,answer,how high is Akure airport,337.578 m | 1 107.526 ft,342 m | 49.475 m | 78.957 m,AD 2.2,AD 2-DNAK-1,3 Elevation/Reference temperature 337.578 m (1 107.526 ft)/30.0° C (JUL),pdf,PDF page 385
+G-DNAK-02,answer,ref temp DNAK,30.0°,,AD 2.2,AD 2-DNAK-1,3 Elevation/Reference temperature 337.578 m (1 107.526 ft)/30.0° C (JUL),pdf,PDF page 385
+G-DNAK-03,answer,RFF cat DNAK,CAT 6,CAT 9 | CAT 5,AD 2.6,AD 2-DNAK-2,1 AD category for fire fighting CAT 6,pdf,PDF page 386
+G-DNAK-04,answer,TA at DNAK,5 500ft,5 000 ft | 3 500 ft | 8 500 ft | 4 000 ft | 4 500ft,AD 2.17,AD 2-DNAK-5,5 Transition altitude 5 500ft/1 372m AMSL,pdf,PDF page 389
+G-DNAK-05,answer,Akure tower frequency,118.2,118.6 | 118.0 | 118.750,AD 2.18,AD 2-DNAK-5,TWR Akure Tower 118.2 MHz 0600 - 1800 NIL,pdf,PDF page 389
+G-DNAK-06,answer,What are the ARP coordinates of Akure?,071448N | 0051804E,,AD 2.2,AD 2-DNAK-1,1 ARP coordinates and site at AD 071448N 0051804E,pdf,PDF page 385
+G-DNAK-07,not_published,What fuel is available at Akure?,,,AD 2.4,AD 2-DNAK-1,2 Fuel and oil types NIL,pdf,PDF page 385; AIP: NIL
+G-DNAK-08,not_published,Are there repair facilities for visiting aircraft at Akure?,,,AD 2.4,AD 2-DNAK-1,6 Repair facilities for visiting aircraft NIL,pdf,PDF page 385; AIP: NIL
+G-DNAK-09,answer,What is the threshold elevation of runway 03 at Akure?,324.557 m,337.578 m,AD 2.12,AD 2-DNAK-4,03 024°14’ 2 800 x 45 LCN 100 071406.7081N THR 324.557 m/1 064.805 ft,pdf,PDF page 388; runway-end-specific: must_not is the other end's value
+G-DNAK-10,answer,What is the threshold elevation of runway 21 at Akure?,337.578 m,324.557 m,AD 2.12,AD 2-DNAK-4,21 204°14’ 2 800 x 45 LCN 100 071529.8539N THR 337.578 m/1 107.525 ft,pdf,PDF page 388; runway-end-specific: must_not is the other end's value
+G-DNAN-01,answer,What is the fire fighting category at Umueri?,CAT 6,CAT 9 | CAT 5,AD 2.6,AD 2-DNAN-2,1 AD category for fire fighting CAT 6,pdf,PDF page 399
+G-DNAN-02,answer,What is the transition altitude at Umueri?,3500ft,5 500ft | 8 500 ft | 4 500ft,AD 2.17,AD 2-DNAN-5,5 Transition altitude 3500ft,pdf,PDF page 402
+G-DNAN-03,answer,What is the transition level at Umueri?,FL 50,,AD 2.17,AD 2-DNAN-5,Transition level: FL 50,pdf,PDF page 402
+G-DNAN-04,answer,TWR frequency DNAN,118.750,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNAN-5,TWR Anambra Tower 118.750 MHz 0600 -1800 Primary,pdf,PDF page 402
+G-DNAN-05,answer,umueri aerodrome reference point,061602N | 0065217E,,AD 2.2,AD 2-DNAN-1,1 ARP coordinates and site at AD 061602N 0065217E,pdf,PDF page 398
+G-DNAN-06,answer,What fuel types are available at Umueri?,Available,,AD 2.4,AD 2-DNAN-1,2 Fuel and oil types Available,pdf,PDF page 398
+G-DNAN-07,not_published,Are there de-icing facilities at Umueri?,,,AD 2.4,AD 2-DNAN-1,4 De-icing facilities Nil,pdf,PDF page 398; AIP: Nil
+G-DNAN-08,not_published,Are there repair facilities for visiting aircraft at Umueri?,,,AD 2.4,AD 2-DNAN-1,6 Repair facilities for visiting aircraft Nil,pdf,PDF page 398; AIP: Nil
+G-DNAS-01,answer,asaba rescue and fire fighting category,CAT 6,CAT 9 | CAT 5,AD 2.6,AD 2-DNAS-2,1 AD category for fire fighting CAT 6,pdf,PDF page 417
+G-DNAS-02,answer,asaba transition altitude,3500 ft,5 000 ft | 5 500ft | 8 500 ft | 4 500ft,AD 2.17,AD 2-DNAS-5,5 Transition altitude 3500 ft AMSL,pdf,PDF page 420
+G-DNAS-03,answer,asaba transition level,FL 50,,AD 2.17,AD 2-DNAS-5,Transition level: FL 50,pdf,PDF page 420
+G-DNAS-04,answer,What is the tower frequency at Asaba?,118.500,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNAS-5,TWR Asaba Tower 118.500 MHz 0600 - 1800,pdf,PDF page 420
+G-DNAS-05,answer,What is the ATIS frequency at Asaba?,126.600,127.05 | 127.6 | 126.450,AD 2.18,AD 2-DNAS-5,ATIS Asaba Arrival Information 126.600 MHz 0600 - 1800,pdf,PDF page 420
+G-DNAS-06,answer,What are the ARP coordinates of Asaba?,061213N | 0064000E,,AD 2.2,AD 2-DNAS-1,1 ARP coordinates and site at AD 061213N 0064000E,pdf,PDF page 416
+G-DNAS-07,answer,What fuel types are available at Asaba?,JET A1,,AD 2.4,AD 2-DNAS-1,2 Fuel and oil types JET A1,pdf,PDF page 416
+G-DNAS-08,not_published,Are there de-icing facilities at Asaba?,,,AD 2.4,AD 2-DNAS-1,4 De-icing facilities NIL,pdf,PDF page 416; AIP: NIL
+G-DNAS-09,not_published,Are there repair facilities for visiting aircraft at Asaba?,,,AD 2.4,AD 2-DNAS-1,6 Repair facilities for visiting aircraft Not Available,pdf,PDF page 416; AIP: Not Available
+G-DNBB-01,answer,RFF cat DNBB,CAT 5,CAT 9 | CAT 6,AD 2.6,AD 2-DNBB-2,1 AD category for fire fighting CAT 5,pdf,PDF page 435
+G-DNBB-02,answer,bebi aerodrome reference point,063717N | 0091909E,,AD 2.2,AD 2-DNBB-1,1 ARP coordinates and site at AD 063717N 0091909E,pdf,PDF page 434
+G-DNBB-03,not_published,What fuel is available at Bebi?,,,AD 2.4,AD 2-DNBB-1,2 Fuel and oil types NIL,pdf,PDF page 434; AIP: NIL
+G-DNBB-04,not_published,Are there repair facilities for visiting aircraft at Bebi?,,,AD 2.4,AD 2-DNBB-1,6 Repair facilities for visiting aircraft NIL,pdf,PDF page 434; AIP: NIL
+G-DNBC-01,answer,What is the fire fighting category at Bauchi?,CAT 8,CAT 9 | CAT 6,AD 2.6,AD 2-DNBC-2,1 AD category for fire fighting CAT 8,pdf,PDF page 444
+G-DNBC-02,answer,TA at DNBC,5 000 ft,5 500ft | 8 500 ft,AD 2.17,AD 2-DNBC-5,5 Transition altitude 5 000 ft/1 524 m AMSL,pdf,PDF page 447
+G-DNBC-03,answer,What is the transition level at Bauchi?,FL 65,,AD 2.17,AD 2-DNBC-5,Transition level: FL 65,pdf,PDF page 447
+G-DNBC-04,answer,bauchi twr freq,124.5,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNBC-5,TWR Bauchi Tower 124.5 MHz 0600-1800 Primary Frequency,pdf,PDF page 447
+G-DNBC-05,answer,What are the ARP coordinates of Bauchi?,102858N | 0094438E,,AD 2.2,AD 2-DNBC-1,1 ARP coordinates and site at AD 102858N 0094438E,pdf,PDF page 443
+G-DNBC-06,not_published,What fuel is available at Bauchi?,,,AD 2.4,AD 2-DNBC-1,2 Fuel and oil types NIL,pdf,PDF page 443; AIP: NIL
+G-DNBC-07,not_published,Are there de-icing facilities at Bauchi?,,,AD 2.4,AD 2-DNBC-1,4 De-icing facilities NIL,pdf,PDF page 443; AIP: NIL
+G-DNBC-08,not_published,Are there repair facilities for visiting aircraft at Bauchi?,,,AD 2.4,AD 2-DNBC-1,6 Repair facilities for visiting aircraft NIL,pdf,PDF page 443; AIP: NIL
+G-DNBE-01,answer,Elevation of DNBE,78.957 m | 259.042 ft,342 m | 49.475 m | 337.578 m,AD 2.2,AD 2-DNBE-1,3 Elevation/Reference temperature 78.957 m (259.042 ft)/33.3° C (JUL),pdf,PDF page 461
+G-DNBE-02,answer,What is the reference temperature at Benin?,33.3°,,AD 2.2,AD 2-DNBE-1,3 Elevation/Reference temperature 78.957 m (259.042 ft)/33.3° C (JUL),pdf,PDF page 461
+G-DNBE-03,answer,benin rescue and fire fighting category,CAT 6,CAT 9 | CAT 5,AD 2.6,AD 2-DNBE-2,1 AD category for fire fighting CAT 6,pdf,PDF page 462
+G-DNBE-04,answer,What is the transition altitude at Benin?,3 500 ft,5 000 ft | 5 500ft | 8 500 ft | 4 500ft,AD 2.17,AD 2-DNBE-5,5 Transition altitude 3 500 ft/1 067 m AMSL,pdf,PDF page 465
+G-DNBE-05,answer,benin transition level,FL 50,,AD 2.17,AD 2-DNBE-5,Transition level: FL 50,pdf,PDF page 465
+G-DNBE-06,answer,Benin tower frequency,122.5,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNBE-5,TWR Benin Tower 122.5 MHz 0600 - 1800 NIL,pdf,PDF page 465
+G-DNBE-07,answer,benin aerodrome reference point,061900N | 0053556E,,AD 2.2,AD 2-DNBE-1,1 ARP coordinates and site at AD 061900N 0053556E,pdf,PDF page 461
+G-DNBE-08,not_published,What fuel is available at Benin?,,,AD 2.4,AD 2-DNBE-1,2 Fuel and oil types Not Available,pdf,PDF page 461; AIP: Not Available
+G-DNBE-09,not_published,Are there repair facilities for visiting aircraft at Benin?,,,AD 2.4,AD 2-DNBE-1,6 Repair facilities for visiting aircraft Not Available,pdf,PDF page 461; AIP: Not Available
+G-DNBE-10,answer,What is the threshold elevation of runway 05 at Benin?,72 m,79 m,AD 2.12,AD 2-DNBE-4,05 045°45’ 2 400 x 45 LCN 55 (LCG III) 061832.20N THR 72 m/236 ft,pdf,PDF page 464; runway-end-specific: must_not is the other end's value
+G-DNBE-11,answer,What is the threshold elevation of runway 23 at Benin?,79 m,72 m,AD 2.12,AD 2-DNBE-4,23 225°45’ 2 400 x 45 LCN 55 (LCG III) 061926.82N THR 79 m/259 ft,pdf,PDF page 464; runway-end-specific: must_not is the other end's value
+G-DNBK-01,answer,RFF cat DNBK,CAT 6,CAT 9 | CAT 5,AD 2.6,AD 2-DNBK-2,1 AD category for fire fighting CAT 6,pdf,PDF page 486
+G-DNBK-02,answer,birnin kebbi transition altitude,5 000 ft,5 500ft | 8 500 ft | 4 500ft,AD 2.17,AD 2-DNBK-5,5 Transition altitude 5 000 ft/1 524 m AMSL,pdf,PDF page 489
+G-DNBK-03,answer,What is the transition level at Birnin Kebbi?,FL 65,,AD 2.17,AD 2-DNBK-5,Transition level: FL 65,pdf,PDF page 489
+G-DNBK-04,answer,TWR frequency DNBK,119.2,118.6 | 118.0,AD 2.18,AD 2-DNBK-5,TWR Kebbi Tower 119.2MHz 0600-1800 Primary Frequency,pdf,PDF page 489
+G-DNBK-05,answer,What are the ARP coordinates of Birnin Kebbi?,122845N | 0042210E,,AD 2.2,AD 2-DNBK-1,1 ARP coordinates and site at AD 122845N 0042210E,pdf,PDF page 485
+G-DNBK-06,not_published,What fuel is available at Birnin Kebbi?,,,AD 2.4,AD 2-DNBK-1,2 Fuel and oil types Nil,pdf,PDF page 485; AIP: Nil
+G-DNBK-07,not_published,Are there de-icing facilities at Birnin Kebbi?,,,AD 2.4,AD 2-DNBK-1,4 De-icing facilities Nil,pdf,PDF page 485; AIP: Nil
+G-DNBK-08,not_published,Are there repair facilities for visiting aircraft at Birnin Kebbi?,,,AD 2.4,AD 2-DNBK-1,6 Repair facilities for visiting aircraft Nil,pdf,PDF page 485; AIP: Nil
+G-DNBY-01,answer,What is the fire fighting category at Amassoma?,CAT 6,CAT 9 | CAT 5,AD 2.6,AD 2-DNBY-2,1 AD category for fire fighting CAT 6,pdf,PDF page 504
+G-DNBY-02,answer,TA at DNBY,3500 ft,5 000 ft | 5 500ft | 8 500 ft | 4 500ft,AD 2.17,AD 2-DNBY-5,5 Transition altitude 3500 ft,pdf,PDF page 507
+G-DNBY-03,answer,amassoma transition level,FL 50,,AD 2.17,AD 2-DNBY-5,Transition level: FL 50,pdf,PDF page 507
+G-DNBY-04,answer,What is the tower frequency at Amassoma?,118.150,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNBY-5,TWR Bayelsa Tower 118.150MHz 0600 - 1800 Primary frequency,pdf,PDF page 507
+G-DNBY-05,answer,amassoma aerodrome reference point,045728N | 0061212E,,AD 2.2,AD 2-DNBY-1,1 ARP coordinates and site at AD 045728N 0061212E,pdf,PDF page 503
+G-DNBY-06,not_published,What fuel is available at Amassoma?,,,AD 2.4,AD 2-DNBY-1,2 Fuel and oil types Nil,pdf,PDF page 503; AIP: Nil
+G-DNBY-07,not_published,Are there de-icing facilities at Amassoma?,,,AD 2.4,AD 2-DNBY-1,4 De-icing facilities Nil,pdf,PDF page 503; AIP: Nil
+G-DNBY-08,not_published,Are there repair facilities for visiting aircraft at Amassoma?,,,AD 2.4,AD 2-DNBY-1,6 Repair facilities for visiting aircraft Nil,pdf,PDF page 503; AIP: Nil
+G-DNCA-01,answer,What is the aerodrome elevation of Calabar?,63.694 m | 208.967 ft,342 m | 49.475 m | 337.578 m,AD 2.2,AD 2-DNCA-1,3 Elevation/Reference temperature 63.694 m (208.967 ft)/20° C (July),pdf,PDF page 521
+G-DNCA-02,answer,Calabar aerodrome reference temperature,20°,,AD 2.2,AD 2-DNCA-1,3 Elevation/Reference temperature 63.694 m (208.967 ft)/20° C (July),pdf,PDF page 521
+G-DNCA-03,answer,calabar rescue and fire fighting category,CAT 7,CAT 9 | CAT 6,AD 2.6,AD 2-DNCA-2,1 AD category for fire fighting CAT 7,pdf,PDF page 522
+G-DNCA-04,answer,What is the transition altitude at Calabar?,3 500 ft,5 000 ft | 5 500ft | 8 500 ft | 4 500ft,AD 2.17,AD 2-DNCA-5,5 Transition altitude 3 500 ft/1 067m AMSL,pdf,PDF page 525
+G-DNCA-05,answer,What is the transition level at Calabar?,FL 50,,AD 2.17,AD 2-DNCA-5,Transition level: FL 50,pdf,PDF page 525
+G-DNCA-06,answer,calabar twr freq,124.5,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNCA-6,TWR Calabar Tower 124.5 MHz 0600 - 1800 TWR provides both Aerodrome,pdf,PDF page 526
+G-DNCA-07,answer,What are the ARP coordinates of Calabar?,045834N | 0082050E,,AD 2.2,AD 2-DNCA-1,1 ARP coordinates and site at AD 045834N 0082050E,pdf,PDF page 521
+G-DNCA-08,answer,What fuel types are available at Calabar?,All types,,AD 2.4,AD 2-DNCA-1,2 Fuel and oil types All types,pdf,PDF page 521
+G-DNCA-09,not_published,Are there repair facilities for visiting aircraft at Calabar?,,,AD 2.4,AD 2-DNCA-1,6 Repair facilities for visiting aircraft Not available,pdf,PDF page 521; AIP: Not available
+G-DNDS-01,answer,dutse elevation,416m | 1365ft,342 m | 49.475 m | 337.578 m,AD 2.2,AD 2-DNDS-1,3 Elevation/Reference temperature 416m (1365ft) / 36° C,pdf,PDF page 543
+G-DNDS-02,answer,ref temp DNDS,36°,,AD 2.2,AD 2-DNDS-1,3 Elevation/Reference temperature 416m (1365ft) / 36° C,pdf,PDF page 543
+G-DNDS-03,answer,RFF cat DNDS,CAT 9,CAT 6 | CAT 5,AD 2.6,AD 2-DNDS-2,1 AD category for fire fighting CAT 9,pdf,PDF page 544
+G-DNDS-04,answer,dutse transition altitude,5 000 ft,5 500ft | 8 500 ft | 4 500ft,AD 2.17,AD 2-DNDS-5,5 Transition altitude 5 000 ft/1 524 m AMSL,pdf,PDF page 547
+G-DNDS-05,answer,dutse transition level,FL 65,,AD 2.17,AD 2-DNDS-5,Transition level: FL 65,pdf,PDF page 547
+G-DNDS-06,answer,Dutse tower frequency,120.5,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNDS-5,TWR Dutse Tower 120.5MHz 0600 - 1800,pdf,PDF page 547
+G-DNDS-07,answer,dutse aerodrome reference point,114743N | 0091804E,,AD 2.2,AD 2-DNDS-1,1 ARP coordinates and site at AD 114743N 0091804E,pdf,PDF page 543
+G-DNDS-08,not_published,What fuel is available at Dutse?,,,AD 2.4,AD 2-DNDS-1,2 Fuel and oil types Not Available,pdf,PDF page 543; AIP: Not Available
+G-DNDS-09,not_published,Are there de-icing facilities at Dutse?,,,AD 2.4,AD 2-DNDS-1,4 De-icing facilities Not Available,pdf,PDF page 543; AIP: Not Available
+G-DNDS-10,not_published,Are there repair facilities for visiting aircraft at Dutse?,,,AD 2.4,AD 2-DNDS-1,6 Repair facilities for visiting aircraft Not Available,pdf,PDF page 543; AIP: Not Available
+G-DNEN-01,answer,how high is Enugu airport,157 m | 515 ft,342 m | 49.475 m | 337.578 m,AD 2.2,AD 2-DNEN-1,3 Elevation/Reference temperature 157 m (515 ft)/34.7° C (JUL),pdf,PDF page 561
+G-DNEN-02,answer,What is the reference temperature at Enugu?,34.7°,,AD 2.2,AD 2-DNEN-1,3 Elevation/Reference temperature 157 m (515 ft)/34.7° C (JUL),pdf,PDF page 561
+G-DNEN-03,answer,What is the fire fighting category at Enugu?,CAT 8,CAT 9 | CAT 6,AD 2.6,AD 2-DNEN-2,1 AD category for fire fighting CAT 8,pdf,PDF page 562
+G-DNEN-04,answer,TA at DNEN,5 000 ft,5 500ft | 8 500 ft | 4 500ft,AD 2.17,AD 2-DNEN-6,5 Transition altitude 5 000 ft/1 524 m QNH,pdf,PDF page 566
+G-DNEN-05,answer,What is the transition level at Enugu?,FL 65,,AD 2.17,AD 2-DNEN-6,Transition level: FL 65,pdf,PDF page 566
+G-DNEN-06,answer,TWR frequency DNEN,123.3,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNEN-7,TWR Enugu Tower 123.3 MHz 0600 - 2100 NIL,pdf,PDF page 567
+G-DNEN-07,answer,What are the ARP coordinates of Enugu?,062825N | 0073332E,,AD 2.2,AD 2-DNEN-1,1 ARP coordinates and site at AD 062825N 0073332E,pdf,PDF page 561
+G-DNEN-08,answer,What fuel types are available at Enugu?,JET A1 (100/130),,AD 2.4,AD 2-DNEN-1,2 Fuel and oil types JET A1 (100/130),pdf,PDF page 561
+G-DNEN-09,not_published,Are there repair facilities for visiting aircraft at Enugu?,,,AD 2.4,AD 2-DNEN-1,6 Repair facilities for visiting aircraft NIL,pdf,PDF page 561; AIP: NIL
+G-DNES-01,answer,escravos rescue and fire fighting category,CAT 5,CAT 9 | CAT 6,AD 2.6,AD 2-DNES-2,1 AD category for fire fighting CAT 5,pdf,PDF page 583
+G-DNES-02,answer,What is the tower frequency at Escravos?,131.7,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNES-5,TWR Escravos Tower 131.7 MHz HJ 121.5MHz Monitored,pdf,PDF page 586
+G-DNES-03,answer,escravos aerodrome reference point,053659N | 0051121E,,AD 2.2,AD 2-DNES-1,1 ARP coordinates and site at AD 053659N 0051121E,pdf,PDF page 582
+G-DNES-04,answer,What fuel types are available at Escravos?,JET A1 (exclusively for Chevron Operations),,AD 2.4,AD 2-DNES-1,2 Fuel and oil types JET A1 (exclusively for Chevron Operations),pdf,PDF page 582
+G-DNES-05,not_published,Are there de-icing facilities at Escravos?,,,AD 2.4,AD 2-DNES-1,4 De-icing facilities NIL,pdf,PDF page 582; AIP: NIL
+G-DNES-06,not_published,Are there repair facilities for visiting aircraft at Escravos?,,,AD 2.4,AD 2-DNES-1,6 Repair facilities for visiting aircraft NIL,pdf,PDF page 582; AIP: NIL
+G-DNES-07,answer,What is the TODA of runway 13 at Escravos?,1600 m,1670 m,AD 2.13,AD 2-DNES-4,13 1600 1600 1600 1600 Paved surface,pdf,PDF page 585; runway-specific: must_not is another runway's value
+G-DNES-08,answer,What is the TODA of runway 31 at Escravos?,1670 m,1600 m,AD 2.13,AD 2-DNES-4,31 1600 1670 1670 1300 THR displaced by,pdf,PDF page 585; runway-specific: must_not is another runway's value
+G-DNET-01,answer,RFF cat DNET,CAT 6,CAT 9 | CAT 5,AD 2.6,AD 2-DNET-2,1 AD category for fire fighting CAT 6,pdf,PDF page 596
+G-DNET-02,answer,ado ekiti twr freq,119.250,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNET-5,TWR Ekiti Tower 119.250 MHz Sunrise – Sunset,pdf,PDF page 599
+G-DNET-03,answer,ado ekiti atis,126.450,127.05 | 127.6 | 126.600,AD 2.18,AD 2-DNET-5,ATIS Ekiti MET WFO 126.450 MHz Sunrise – Sunset,pdf,PDF page 599
+G-DNET-04,answer,What are the ARP coordinates of Ado Ekiti?,073808N | 0052031E,,AD 2.2,AD 2-DNET-1,1 ARP coordinates and site at AD 073808N 0052031E,pdf,PDF page 595
+G-DNET-05,not_published,What fuel is available at Ado Ekiti?,,,AD 2.4,AD 2-DNET-1,2 Fuel and oil types NIL,pdf,PDF page 595; AIP: NIL
+G-DNET-06,not_published,Are there de-icing facilities at Ado Ekiti?,,,AD 2.4,AD 2-DNET-1,4 De-icing facilities NIL,pdf,PDF page 595; AIP: NIL
+G-DNET-07,not_published,Are there repair facilities for visiting aircraft at Ado Ekiti?,,,AD 2.4,AD 2-DNET-1,6 Repair facilities for visiting aircraft NIL,pdf,PDF page 595; AIP: NIL
+G-DNFB-01,answer,Elevation of DNFB,4.536 m | 14.882 ft,342 m | 49.475 m | 337.578 m,AD 2.2,AD 2-DNFB-1,3 Elevation/Reference temperature 4.536 m ( 14.882 ft)/35°C (July 2009),pdf,PDF page 612
+G-DNFB-02,answer,Bonny aerodrome reference temperature,35°,,AD 2.2,AD 2-DNFB-1,3 Elevation/Reference temperature 4.536 m ( 14.882 ft)/35°C (July 2009),pdf,PDF page 612
+G-DNFB-03,answer,What is the fire fighting category at Bonny?,CAT 6,CAT 9 | CAT 5,AD 2.6,AD 2-DNFB-2,1 AD category for fire fighting CAT 6,pdf,PDF page 613
+G-DNFB-04,answer,What is the transition altitude at Bonny?,3 500 ft,5 000 ft | 5 500ft | 8 500 ft | 4 000 ft | 4 500ft,AD 2.17,AD 2-DNFB-5,5 Transition altitude 3 500 ft/1 067 m AMSL,pdf,PDF page 616
+G-DNFB-05,answer,bonny transition level,FL 50,,AD 2.17,AD 2-DNFB-5,Transition level: FL 50,pdf,PDF page 616
+G-DNFB-06,answer,Bonny tower frequency,119.4,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNFB-5,TWR Finima Tower 119.4 MHz 0600 - 1800,pdf,PDF page 616
+G-DNFB-07,answer,bonny aerodrome reference point,042418N | 0071052E,,AD 2.2,AD 2-DNFB-1,1 ARP coordinates and site at AD 042418N 0071052E,pdf,PDF page 612
+G-DNFB-08,not_published,What fuel is available at Bonny?,,,AD 2.4,AD 2-DNFB-1,2 Fuel and oil types Not available,pdf,PDF page 612; AIP: Not available
+G-DNFB-09,not_published,Are there de-icing facilities at Bonny?,,,AD 2.4,AD 2-DNFB-1,4 De-icing facilities Not available,pdf,PDF page 612; AIP: Not available
+G-DNFB-10,not_published,Are there repair facilities for visiting aircraft at Bonny?,,,AD 2.4,AD 2-DNFB-1,6 Repair facilities for visiting aircraft NIL,pdf,PDF page 612; AIP: NIL
+G-DNFB-11,answer,What is the TODA of runway 04 at Bonny?,1600 m,1400 m,AD 2.13,AD 2-DNFB-4,04 1600 1600 1700 1400 Threshold displaced,pdf,PDF page 615; runway-specific: must_not is another runway's value
+G-DNFB-12,answer,What is the TODA of runway 22 at Bonny?,1400 m,1600 m,AD 2.13,AD 2-DNFB-4,22 1400 1400 1700 1600 Threshold displaced,pdf,PDF page 615; runway-specific: must_not is another runway's value
+G-DNFD-01,answer,What is the aerodrome elevation of Forcados?,3.225 m | 10.581 ft,342 m | 49.475 m | 337.578 m,AD 2.2,AD 2-DNFD-1,3 Elevation/Reference temperature 3.225 m (10.581 ft)/35°C,pdf,PDF page 625
+G-DNFD-02,answer,ref temp DNFD,35°,,AD 2.2,AD 2-DNFD-1,3 Elevation/Reference temperature 3.225 m (10.581 ft)/35°C,pdf,PDF page 625
+G-DNFD-03,answer,forcados rescue and fire fighting category,CAT 3,CAT 9 | CAT 6,AD 2.6,AD 2-DNFD-2,1 AD category for fire fighting CAT 3,pdf,PDF page 626
+G-DNFD-04,answer,forcados transition altitude,3 500 ft,5 000 ft | 5 500ft | 8 500 ft | 4 000 ft | 4 500ft,AD 2.17,AD 2-DNFD-5,5 Transition altitude 3 500 ft/1 067 m AMSL,pdf,PDF page 629
+G-DNFD-05,answer,What is the transition level at Forcados?,FL 50,,AD 2.17,AD 2-DNFD-5,Transition level: FL 50,pdf,PDF page 629
+G-DNFD-06,answer,TWR frequency DNFD,118.3,118.6 | 118.2,AD 2.18,AD 2-DNFD-5,TWR Forcados Tower 118.3 MHz 0700 - 1800,pdf,PDF page 629
+G-DNFD-07,answer,What are the ARP coordinates of Forcados?,052118N | 0052056E,,AD 2.2,AD 2-DNFD-1,1 ARP coordinates and site at AD 052118N 0052056E,pdf,PDF page 625
+G-DNFD-08,not_published,What fuel is available at Forcados?,,,AD 2.4,AD 2-DNFD-1,2 Fuel and oil types Not available,pdf,PDF page 625; AIP: Not available
+G-DNFD-09,not_published,Are there de-icing facilities at Forcados?,,,AD 2.4,AD 2-DNFD-1,4 De-icing facilities Not available,pdf,PDF page 625; AIP: Not available
+G-DNFD-10,not_published,Are there repair facilities for visiting aircraft at Forcados?,,,AD 2.4,AD 2-DNFD-1,6 Repair facilities for visiting aircraft Nil,pdf,PDF page 625; AIP: Nil
+G-DNGO-01,answer,RFF cat DNGO,CAT 8,CAT 9 | CAT 6,AD 2.6,AD 2-DNGO-2,1 AD category for fire fighting CAT 8,pdf,PDF page 639
+G-DNGO-02,answer,TA at DNGO,5 000 ft,5 500ft | 8 500 ft | 4 500ft,AD 2.17,AD 2-DNGO-5,5 Transition altitude 5 000 ft/1 524 m AMSL,pdf,PDF page 642
+G-DNGO-03,answer,gombe transition level,FL 65,,AD 2.17,AD 2-DNGO-5,Transition level: FL 65,pdf,PDF page 642
+G-DNGO-04,answer,What is the tower frequency at Gombe?,120.8,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNGO-5,TWR Gombe Tower 120.8 MHz 0600-1800,pdf,PDF page 642
+G-DNGO-05,answer,gombe aerodrome reference point,101753N | 0105357E,,AD 2.2,AD 2-DNGO-1,1 ARP coordinates and site at AD 101753N 0105357E,pdf,PDF page 638
+G-DNGO-06,not_published,What fuel is available at Gombe?,,,AD 2.4,AD 2-DNGO-1,2 Fuel and oil types NIL,pdf,PDF page 638; AIP: NIL
+G-DNGO-07,not_published,Are there repair facilities for visiting aircraft at Gombe?,,,AD 2.4,AD 2-DNGO-1,6 Repair facilities for visiting aircraft NIL,pdf,PDF page 638; AIP: NIL
+G-DNIB-01,answer,ibadan elevation,221.810 m | 727.714 ft,342 m | 49.475 m | 337.578 m,AD 2.2,AD 2-DNIB-1,3 Elevation/Reference temperature 221.810 m (727.714 ft)/33.8° C (JUL),pdf,PDF page 657
+G-DNIB-02,answer,What is the reference temperature at Ibadan?,33.8°,,AD 2.2,AD 2-DNIB-1,3 Elevation/Reference temperature 221.810 m (727.714 ft)/33.8° C (JUL),pdf,PDF page 657
+G-DNIB-03,answer,What is the fire fighting category at Ibadan?,CAT 6,CAT 9 | CAT 5,AD 2.6,AD 2-DNIB-2,1 AD category for fire fighting CAT 6,pdf,PDF page 658
+G-DNIB-04,answer,What is the transition altitude at Ibadan?,3 500ft,5 000 ft | 5 500ft | 8 500 ft | 4 000 ft | 4 500ft,AD 2.17,AD 2-DNIB-5,5 Transition altitude 3 500ft/1 067m AMSL,pdf,PDF page 661
+G-DNIB-05,answer,What is the transition level at Ibadan?,FL 50,,AD 2.17,AD 2-DNIB-5,Transition level: FL 50,pdf,PDF page 661
+G-DNIB-06,answer,ibadan twr freq,122.6,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNIB-5,TWR Ibadan Tower 122.6 MHz 0600-1800,pdf,PDF page 661
+G-DNIB-07,answer,What are the ARP coordinates of Ibadan?,072145N | 0035842E,,AD 2.2,AD 2-DNIB-1,1 ARP coordinates and site at AD 072145N 0035842E,pdf,PDF page 657
+G-DNIB-08,answer,What fuel types are available at Ibadan?,Jet A-1,,AD 2.4,AD 2-DNIB-1,2 Fuel and oil types Jet A-1,pdf,PDF page 657
+G-DNIB-09,not_published,Are there de-icing facilities at Ibadan?,,,AD 2.4,AD 2-DNIB-1,4 De-icing facilities NIL,pdf,PDF page 657; AIP: NIL
+G-DNIB-10,not_published,Are there repair facilities for visiting aircraft at Ibadan?,,,AD 2.4,AD 2-DNIB-1,6 Repair facilities for visiting aircraft NIL,pdf,PDF page 657; AIP: NIL
+G-DNIB-11,answer,What is the threshold elevation of runway 04 at Ibadan?,220.890 m,217.773 m,AD 2.12,AD 2-DNIB-4,04 040°11’ 2 400 x 45 LCN 50 (LCG III-IV) 072114.79N THR 220.890 m/724.696 ft,pdf,PDF page 660; runway-end-specific: must_not is the other end's value
+G-DNIB-12,answer,What is the threshold elevation of runway 22 at Ibadan?,217.773 m,220.890 m,AD 2.12,AD 2-DNIB-4,22 220°11’ 2 400 x 45 LCN 50 (LCG III-IV) 072214.55N THR 217.773 m/714.470 ft,pdf,PDF page 660; runway-end-specific: must_not is the other end's value
+G-DNIL-01,answer,how high is Ilorin airport,343 m | 1 126 ft,342 m | 49.475 m | 337.578 m,AD 2.2,AD 2-DNIL-1,3 Elevation/Reference temperature 343 m (1 126 ft)/38.8° C (JUL),pdf,PDF page 670
+G-DNIL-02,answer,Ilorin aerodrome reference temperature,38.8°,,AD 2.2,AD 2-DNIL-1,3 Elevation/Reference temperature 343 m (1 126 ft)/38.8° C (JUL),pdf,PDF page 670
+G-DNIL-03,answer,ilorin rescue and fire fighting category,CAT 7,CAT 9 | CAT 6,AD 2.6,AD 2-DNIL-2,1 AD category for fire fighting CAT 7,pdf,PDF page 671
+G-DNIL-04,answer,ilorin transition altitude,3 500ft,5 000 ft | 5 500ft | 8 500 ft | 4 000 ft | 4 500ft,AD 2.17,AD 2-DNIL-5,5 Transition altitude 3 500ft/1 067 m AMSL,pdf,PDF page 674
+G-DNIL-05,answer,ilorin transition level,FL 50,,AD 2.17,AD 2-DNIL-5,Transition level: FL 50,pdf,PDF page 674
+G-DNIL-06,answer,Ilorin tower frequency,119.6,118.0 | 118.2,AD 2.18,AD 2-DNIL-5,TWR Ilorin Tower 119.6 MHz 0600-2000,pdf,PDF page 674
+G-DNIL-07,answer,ilorin aerodrome reference point,082624N | 0042938E,,AD 2.2,AD 2-DNIL-1,1 ARP coordinates and site at AD 082624N 0042938E,pdf,PDF page 670
+G-DNIL-08,answer,What fuel types are available at Ilorin?,JET A-1,,AD 2.4,AD 2-DNIL-1,2 Fuel and oil types JET A-1,pdf,PDF page 670
+G-DNIL-09,not_published,Are there de-icing facilities at Ilorin?,,,AD 2.4,AD 2-DNIL-1,4 De-icing facilities NIL,pdf,PDF page 670; AIP: NIL
+G-DNIL-10,not_published,Are there repair facilities for visiting aircraft at Ilorin?,,,AD 2.4,AD 2-DNIL-1,6 Repair facilities for visiting aircraft NIL,pdf,PDF page 670; AIP: NIL
+G-DNIL-11,answer,What is the threshold elevation of runway 05 at Ilorin?,341m,334 m,AD 2.12,AD 2-DNIL-4,05 049°16’ 3 100 x 60 LCN 90 (LCG II) 082551.50N THR 341m/1 120 ft,pdf,PDF page 673; runway-end-specific: must_not is the other end's value
+G-DNIL-12,answer,What is the threshold elevation of runway 23 at Ilorin?,334 m,341m,AD 2.12,AD 2-DNIL-4,23 229°16’ 3 100 x 60 LCN 90 (LCG II) 082657.34N THR 334 m/1 097 ft,pdf,PDF page 673; runway-end-specific: must_not is the other end's value
+G-DNIM-01,answer,Elevation of DNIM,114 m | 374 ft,342 m | 49.475 m | 337.578 m,AD 2.2,AD 2-DNIM-1,3 Elevation/Reference temperature 114 m (374 ft)/35.0° C (JUL),pdf,PDF page 686
+G-DNIM-02,answer,ref temp DNIM,35.0°,,AD 2.2,AD 2-DNIM-1,3 Elevation/Reference temperature 114 m (374 ft)/35.0° C (JUL),pdf,PDF page 686
+G-DNIM-03,answer,RFF cat DNIM,CAT 6,CAT 9 | CAT 5,AD 2.6,AD 2-DNIM-2,1 AD category for fire fighting CAT 6,pdf,PDF page 687
+G-DNIM-04,answer,TA at DNIM,3 500ft,5 000 ft | 5 500ft | 8 500 ft | 4 500ft,AD 2.17,AD 2-DNIM-5,5 Transition altitude 3 500ft/1 067m AMSL,pdf,PDF page 690
+G-DNIM-05,answer,What is the transition level at Owerri?,FL 50,,AD 2.17,AD 2-DNIM-5,Transition level: FL 50,pdf,PDF page 690
+G-DNIM-06,answer,TWR frequency DNIM,118.4,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNIM-5,TWR Owerri Tower 118.4 MHz 0600 - 2100 NIL,pdf,PDF page 690
+G-DNIM-07,answer,What are the ARP coordinates of Owerri?,052538N | 0071222E,,AD 2.2,AD 2-DNIM-1,1 ARP coordinates and site at AD 052538N 0071222E,pdf,PDF page 686
+G-DNIM-08,not_published,What fuel is available at Owerri?,,,AD 2.4,AD 2-DNIM-1,2 Fuel and oil types Not available,pdf,PDF page 686; AIP: Not available
+G-DNIM-09,not_published,Are there repair facilities for visiting aircraft at Owerri?,,,AD 2.4,AD 2-DNIM-1,6 Repair facilities for visiting aircraft NIL,pdf,PDF page 686; AIP: NIL
+G-DNIM-10,answer,What is the threshold elevation of runway 17 at Owerri?,113.473 m,113.653 m,AD 2.12,AD 2-DNIM-4,17 167°06’ 2 700 x 45 LCN 55 052620.61N THR 113.473 m/372.282 ft,pdf,PDF page 689; runway-end-specific: must_not is the other end's value
+G-DNIM-11,answer,What is the threshold elevation of runway 35 at Owerri?,113.653 m,113.473 m,AD 2.12,AD 2-DNIM-4,35 347°06’ 2 700 x 45 LCN -55 052454.92N THR 113.653 m/372.873 ft,pdf,PDF page 689; runway-end-specific: must_not is the other end's value
+G-DNJO-01,answer,What is the fire fighting category at Jos?,CAT 6,CAT 9 | CAT 5,AD 2.6,AD 2-DNJO-2,1 AD category for fire fighting CAT 6,pdf,PDF page 704
+G-DNJO-02,answer,What is the transition altitude at Jos?,8 500 ft,5 000 ft | 3 500 ft | 5 500ft | 4 000 ft | 4 500ft,AD 2.17,AD 2-DNJO-5,5 Transition altitude 8 500 ft/2591 m AMSL,pdf,PDF page 707
+G-DNJO-03,answer,jos transition level,FL 100,,AD 2.17,AD 2-DNJO-5,Transition level: FL 100,pdf,PDF page 707
+G-DNJO-04,answer,What is the tower frequency at Jos?,122.7,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNJO-5,TWR Jos Tower 122.7 MHz 0600-1800,pdf,PDF page 707
+G-DNJO-05,answer,jos aerodrome reference point,093823N | 0085209E,,AD 2.2,AD 2-DNJO-1,1 ARP coordinates and site at AD 093823N 0085209E,pdf,PDF page 703
+G-DNJO-06,not_published,What fuel is available at Jos?,,,AD 2.4,AD 2-DNJO-1,2 Fuel and oil types Not available,pdf,PDF page 703; AIP: Not available
+G-DNJO-07,not_published,Are there repair facilities for visiting aircraft at Jos?,,,AD 2.4,AD 2-DNJO-1,6 Repair facilities for visiting aircraft Not available,pdf,PDF page 703; AIP: Not available
+G-DNJO-08,answer,What is the threshold elevation of runway 10 at Jos?,1288.294 m,1288.147 m,AD 2.12,AD 2-DNJO-3,10 095°13’ 3 000 x 45 LCN 50 (LCG III-IV) 093827.81N THR 1288.294 m/4226.635ft,pdf,PDF page 705; runway-end-specific: must_not is the other end's value
+G-DNJO-09,answer,What is the threshold elevation of runway 28 at Jos?,1288.147 m,1288.294 m,AD 2.12,AD 2-DNJO-3,28 275°13’ 3 000 x 45 LCN 50 (LCG III-IV) 093818.87N THR 1288.147 m/4226.153ft,pdf,PDF page 705; runway-end-specific: must_not is the other end's value
+G-DNKA-01,answer,What is the aerodrome elevation of Kaduna?,632 m | 2 072 ft,342 m | 49.475 m | 337.578 m,AD 2.2,AD 2-DNKA-1,3 Elevation/Reference temperature 632 m (2 072 ft)/35.8° C (JUL),pdf,PDF page 717
+G-DNKA-02,answer,What is the reference temperature at Kaduna?,35.8°,,AD 2.2,AD 2-DNKA-1,3 Elevation/Reference temperature 632 m (2 072 ft)/35.8° C (JUL),pdf,PDF page 717
+G-DNKA-03,answer,kaduna rescue and fire fighting category,CAT 7,CAT 9 | CAT 6,AD 2.6,AD 2-DNKA-2,1 AD category for fire fighting CAT 7,pdf,PDF page 718
+G-DNKA-04,answer,kaduna transition altitude,5 000 ft,5 500ft | 8 500 ft | 4 500ft,AD 2.17,AD 2-DNKA-5,5 Transition altitude 5 000 ft/1 524 m AMSL,pdf,PDF page 721
+G-DNKA-05,answer,What is the transition level at Kaduna?,FL 65,,AD 2.17,AD 2-DNKA-5,Transition level: FL 65,pdf,PDF page 721
+G-DNKA-06,answer,kaduna twr freq,118.8,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNKA-5,TWR Kaduna Tower 118.8 MHz 0700-1600 a)122.3 MHz is a co-ordinating,pdf,PDF page 721
+G-DNKA-07,answer,What are the ARP coordinates of Kaduna?,104145N | 0071913E,,AD 2.2,AD 2-DNKA-1,1 ARP coordinates and site at AD 104145N 0071913E,pdf,PDF page 717
+G-DNKA-08,answer,What fuel types are available at Kaduna?,JET A1,,AD 2.4,AD 2-DNKA-1,2 Fuel and oil types JET A1,pdf,PDF page 717
+G-DNKA-09,answer,What is the threshold elevation of runway 05 at Kaduna?,621m,631m,AD 2.12,AD 2-DNKA-3,05 049°43’ 3 000 x 60 LCN 100 (LCG I-II) 104113.57N THR 621m/2 036.160 ft,pdf,PDF page 719; runway-end-specific: must_not is the other end's value
+G-DNKA-10,answer,What is the threshold elevation of runway 23 at Kaduna?,631m,621m,AD 2.12,AD 2-DNKA-3,23 229°44’ 3 000 x 60 LCN 100 (LCG I-II) 104216.69N THR 631m/2 070.431 ft,pdf,PDF page 719; runway-end-specific: must_not is the other end's value
+G-DNKN-01,answer,kano elevation,476 m | 1 562 ft,342 m | 49.475 m | 337.578 m,AD 2.2,AD 2-DNKN-1,3 Elevation/Reference temperature 476 m (1 562 ft)/33.1° C (JUL),pdf,PDF page 737
+G-DNKN-02,answer,Kano aerodrome reference temperature,33.1°,,AD 2.2,AD 2-DNKN-1,3 Elevation/Reference temperature 476 m (1 562 ft)/33.1° C (JUL),pdf,PDF page 737
+G-DNKN-03,answer,RFF cat DNKN,CAT 9,CAT 6 | CAT 5,AD 2.6,AD 2-DNKN-2,1 AD category for fire fighting CAT 9,pdf,PDF page 738
+G-DNKN-04,answer,TA at DNKN,4 000 ft,5 000 ft | 5 500ft | 8 500 ft | 4 500ft,AD 2.17,AD 2-DNKN-7,5 Transition altitude 4 000 ft/1 219 m AMSL,pdf,PDF page 743
+G-DNKN-05,answer,kano transition level,FL 50,,AD 2.17,AD 2-DNKN-7,Transition level: FL 50,pdf,PDF page 743
+G-DNKN-06,answer,Kano tower frequency,118.1,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNKN-7,TWR Kano Tower 118.1 MHz H24 Primary frequency,pdf,PDF page 743
+G-DNKN-07,answer,What is the ATIS frequency at Kano?,123.6,127.05 | 127.6 | 126.600,AD 2.18,AD 2-DNKN-7,ATIS 123.6MHz H24,pdf,PDF page 743
+G-DNKN-08,answer,kano aerodrome reference point,120253N | 0083125E,,AD 2.2,AD 2-DNKN-1,1 ARP coordinates and site at AD 120253N 0083125E,pdf,PDF page 737
+G-DNKN-09,answer,What fuel types are available at Kano?,Full range,,AD 2.4,AD 2-DNKN-1,2 Fuel and oil types Full range.,pdf,PDF page 737
+G-DNKN-10,not_published,Are there de-icing facilities at Kano?,,,AD 2.4,AD 2-DNKN-1,4 De-icing facilities NIL,pdf,PDF page 737; AIP: NIL
+G-DNKN-11,answer,What is the LDA of runway 05 at Kano?,2 450 m,3 300 m | 2 600 m,AD 2.13,AD 2-DNKN-5,05 2 600 2 950 2 600 2 450 DTHR RWY 05: 150m from the beginning of the pavement.,pdf,PDF page 741; runway-specific: must_not is another runway's value
+G-DNKN-12,answer,What is the LDA of runway 23 at Kano?,2 600 m,3 300 m | 2 450 m,AD 2.13,AD 2-DNKN-5,23 2 600 2 950 2 600 2 600,pdf,PDF page 741; runway-specific: must_not is another runway's value
+G-DNKN-13,answer,How long is runway 06 at Kano?,3 300,2 450,AD 2.12,AD 2-DNKN-4,06 061°08’ 3 300 x 60 631/F/B/X/U 120229.81N THR 475.61 m/1 560.39 ft,pdf,PDF page 740; runway-specific: must_not is another runway's length
+G-DNKN-14,answer,How long is runway 24 at Kano?,3 300,2 450,AD 2.12,AD 2-DNKN-4,24 241°08’ 3 300 x 60 631/F/B/X/U 120321.69N THR 458.92 m/1 505.63 ft,pdf,PDF page 740; runway-specific: must_not is another runway's length
+G-DNKN-15,answer,How long is runway 05 at Kano?,2 450,3 300,AD 2.12,AD 2-DNKN-4,05 044°39’ 2 450 x 45 631/F/B/X/U 120219.92N THR 467.06 m/1 532.32 ft,pdf,PDF page 740; runway-specific: must_not is another runway's length
+G-DNKN-16,answer,How long is runway 23 at Kano?,2 450,3 300,AD 2.12,AD 2-DNKN-4,23 224°39’ 2 450 x 45 631/F/B/X/U 120316.66N THR 457.28 m/1 500.25 ft,pdf,PDF page 740; runway-specific: must_not is another runway's length
+G-DNKN-17,answer,What is the threshold elevation of runway 06 at Kano?,475.61 m,458.92 m | 467.06 m | 457.28 m,AD 2.12,AD 2-DNKN-4,06 061°08’ 3 300 x 60 631/F/B/X/U 120229.81N THR 475.61 m/1 560.39 ft,pdf,PDF page 740; runway-end-specific: must_not is the other end's value
+G-DNKN-18,answer,What is the threshold elevation of runway 24 at Kano?,458.92 m,475.61 m | 467.06 m | 457.28 m,AD 2.12,AD 2-DNKN-4,24 241°08’ 3 300 x 60 631/F/B/X/U 120321.69N THR 458.92 m/1 505.63 ft,pdf,PDF page 740; runway-end-specific: must_not is the other end's value
+G-DNKS-01,answer,how high is Kashimbila airport,199m | 653ft,342 m | 49.475 m | 337.578 m,AD 2.2,AD 2-DNKS-1,3 Elevation/Reference temperature 199m (653ft)/33° C,pdf,PDF page 781
+G-DNKS-02,answer,ref temp DNKS,33°,,AD 2.2,AD 2-DNKS-1,3 Elevation/Reference temperature 199m (653ft)/33° C,pdf,PDF page 781
+G-DNKS-03,answer,What is the transition altitude at Kashimbila?,8500 ft,5 000 ft | 3 500 ft | 5 500ft | 4 500ft,AD 2.17,AD 2-DNKS-5,5 Transition altitude 8500 ft,pdf,PDF page 785
+G-DNKS-04,answer,TWR frequency DNKS,121.700,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNKS-5,TWR Kashimbila Tower 121.700MHz Sunrise - Sunset Primary frequency,pdf,PDF page 785
+G-DNKS-05,answer,What are the ARP coordinates of Kashimbila?,065422N | 0094244E,,AD 2.2,AD 2-DNKS-1,1 ARP coordinates and site at AD 065422N 0094244E,pdf,PDF page 781
+G-DNKS-06,not_published,What fuel is available at Kashimbila?,,,AD 2.4,AD 2-DNKS-1,2 Fuel and oil types Nil,pdf,PDF page 781; AIP: Nil
+G-DNKS-07,not_published,Are there de-icing facilities at Kashimbila?,,,AD 2.4,AD 2-DNKS-1,4 De-icing facilities Nil,pdf,PDF page 781; AIP: Nil
+G-DNKS-08,not_published,Are there repair facilities for visiting aircraft at Kashimbila?,,,AD 2.4,AD 2-DNKS-1,6 Repair facilities for visiting aircraft Nil,pdf,PDF page 781; AIP: Nil
+G-DNKT-01,answer,Elevation of DNKT,514 m | 1685 ft,342 m | 49.475 m | 337.578 m,AD 2.2,AD 2-DNKT-1,3 Elevation/Reference temperature 514 m (1685 ft)/39° C (JUL),pdf,PDF page 798
+G-DNKT-02,answer,What is the reference temperature at Katsina?,39°,,AD 2.2,AD 2-DNKT-1,3 Elevation/Reference temperature 514 m (1685 ft)/39° C (JUL),pdf,PDF page 798
+G-DNKT-03,answer,What is the fire fighting category at Katsina?,CAT 7,CAT 9 | CAT 6,AD 2.6,AD 2-DNKT-2,1 AD category for fire fighting CAT 7,pdf,PDF page 799
+G-DNKT-04,answer,katsina transition altitude,5 000 ft,5 500ft | 8 500 ft | 4 500ft,AD 2.17,AD 2-DNKT-6,5 Transition altitude 5 000 ft/1 524 m AMSL,pdf,PDF page 803
+G-DNKT-05,answer,What is the transition level at Katsina?,FL 65,,AD 2.17,AD 2-DNKT-6,Transition level: FL 65,pdf,PDF page 803
+G-DNKT-06,answer,What is the tower frequency at Katsina?,125.0,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNKT-6,TWR Katsina Tower 125.0 MHz 0600-1800 NIL,pdf,PDF page 803
+G-DNKT-07,answer,katsina aerodrome reference point,130027N | 0073938E,,AD 2.2,AD 2-DNKT-1,1 ARP coordinates and site at AD 130027N 0073938E,pdf,PDF page 798
+G-DNKT-08,not_published,What fuel is available at Katsina?,,,AD 2.4,AD 2-DNKT-1,2 Fuel and oil types Not available,pdf,PDF page 798; AIP: Not available
+G-DNKT-09,not_published,Are there repair facilities for visiting aircraft at Katsina?,,,AD 2.4,AD 2-DNKT-1,6 Repair facilities for visiting aircraft Not available,pdf,PDF page 798; AIP: Not available
+G-DNKT-10,answer,What is the threshold elevation of runway 05 at Katsina?,513.671 m,496.279 m,AD 2.12,AD 2-DNKT-4,05 044°59’ 3 500 x 45 LCN 90 125947.00N THR 513.671 m/1 685.252 ft,pdf,PDF page 801; runway-end-specific: must_not is the other end's value
+G-DNKT-11,answer,What is the threshold elevation of runway 23 at Katsina?,496.279 m,513.671 m,AD 2.12,AD 2-DNKT-5,23 224°59’ 3 500 x 45 LCN 90 130106.53N THR 496.279 m/1 628.192 ft,pdf,PDF page 802; runway-end-specific: must_not is the other end's value
+G-DNMA-01,answer,What is the aerodrome elevation of Maiduguri?,335 m | 1 097 ft,342 m | 49.475 m | 337.578 m,AD 2.2,AD 2-DNMA-1,3 Elevation/Reference temperature 335 m (1 097 ft)/30° C,pdf,PDF page 816
+G-DNMA-02,answer,Maiduguri aerodrome reference temperature,30°,,AD 2.2,AD 2-DNMA-1,3 Elevation/Reference temperature 335 m (1 097 ft)/30° C,pdf,PDF page 816
+G-DNMA-03,answer,maiduguri rescue and fire fighting category,CAT 8,CAT 9 | CAT 6,AD 2.6,AD 2-DNMA-2,1 AD category for fire fighting CAT 8,pdf,PDF page 817
+G-DNMA-04,answer,TA at DNMA,3 500 ft,5 000 ft | 5 500ft | 8 500 ft | 4 500ft,AD 2.17,AD 2-DNMA-5,5 Transition altitude 3 500 ft/1 067 m AMSL,pdf,PDF page 820
+G-DNMA-05,answer,maiduguri transition level,FL 50,,AD 2.17,AD 2-DNMA-5,Transition level: FL 50,pdf,PDF page 820
+G-DNMA-06,answer,maiduguri twr freq,118.4,118.6 | 118.2,AD 2.18,AD 2-DNMA-5,TWR Maiduguri Tower 118.4 MHz 0600 - 1800,pdf,PDF page 820
+G-DNMA-07,answer,What are the ARP coordinates of Maiduguri?,115119N | 0130453E,,AD 2.2,AD 2-DNMA-1,1 ARP coordinates and site at AD 115119N 0130453E,pdf,PDF page 816
+G-DNMA-08,answer,What fuel types are available at Maiduguri?,JET A1,,AD 2.4,AD 2-DNMA-1,2 Fuel and oil types JET A1,pdf,PDF page 816
+G-DNMA-09,not_published,Are there de-icing facilities at Maiduguri?,,,AD 2.4,AD 2-DNMA-1,4 De-icing facilities NIL,pdf,PDF page 816; AIP: NIL
+G-DNMA-10,not_published,Are there repair facilities for visiting aircraft at Maiduguri?,,,AD 2.4,AD 2-DNMA-1,6 Repair facilities for visiting aircraft Not available,pdf,PDF page 816; AIP: Not available
+G-DNMA-11,answer,What is the threshold elevation of runway 05 at Maiduguri?,335 m,331 m,AD 2.12,AD 2-DNMA-4,05 046°41’ 3 000 x 60 LCN 90 (LCG II) 115045.39N THR 335 m/1 097.437 ft,pdf,PDF page 819; runway-end-specific: must_not is the other end's value
+G-DNMA-12,answer,What is the threshold elevation of runway 23 at Maiduguri?,331 m,335 m,AD 2.12,AD 2-DNMA-4,23 226°42’ 3 000 x 60 LCN 91 (LCG II) 115152.38N THR 331 m/1 086.460 ft,pdf,PDF page 819; runway-end-specific: must_not is the other end's value
+G-DNMK-01,answer,RFF cat DNMK,CAT 6,CAT 9 | CAT 5,AD 2.6,AD 2-DNMK-2,1 AD category for fire fighting CAT 6,pdf,PDF page 837
+G-DNMK-02,answer,What is the transition altitude at Makurdi?,3500ft,5 000 ft | 5 500ft | 8 500 ft | 4 500ft,AD 2.17,AD 2-DNMK-6,5 Transition altitude 3500ft,pdf,PDF page 841
+G-DNMK-03,answer,What is the transition level at Makurdi?,FL 50,,AD 2.17,AD 2-DNMK-6,Transition level: FL 50,pdf,PDF page 841
+G-DNMK-04,answer,Makurdi tower frequency,125.5,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNMK-6,TWR Makurdi Tower 125.5MHz Sunrise - Sunset,pdf,PDF page 841
+G-DNMK-05,answer,makurdi aerodrome reference point,074214N | 0083650E,,AD 2.2,AD 2-DNMK-1,1 ARP coordinates and site at AD 074214N 0083650E,pdf,PDF page 836
+G-DNMK-06,answer,What fuel types are available at Makurdi?,Jet -A1,,AD 2.4,AD 2-DNMK-1,2 Fuel and oil types Jet -A1,pdf,PDF page 836
+G-DNMK-07,not_published,Are there de-icing facilities at Makurdi?,,,AD 2.4,AD 2-DNMK-1,4 De-icing facilities Not Available,pdf,PDF page 836; AIP: Not Available
+G-DNMM-01,answer,lagos elevation,42 m | 138 ft,342 m | 49.475 m | 337.578 m,AD 2.2,AD 2-DNMM-1,3 Elevation/Reference temperature 42 m (138 ft)/31.3° C (JUL),pdf,PDF page 851
+G-DNMM-02,answer,ref temp DNMM,31.3°,,AD 2.2,AD 2-DNMM-1,3 Elevation/Reference temperature 42 m (138 ft)/31.3° C (JUL),pdf,PDF page 851
+G-DNMM-03,answer,What is the fire fighting category at Lagos?,CAT 9,CAT 6 | CAT 5,AD 2.6,AD 2-DNMM-2,1 AD category for fire fighting CAT 9,pdf,PDF page 852
+G-DNMM-04,answer,lagos transition altitude,3 500 ft,5 500ft | 8 500 ft | 4 500ft,AD 2.17,AD 2-DNMM-8,5 Transition altitude 3 500 ft/1 067 m AMSL,pdf,PDF page 858
+G-DNMM-05,answer,lagos transition level,FL 50,,AD 2.17,AD 2-DNMM-8,Transition level: FL 50,pdf,PDF page 858
+G-DNMM-06,answer,TWR frequency DNMM,118.1,118.6 | 118.0,AD 2.18,AD 2-DNMM-8,TWR Lagos Tower 118.1MHz H24 Primary frequency,pdf,PDF page 858
+G-DNMM-07,answer,lagos atis,123.8,127.05 | 127.6 | 126.600,AD 2.18,AD 2-DNMM-8,ATIS 123.8 MHz H24,pdf,PDF page 858
+G-DNMM-08,answer,What are the ARP coordinates of Lagos?,063443N | 0031921E,,AD 2.2,AD 2-DNMM-1,1 ARP coordinates and site at AD 063443N 0031921E,pdf,PDF page 851
+G-DNMM-09,answer,What fuel types are available at Lagos?,Jet A1,,AD 2.4,AD 2-DNMM-1,2 Fuel and oil types Jet A1,pdf,PDF page 851
+G-DNMM-10,answer,How long is runway 36R at Lagos?,2 745,3 900,AD 2.12,AD 2-DNMM-5,36R 359°17’ 2 745 x 45 PCR 631/F/B/X/U 063419.99N THR 26.45.m/86.77 ft,pdf,PDF page 855; runway-specific: must_not is another runway's length
+G-DNMM-11,answer,How long is runway 18L at Lagos?,2 745,3 900,AD 2.12,AD 2-DNMM-5,18L 179°17’ 2 745 x 45 PCR 631/F/B/X/U 063549.25N THR 41.87 m/137.35 ft,pdf,PDF page 855; runway-specific: must_not is another runway's length
+G-DNMM-12,answer,How long is runway 36L at Lagos?,3 900,2 745,AD 2.12,AD 2-DNMM-5,36L 359°18’ 3 900 x 60 PCR 631/F/B/X/U 063309.09N THR 15.28 m/50.13 ft,pdf,PDF page 855; runway-specific: must_not is another runway's length
+G-DNMM-13,answer,How long is runway 18R at Lagos?,3 900,2 745,AD 2.12,AD 2-DNMM-5,18R 179°18’ 3 900 x 60 PCR 631/F/B/X/U 063516.02N THR 19.56 m/64.18 ft,pdf,PDF page 855; runway-specific: must_not is another runway's length
+G-DNMM-14,answer,What is the threshold elevation of runway 36R at Lagos?,26.45.m,41.87 m | 15.28 m | 19.56 m,AD 2.12,AD 2-DNMM-5,36R 359°17’ 2 745 x 45 PCR 631/F/B/X/U 063419.99N THR 26.45.m/86.77 ft,pdf,PDF page 855; runway-end-specific: must_not is the other end's value
+G-DNMM-15,answer,What is the threshold elevation of runway 18L at Lagos?,41.87 m,26.45.m | 15.28 m | 19.56 m,AD 2.12,AD 2-DNMM-5,18L 179°17’ 2 745 x 45 PCR 631/F/B/X/U 063549.25N THR 41.87 m/137.35 ft,pdf,PDF page 855; runway-end-specific: must_not is the other end's value
+G-DNMN-01,answer,how high is Minna airport,273.597 m | 897.617 ft,342 m | 49.475 m | 337.578 m,AD 2.2,AD 2-DNMN-1,3 Elevation/Reference temperature 273.597 m (897.617 ft)/32.0° C (JUL),pdf,PDF page 894
+G-DNMN-02,answer,What is the reference temperature at Minna?,32.0°,,AD 2.2,AD 2-DNMN-1,3 Elevation/Reference temperature 273.597 m (897.617 ft)/32.0° C (JUL),pdf,PDF page 894
+G-DNMN-03,answer,minna rescue and fire fighting category,CAT 6,CAT 9 | CAT 5,AD 2.6,AD 2-DNMN-2,1 AD category for fire fighting CAT 6,pdf,PDF page 895
+G-DNMN-04,answer,TA at DNMN,4 500ft,5 000 ft | 3 500 ft | 5 500ft | 8 500 ft,AD 2.17,AD 2-DNMN-5,5 Transition altitude 4 500ft/1 372m AMSL,pdf,PDF page 898
+G-DNMN-05,answer,What is the transition level at Minna?,FL 60,,AD 2.17,AD 2-DNMN-5,Transition level: FL 60,pdf,PDF page 898
+G-DNMN-06,answer,What is the tower frequency at Minna?,118.3,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNMN-5,TWR Minna Tower 118.3 MHz 0600-1800,pdf,PDF page 898
+G-DNMN-07,answer,minna aerodrome reference point,093908N | 0062744E,,AD 2.2,AD 2-DNMN-1,1 ARP coordinates and site at AD 093908N 0062744E,pdf,PDF page 894
+G-DNMN-08,answer,What fuel types are available at Minna?,Jet A1,,AD 2.4,AD 2-DNMN-1,2 Fuel and oil types Jet A1,pdf,PDF page 894
+G-DNMN-09,not_published,Are there repair facilities for visiting aircraft at Minna?,,,AD 2.4,AD 2-DNMN-1,6 Repair facilities for visiting aircraft NIL,pdf,PDF page 894; AIP: NIL
+G-DNMN-10,answer,What is the threshold elevation of runway 05 at Minna?,259.448 m,273.535 m,AD 2.12,AD 2-DNMN-4,05 045°20’ 3 400 x 45 LCN 90 093829.56N THR 259.448 m/851.195 ft,pdf,PDF page 897; runway-end-specific: must_not is the other end's value
+G-DNMN-11,answer,What is the threshold elevation of runway 23 at Minna?,273.535 m,259.448 m,AD 2.12,AD 2-DNMN-4,23 225°20’ 3 400 x 45 asphalt 093947.24N THR 273.535 m/897.413 ft,pdf,PDF page 897; runway-end-specific: must_not is the other end's value
+G-DNOG-01,answer,RFF cat DNOG,CAT 6,CAT 9 | CAT 5,AD 2.6,AD 2-DNOG-2,1 AD category for fire fighting CAT 6,pdf,PDF page 913
+G-DNOG-02,answer,ogun transition level,FL 50,,AD 2.17,AD 2-DNOG-5,Transition level: FL 50,pdf,PDF page 916
+G-DNOG-03,answer,ogun twr freq,119.775,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNOG-6,TWR Iperu Tower 119.775 MHz HJ Primary frequency,pdf,PDF page 917
+G-DNOG-04,answer,What is the ATIS frequency at Ogun?,126.450,127.05 | 127.6 | 126.600,AD 2.18,AD 2-DNOG-6,ATIS 126.450 MHz HJ,pdf,PDF page 917
+G-DNOG-05,answer,What are the ARP coordinates of Ogun?,065604.8N | 0034154.5E,,AD 2.2,AD 2-DNOG-1,1 ARP coordinates and site at AD 065604.8N 0034154.5E,pdf,PDF page 912
+G-DNOG-06,not_published,What fuel is available at Ogun?,,,AD 2.4,AD 2-DNOG-1,2 Fuel and oil types NIL,pdf,PDF page 912; AIP: NIL
+G-DNOG-07,not_published,Are there de-icing facilities at Ogun?,,,AD 2.4,AD 2-DNOG-1,4 De-icing facilities NIL,pdf,PDF page 912; AIP: NIL
+G-DNOG-08,not_published,Are there repair facilities for visiting aircraft at Ogun?,,,AD 2.4,AD 2-DNOG-1,6 Repair facilities for visiting aircraft NIL,pdf,PDF page 912; AIP: NIL
+G-DNPO-01,answer,Elevation of DNPO,27.74 m | 91 ft,342 m | 49.475 m | 337.578 m,AD 2.2,AD 2-DNPO-1,3 Elevation/Reference temperature 27.74 m (91 ft)/32.5° C (JUL),pdf,PDF page 930
+G-DNPO-02,answer,Port Harcourt aerodrome reference temperature,32.5°,,AD 2.2,AD 2-DNPO-1,3 Elevation/Reference temperature 27.74 m (91 ft)/32.5° C (JUL),pdf,PDF page 930
+G-DNPO-03,answer,What is the fire fighting category at Port Harcourt?,CAT 9,CAT 6 | CAT 5,AD 2.6,AD 2-DNPO-2,1 AD category for fire fighting CAT 9,pdf,PDF page 931
+G-DNPO-04,answer,What is the transition altitude at Port Harcourt?,3 500 ft,5 000 ft | 5 500ft | 8 500 ft | 4 500ft,AD 2.17,AD 2-DNPO-5,5 Transition altitude 3 500 ft/1 067 m AMSL,pdf,PDF page 934
+G-DNPO-05,answer,What is the transition level at Port Harcourt?,FL 50,,AD 2.17,AD 2-DNPO-5,Transition level: FL 50,pdf,PDF page 934
+G-DNPO-06,answer,Port Harcourt tower frequency,119.2,118.0 | 118.2,AD 2.18,AD 2-DNPO-6,TWR Port Harcourt Tower 119.2 MHz H24 Primary frequency,pdf,PDF page 935
+G-DNPO-07,answer,port harcourt atis,122.3,127.05 | 127.6 | 126.600,AD 2.18,AD 2-DNPO-6,ATIS 122.3 MHz H24,pdf,PDF page 935
+G-DNPO-08,answer,port harcourt aerodrome reference point,050056N | 0065658E,,AD 2.2,AD 2-DNPO-1,1 ARP coordinates and site at AD 050056N 0065658E,pdf,PDF page 930
+G-DNPO-09,answer,What fuel types are available at Port Harcourt?,JET A1 (100/130),,AD 2.4,AD 2-DNPO-1,2 Fuel and oil types JET A1 (100/130),pdf,PDF page 930
+G-DNPO-10,not_published,Are there repair facilities for visiting aircraft at Port Harcourt?,,,AD 2.4,AD 2-DNPO-1,6 Repair facilities for visiting aircraft NIL,pdf,PDF page 930; AIP: NIL
+G-DNPO-11,answer,What is the TODA of runway 03 at Port Harcourt?,4180 m,4480 m,AD 2.13,AD 2-DNPO-4,03 3 000 4180 3 120 3 000 NIL,pdf,PDF page 933; runway-specific: must_not is another runway's value
+G-DNPO-12,answer,What is the TODA of runway 21 at Port Harcourt?,4480 m,4180 m,AD 2.13,AD 2-DNPO-4,21 3 000 4480 3 120 3 000 NIL,pdf,PDF page 933; runway-specific: must_not is another runway's value
+G-DNPO-13,answer,What is the threshold elevation of runway 03 at Port Harcourt?,26.080 m,27.638 m,AD 2.12,AD 2-DNPO-4,03 028°23’ 3 000 x 60 PCR 459/F/B/X/U 050012.65N THR 26.080 m/85.563 ft,pdf,PDF page 933; runway-end-specific: must_not is the other end's value
+G-DNPO-14,answer,What is the threshold elevation of runway 21 at Port Harcourt?,27.638 m,26.080 m,AD 2.12,AD 2-DNPO-4,21 208°23’ 3 000 x 60 PCR 459/F/B/X/U 050138.66N THR 27.638 m/90.675 ft,pdf,PDF page 933; runway-end-specific: must_not is the other end's value
+G-DNSO-01,answer,What is the aerodrome elevation of Sokoto?,308 m | 1 010 ft,342 m | 49.475 m | 337.578 m,AD 2.2,AD 2-DNSO-1,3 Elevation/Reference temperature 308 m (1 010 ft)/40.0° C (JUL),pdf,PDF page 960
+G-DNSO-02,answer,ref temp DNSO,40.0°,,AD 2.2,AD 2-DNSO-1,3 Elevation/Reference temperature 308 m (1 010 ft)/40.0° C (JUL),pdf,PDF page 960
+G-DNSO-03,answer,sokoto rescue and fire fighting category,CAT 6,CAT 9 | CAT 5,AD 2.6,AD 2-DNSO-2,1 AD category for fire fighting CAT 6,pdf,PDF page 961
+G-DNSO-04,answer,sokoto transition altitude,5 000 ft,5 500ft | 8 500 ft | 4 500ft,AD 2.17,AD 2-DNSO-5,5 Transition altitude 5 000 ft/1 524 m AMSL,pdf,PDF page 964
+G-DNSO-05,answer,sokoto transition level,FL 65,,AD 2.17,AD 2-DNSO-5,Transition level: FL 65,pdf,PDF page 964
+G-DNSO-06,answer,TWR frequency DNSO,122.1,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNSO-5,TWR Sokoto Tower 122.1 MHz 0600 - 1800 Primary,pdf,PDF page 964
+G-DNSO-07,answer,What are the ARP coordinates of Sokoto?,125457N | 0051225E,,AD 2.2,AD 2-DNSO-1,1 ARP coordinates and site at AD 125457N 0051225E,pdf,PDF page 960
+G-DNSO-08,answer,What fuel types are available at Sokoto?,JET A1,,AD 2.4,AD 2-DNSO-1,2 Fuel and oil types JET A1,pdf,PDF page 960
+G-DNSO-09,not_published,Are there repair facilities for visiting aircraft at Sokoto?,,,AD 2.4,AD 2-DNSO-1,6 Repair facilities for visiting aircraft Not Available,pdf,PDF page 960; AIP: Not Available
+G-DNSO-10,answer,What is the threshold elevation of runway 08 at Sokoto?,305 m,308 m,AD 2.12,AD 2-DNSO-4,08 076°42’ 3 000 x 60 LCN 85 (LCG II) 125445.99N THR 305 m/1 001.008 ft,pdf,PDF page 963; runway-end-specific: must_not is the other end's value
+G-DNSO-11,answer,What is the threshold elevation of runway 26 at Sokoto?,308 m,305 m,AD 2.12,AD 2-DNSO-4,26 256°42’ 3 000 x 60 LCN 85 (LCG II) 125508.46N THR 308 m/1 009.847 ft,pdf,PDF page 963; runway-end-specific: must_not is the other end's value
+G-DNSU-01,answer,RFF cat DNSU,CAT 5,CAT 9 | CAT 6,AD 2.6,AD 2-DNSU-2,1 AD category for fire fighting CAT 5,pdf,PDF page 981
+G-DNSU-02,answer,TA at DNSU,3 500ft,5 000 ft | 5 500ft | 8 500 ft | 4 500ft,AD 2.17,AD 2-DNSU-5,5 Transition altitude 3 500ft/1 067m AMSL,pdf,PDF page 984
+G-DNSU-03,answer,What is the transition level at Osubi?,FL 50,,AD 2.17,AD 2-DNSU-5,Transition level: FL 50,pdf,PDF page 984
+G-DNSU-04,answer,What is the tower frequency at Osubi?,129.1,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNSU-5,TWR Osubi Tower 129.1 MHz 0600-1800 NIL,pdf,PDF page 984
+G-DNSU-05,answer,osubi aerodrome reference point,053553N | 0054908E,,AD 2.2,AD 2-DNSU-1,1 ARP coordinates and site at AD 053553N 0054908E,pdf,PDF page 980
+G-DNSU-06,answer,What fuel types are available at Osubi?,JET A1,,AD 2.4,AD 2-DNSU-1,2 Fuel and oil types JET A1,pdf,PDF page 980
+G-DNSU-07,not_published,Are there repair facilities for visiting aircraft at Osubi?,,,AD 2.4,AD 2-DNSU-1,6 Repair facilities for visiting aircraft Not Available,pdf,PDF page 980; AIP: Not Available
+G-DNSU-08,answer,What is the threshold elevation of runway 06 at Osubi?,8.299 m,8.273 m,AD 2.12,AD 2-DNSU-3,06 052°32’ 1800 x 30 Not Available 053535.66N THR 8.299 m/27.227 ft,pdf,PDF page 982; runway-end-specific: must_not is the other end's value
+G-DNSU-09,answer,What is the threshold elevation of runway 24 at Osubi?,8.273 m,8.299 m,AD 2.12,AD 2-DNSU-4,24 232°32’ 1800 x 30 tarmac 053611.27N THR 8.273 m/27.140 ft,pdf,PDF page 983; runway-end-specific: must_not is the other end's value
+G-DNYO-01,answer,yola elevation,186.8 m | 613 ft,342 m | 49.475 m | 337.578 m,AD 2.2,AD 2-DNYO-1,3 Elevation/Reference temperature 186.8 m (613 ft)/39.4° C (JUL),pdf,PDF page 995
+G-DNYO-02,answer,What is the reference temperature at Yola?,39.4°,,AD 2.2,AD 2-DNYO-1,3 Elevation/Reference temperature 186.8 m (613 ft)/39.4° C (JUL),pdf,PDF page 995
+G-DNYO-03,answer,What is the fire fighting category at Yola?,CAT 6,CAT 9 | CAT 5,AD 2.6,AD 2-DNYO-2,1 AD category for fire fighting CAT 6,pdf,PDF page 996
+G-DNYO-04,answer,What is the transition altitude at Yola?,5 000ft,3 500 ft | 5 500ft | 8 500 ft | 4 500ft,AD 2.17,AD 2-DNYO-5,5 Transition altitude 5 000ft/1 524m AMSL,pdf,PDF page 999
+G-DNYO-05,answer,yola transition level,FL 65,,AD 2.17,AD 2-DNYO-5,Transition level: FL 65,pdf,PDF page 999
+G-DNYO-06,answer,yola twr freq,122.5,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNYO-5,TWR Yola Tower 122.5 MHz 0600-1800 NIL,pdf,PDF page 999
+G-DNYO-07,answer,What are the ARP coordinates of Yola?,091528N | 0122549E,,AD 2.2,AD 2-DNYO-1,1 ARP coordinates and site at AD 091528N 0122549E,pdf,PDF page 995
+G-DNYO-08,answer,What fuel types are available at Yola?,JET A1,,AD 2.4,AD 2-DNYO-1,2 Fuel and oil types JET A1,pdf,PDF page 995
+G-DNYO-09,not_published,Are there repair facilities for visiting aircraft at Yola?,,,AD 2.4,AD 2-DNYO-1,6 Repair facilities for visiting aircraft NIL,pdf,PDF page 995; AIP: NIL
+G-DNZA-01,answer,how high is Zaria airport,663.738m | 2 176.55 ft,342 m | 49.475 m | 337.578 m,AD 2.2,AD 2-DNZA-1,3 Elevation/Reference temperature 663.738m (2 176.55 ft)/32.0° C (JUL),pdf,PDF page 1011
+G-DNZA-02,answer,Zaria aerodrome reference temperature,32.0°,,AD 2.2,AD 2-DNZA-1,3 Elevation/Reference temperature 663.738m (2 176.55 ft)/32.0° C (JUL),pdf,PDF page 1011
+G-DNZA-03,answer,zaria rescue and fire fighting category,CAT 5,CAT 9 | CAT 6,AD 2.6,AD 2-DNZA-2,1 AD category for fire fighting CAT 5,pdf,PDF page 1012
+G-DNZA-04,answer,zaria transition altitude,5 500ft,5 000 ft | 3 500 ft | 8 500 ft | 4 000 ft,AD 2.17,AD 2-DNZA-5,5 Transition altitude 5 500ft/1 676m AMSL,pdf,PDF page 1015
+G-DNZA-05,answer,What is the transition level at Zaria?,FL 70,,AD 2.17,AD 2-DNZA-5,Transition level: FL 70,pdf,PDF page 1015
+G-DNZA-06,answer,Zaria tower frequency,123.7,118.6 | 118.0 | 118.2,AD 2.18,AD 2-DNZA-5,TWR Zaria Tower 123.7 MHz 0600-1800 NIL,pdf,PDF page 1015
+G-DNZA-07,answer,zaria aerodrome reference point,110749N | 0074109E,,AD 2.2,AD 2-DNZA-1,1 ARP coordinates and site at AD 110749N 0074109E,pdf,PDF page 1011
+G-DNZA-08,answer,What fuel types are available at Zaria?,"80/87, 100/130 Available",,AD 2.4,AD 2-DNZA-1,"2 Fuel and oil types 80/87, 100/130 Available",pdf,PDF page 1011
+G-DNZA-09,not_published,Are there repair facilities for visiting aircraft at Zaria?,,,AD 2.4,AD 2-DNZA-1,6 Repair facilities for visiting aircraft Not Available,pdf,PDF page 1011; AIP: Not Available
+G-DNZA-10,answer,What is the threshold elevation of runway 05 at Zaria?,646 m,663.4m,AD 2.12,AD 2-DNZA-4,05 049°38’ 1 646 x 46 asphalt 110731.14N THR 646 m/2118 ft,pdf,PDF page 1014; runway-end-specific: must_not is the other end's value
+G-DNZA-11,answer,What is the threshold elevation of runway 23 at Zaria?,663.4m,646 m,AD 2.12,AD 2-DNZA-4,23 229°38’ 1 646 x 46 asphalt 110806.32N THR 663.4m/2176.6 ft,pdf,PDF page 1014; runway-end-specific: must_not is the other end's value
+G-ENR-001,answer,What is the frequency of ABC?,116.3,,ENR 4.1,ENR 4.1-1,VOR/DME ABC 116.3 MHz H24 090216.1N 0071706.4E 363m (1190ft) FRA (ADI),pdf,PDF page 255
+G-ENR-002,answer,What are the coordinates of the BA locator?,101637.2N | 0094943.7E,,ENR 4.1,ENR 4.1-1,L BA 280KHz 0600 - 1800 101637.2N 0094943.7E,pdf,PDF page 255
+G-ENR-003,answer,BEN frequency,116.5,,ENR 4.1,ENR 4.1-1,VOR/DME BEN 116.5 MHz 0600 - 1800 061701.1N 0053328.6E 67m (220ft),pdf,PDF page 255
+G-ENR-004,answer,Where is BDA?,090607.7N | 0060103.1E,,ENR 4.1,ENR 4.1-1,VOR/DME BDA 112.7 MHz H24 090607.7N 0060103.1E,pdf,PDF page 255
+G-ENR-005,answer,frequency of the CAL VOR/DME,114.1,,ENR 4.1,ENR 4.1-1,VOR/DME CAL 114.1 MHz 0600 - 2000 045518.7N 0081912.2E 15m (49ft),pdf,PDF page 255
+G-ENR-006,answer,EK NDB position,043845.3N | 0075702.6E,,ENR 4.1,ENR 4.1-1,NDB EK 535KHz 0600 - 1800 043845.3N 0075702.6E,pdf,PDF page 255
+G-ENR-007,answer,What is the frequency of ENG?,115.7,,ENR 4.1,ENR 4.1-1,VOR/DME ENG 115.7 MHz 0600 - 1800 062851.2N 0073604.4E,pdf,PDF page 255
+G-ENR-008,answer,What are the coordinates of ESC?,053703.3N | 0051108.0E,,ENR 4.1,ENR 4.1-1,NDB ESC 305 KHz 0600 - 1800 053703.3N 0051108.0E,pdf,PDF page 255
+G-ENR-009,answer,GB VOR/DME frequency,115.9,,ENR 4.1,ENR 4.1-1,VOR/DME GB 115.9 MHz H24 071519.0N 0090017.9E,pdf,PDF page 255
+G-ENR-010,answer,Where is GME?,101648.8N | 0105230.9E,,ENR 4.1,ENR 4.1-2,VOR/DME GME 112.1 MHz 0600 - 1800 101648.8N 0105230.9E 474m (1555ft),pdf,PDF page 256
+G-ENR-011,answer,frequency of the GO NDB,360,,ENR 4.1,ENR 4.1-2,NDB GO 360 kHz Hajj operation) 101801.6N 0105350.3E 487.2m,pdf,PDF page 256
+G-ENR-012,answer,IBA position,072239.5N | 0035928.2E,,ENR 4.1,ENR 4.1-2,VOR/DME IBA 112.1MHz H24 072239.5N 0035928.2E 221m FRA (I),pdf,PDF page 256
+G-ENR-013,answer,What is the frequency of ILR?,112.3,,ENR 4.1,ENR 4.1-2,DVOR/DME ILR 112.3 MHz H24 082318.1N 0042551.1E 387m (1270ft),pdf,PDF page 256
+G-ENR-014,answer,What are the coordinates of the IL locator?,082530.1N | 0042835.0E,,ENR 4.1,ENR 4.1-2,L IL 391 kHz 082530.1N 0042835.0E,pdf,PDF page 256
+G-ENR-015,answer,JOS frequency,113.1,,ENR 4.1,ENR 4.1-2,DVOR/DME JOS 113.1 MHz H24 093832.0N 0085033.9E 1277m,pdf,PDF page 256
+G-ENR-016,answer,Where is the JS locator?,093815.3N | 0085336.8E,,ENR 4.1,ENR 4.1-2,L JS 270kHz 093815.3N 0085336.8E,pdf,PDF page 256
+G-ENR-017,answer,frequency of the KDA VOR/DME,115.3,,ENR 4.1,ENR 4.1-2,VOR/DME KDA 115.3 MHz 0600 - 2000 104048.6N 0071805.1E 621m (2037ft),pdf,PDF page 256
+G-ENR-018,answer,KUA position,103545.8N | 0072650.9E,,ENR 4.1,ENR 4.1-2,VOR KUA 114.7 MHz H24 103545.8N 0072650.9E,pdf,PDF page 256
+G-ENR-019,answer,What is the frequency of the KC locator?,330,,ENR 4.1,ENR 4.1-2,L KC 330 kHz 104054.1N 0071811.6E,pdf,PDF page 256
+G-ENR-020,answer,What are the coordinates of the JJ locator?,095300.0N | 0043000.0E,,ENR 4.1,ENR 4.1-2,L JJ 265 kHz 095300.0N 0043000.0E,pdf,PDF page 256
+G-ENR-021,answer,KAN frequency,112.5,,ENR 4.1,ENR 4.1-2,DVOR/DME KAN 112.5 MHz H24 120209.1N 0082945.8E 491m (1609ft) FRA (AD),pdf,PDF page 256
+G-ENR-022,answer,Where is the AO NDB?,120331.2N | 0083230.3E,,ENR 4.1,ENR 4.1-2,NDB AO 340kHz 120331.2N 0083230.3E,pdf,PDF page 256
+G-ENR-023,answer,frequency of the KIS VOR/DME,114.3,,ENR 4.1,ENR 4.1-2,VOR/DME KIS 114.3 MHz H24 090529.2N 0034946.7E,pdf,PDF page 256
+G-ENR-024,answer,LAG position,064227.4N | 0031938.8E,,ENR 4.1,ENR 4.1-2,DVOR/DME LAG 113.7MHz H24 064227.4N 0031938.8E 66m (217ft) FRA (ADI),pdf,PDF page 256
+G-ENR-025,answer,What is the frequency of MIU?,113.7,,ENR 4.1,ENR 4.1-2,DVOR/DME MIU 113.7MHz H24 115214.7N 0130552.8E 337m (1105ft),pdf,PDF page 256
+G-ENR-026,answer,What are the coordinates of the MA locator?,115017.4N | 0130346.4E,,ENR 4.1,ENR 4.1-2,L MA 332 kHz 115017.4N 0130346.4E 349m,pdf,PDF page 256
+G-ENR-027,answer,MNA frequency,115.1,,ENR 4.1,ENR 4.1-2,VOR/DME MNA 115.1 MHz 0600 - 1800 094009.0N 0062846.4E 273m (894ft),pdf,PDF page 256
+G-ENR-028,answer,Where is the OK NDB?,063021.5N | 0044730.0E,,ENR 4.1,ENR 4.1-3,NDB OK 345 kHz H24 063021.5N 0044730.0E,pdf,PDF page 257
+G-ENR-029,answer,frequency of the OSB VOR,117.1,,ENR 4.1,ENR 4.1-3,VOR OSB 117.1MHz 0600 - 1800 053558.6N 0054903.8E 15m (49ft),pdf,PDF page 257
+G-ENR-030,answer,OWR position,052652.0N | 0071204.7E,,ENR 4.1,ENR 4.1-3,VOR/DME OWR 114.9 MHz 0600 - 1800 052652.0N 0071204.7E 122m (400ft),pdf,PDF page 257
+G-ENR-031,answer,What is the frequency of SOK?,113.9,,ENR 4.1,ENR 4.1-3,VOR/DME SOK 113.9 MHz 0600 - 1800 125515.9N 0051345.6E 317m (1039ft),pdf,PDF page 257
+G-ENR-032,answer,What are the coordinates of AKW?,045343.0N | 0080617.8E,,ENR 4.1,ENR 4.1-3,VOR/DME AKW 113.8 MHz 0600 - 1800 045343.0N 0080617.8E 62m (203ft),pdf,PDF page 257
+G-ENR-033,answer,YOL frequency,115.5,,ENR 4.1,ENR 4.1-3,VOR/DME YOL 115.5 MHz 0600 - 1800 091731.4N 0122528.8E 168m (552ft),pdf,PDF page 257
+G-ENR-034,answer,Where is the ZA locator?,110828.2N | 0074155.6E,,ENR 4.1,ENR 4.1-3,L ZA 336 kHz 0600 - 1800 110828.2N 0074155.6E 669m (2194ft),pdf,PDF page 257
+G-ENR-035,answer,What are the coordinates of waypoint AGSOX?,123036N | 0064733E,,ENR 4.4,ENR 4.4-1,AGSOX 123036N 0064733E G/UG660,pdf,PDF page 263
+G-ENR-036,answer,Where is AMTIR?,080418N | 0073542E,,ENR 4.4,ENR 4.4-1,"AMTIR 080418N 0073542E UT457, J/UJ707",pdf,PDF page 263
+G-ENR-037,answer,APVIX coordinates,073648N | 0070936E,,ENR 4.4,ENR 4.4-1,"APVIX 073648N 0070936E UT458, UV456",pdf,PDF page 263
+G-ENR-038,answer,What are the coordinates of waypoint BIREG?,095812N | 0065248E,,ENR 4.4,ENR 4.4-1,BIREG 095812N 0065248E R/UR778,pdf,PDF page 263
+G-ENR-039,answer,Where is BOVKU?,101854N | 0071130E,,ENR 4.4,ENR 4.4-1,"BOVKU 101854N 0071130E UT416, R/UR778",pdf,PDF page 263
+G-ENR-040,answer,DIRVA coordinates,083500N | 0081624E,,ENR 4.4,ENR 4.4-1,DIRVA 083500N 0081624E UT475. H/UH206,pdf,PDF page 263
+G-ENR-041,answer,What are the coordinates of waypoint EDBUR?,064931N | 0045643E,,ENR 4.4,ENR 4.4-1,EDBUR 064931N 0045643E J/UJ333,pdf,PDF page 263
+G-ENR-042,answer,Where is ENBUT?,131700N | 0124258E,,ENR 4.4,ENR 4.4-2,ENBUT 131700N 0124258E UM998 IAD FIR BDRY,pdf,PDF page 264
+G-ENR-043,answer,ETRIS coordinates,092200N | 0125500E,,ENR 4.4,ENR 4.4-2,ETRIS 092200N 0125500E B/UB736 I FIR BDRY,pdf,PDF page 264
+G-ENR-044,answer,What are the coordinates of waypoint EVGEL?,082512N | 0090048E,,ENR 4.4,ENR 4.4-2,"EVGEL 082512N 0090048E UT457, A/UA604",pdf,PDF page 264
+G-ENR-045,answer,Where is GASDI?,041544N | 0062557E,,ENR 4.4,ENR 4.4-2,"GASDI 041544N 0062557E UQ590, UP685",pdf,PDF page 264
+G-ENR-046,answer,GULEN coordinates,130811.60N | 0040721.10E,,ENR 4.4,ENR 4.4-2,GULEN 130811.60N 0040721.10E G/UG660 I FIR BDRY,pdf,PDF page 264
+G-ENR-047,answer,What are the coordinates of waypoint GUSUS?,044922N | 0060917E,,ENR 4.4,ENR 4.4-2,GUSUS 044922N 0060917E UA601,pdf,PDF page 264
+G-ENR-048,answer,Where is IPUPU?,095533N | 0062057E,,ENR 4.4,ENR 4.4-2,"IPUPU 095533N 0062057E V/UV377, UL684",pdf,PDF page 264
+G-ENR-049,answer,KELAK coordinates,120518N | 0143758E,,ENR 4.4,ENR 4.4-2,KELAK 120518N 0143758E G/UG660 IAD FIR BDRY,pdf,PDF page 264
+G-ENR-050,answer,What are the coordinates of waypoint KORUT?,132059.60N | 0103757.50E,,ENR 4.4,ENR 4.4-3,"KORUT 132059.60N 0103757.50E UG616, G/UG854 IAD FIR BDRY",pdf,PDF page 265
+G-ENR-051,answer,Where is LULNU?,065321N | 0055607E,,ENR 4.4,ENR 4.4-3,"LULNU 065321N0055607E H335, UQ200",pdf,PDF page 265
+G-ENR-052,answer,MIMGU coordinates,052618N | 0043736E,,ENR 4.4,ENR 4.4-3,MIMGU 052618N 0043736E UA601,pdf,PDF page 265
+G-ENR-053,answer,What are the coordinates of waypoint NANOS?,134559N | 0054557E,,ENR 4.4,ENR 4.4-3,"NANOS 134559N 0054557E B/UB731,UQ592 IAD FIR BDRY",pdf,PDF page 265
+G-ENR-054,answer,Where is NEDRI?,091747N | 0061208E,,ENR 4.4,ENR 4.4-3,"NEDRI 091747N 0061208E UQ400, UR778",pdf,PDF page 265
+G-ENR-055,answer,OGDIX coordinates,084400N | 0075019E,,ENR 4.4,ENR 4.4-3,OGDIX 084400N 0075019E I,pdf,PDF page 265
+G-ENR-056,answer,What are the coordinates of waypoint OVLAL?,064716N | 0042616E,,ENR 4.4,ENR 4.4-3,"OVLAL 064716N 0042616E UQ181, UQ200",pdf,PDF page 265
+G-ENR-057,answer,Where is OXORU?,095155N | 0072215E,,ENR 4.4,ENR 4.4-3,OXORU 095155N 0072215E V/UV456 I,pdf,PDF page 265
+G-ENR-058,answer,POLTO coordinates,062930.12N | 0024500.00E,,ENR 4.4,ENR 4.4-4,POLTO 062930.12N 0024500.00E L/UL433 I FIR BDRY,pdf,PDF page 266
+G-ENR-059,answer,What are the coordinates of waypoint RALUX?,091522N | 0050051E,,ENR 4.4,ENR 4.4-4,RALUX 091522N 0050051E UL683,pdf,PDF page 266
+G-ENR-060,answer,Where is RURPO?,073446N | 0062201E,,ENR 4.4,ENR 4.4-4,"RURPO 073446N 0062201E H335, UQ400",pdf,PDF page 266
+G-ENR-061,answer,SEVAX coordinates,084242.12N | 0024612E,,ENR 4.4,ENR 4.4-4,SEVAX 084242.12N 0024612E UT458 FIR BDRY,pdf,PDF page 266
+G-ENR-062,answer,What are the coordinates of waypoint TARUS?,112831N | 0070216E,,ENR 4.4,ENR 4.4-4,TARUS 112831N 0070216E UT416,pdf,PDF page 266
+G-ENR-063,answer,Where is TETGA?,063154N | 0043621E,,ENR 4.4,ENR 4.4-4,"TETGA 063154N 0043621E UL433, UQ181",pdf,PDF page 266
+G-ENR-064,answer,UBEVA coordinates,134437N | 0044450E,,ENR 4.4,ENR 4.4-4,UBEVA 134437N 0044450E UY333 FIR BDRY,pdf,PDF page 266
+G-ENR-065,answer,What are the coordinates of waypoint UDAXA?,054339N | 0061105E,,ENR 4.4,ENR 4.4-4,"UDAXA 054339N 0061105E UJ222, UQ300",pdf,PDF page 266
+G-ENR-066,answer,Where is ULGES?,032636N | 0064829E,,ENR 4.4,ENR 4.4-5,ULGES 032636N 0064829E Y/UY604,pdf,PDF page 267
+G-ENR-067,answer,ULVAB coordinates,132846N | 0100609E,,ENR 4.4,ENR 4.4-5,"ULVAB 132846N 0100609E R/UR778, G/UG854",pdf,PDF page 267
+G-ENR-068,answer,What are the coordinates of waypoint USLAR?,115352N | 0041421E,,ENR 4.4,ENR 4.4-5,"USLAR 115352N 0041421E UL684, UY333",pdf,PDF page 267
+G-ENR-069,answer,Where is VOGPO?,124612N | 0083302E,,ENR 4.4,ENR 4.4-5,"VOGPO 124612N 0083302E Q/UQ324, UR986",pdf,PDF page 267
+G-ENR-070,answer,XIRON coordinates,083310N | 0055302E,,ENR 4.4,ENR 4.4-5,XIRON 083310N 0055302E W/UW951,pdf,PDF page 267

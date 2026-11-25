@@ -353,7 +353,7 @@ def main():
             out.append({**row, "verdict": "HARNESS_ERROR", "routing_ok": False,
                         "value_ok": False, "path": r.get("path"),
                         "icao_got": r.get("icao"), "sim": "0.000",
-                        "reply": r.get("reply", "")[:500]})
+                        "reply": (r.get("reply") or "").replace("\n", " ⏎ ")})
             continue
 
         clarify_case = row.get("expected_behaviour") == "clarify"
@@ -366,7 +366,7 @@ def main():
                         "value_ok": None, "path": r.get("path"),
                         "icao_got": r.get("icao"),
                         "sim": f"{float(r.get('sim') or 0):.3f}",
-                        "reply": (r.get("reply") or "").replace("\n", " ⏎ ")[:500]})
+                        "reply": (r.get("reply") or "").replace("\n", " ⏎ ")})
             continue
         if clarify_case:
             asked = score_clarify(row, r)
@@ -386,7 +386,7 @@ def main():
                     "routing_ok": routing, "value_ok": value,
                     "path": r.get("path"), "icao_got": r.get("icao"),
                     "sim": f"{float(r.get('sim') or 0):.3f}",
-                    "reply": (r.get("reply") or "").replace("\n", " ⏎ ")[:500]})
+                    "reply": (r.get("reply") or "").replace("\n", " ⏎ ")})
         if i % 25 == 0 or i == len(rows):
             print(f"  {i}/{len(rows)}  {dict(tally)}")
 
