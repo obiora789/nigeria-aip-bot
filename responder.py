@@ -418,6 +418,75 @@ def rwy_char_reply(res: Resolution, rc_text: str, query: str = "") -> str:
     return _section_source_reply(res, rc_text, needles, "AD 2.12")
 
 
+def runway_end_reply(res: Resolution, records: list, requested_runway=None,
+                     query: str = "") -> str:
+    """A field that differs per runway END (threshold elevation, bearing,
+    threshold coordinates), from the STRUCTURED AD 2.12 record.
+
+    Gold run 2026-11-25: all 34 threshold-elevation questions got the thin
+    AD 2.12 chunk ("DNAA runways: 04/22 3610x45m") under "won't single one
+    out", with no threshold value at all. The structured record keeps each
+    end's printed line separately, attributed at ingestion. When the pilot's
+    runway (the model's field) is exactly one end, only that end's line is
+    shown; otherwise every end is shown, each under its own label."""
+    def _end(v):
+        # "RWY 6" -> "06", "18r" -> "18R"; a bare "18" stays "18" and so never
+        # equals "18L" or "18R": an unsided request at a parallel pair shows both.
+        m = re.search(r"(\d{1,2})\s*([LRC]?)\b", str(v or "").upper())
+        return f"{int(m.group(1)):02d}{m.group(2)}" if m else None
+
+    want = _end(requested_runway)
+    if want:
+        for r in records:
+            for end, detail in (r.get("end_detail") or {}).items():
+                if detail and _end(end) == want and re.fullmatch(r"\d{2}[LRC]?", str(end).strip()):
+                    return (f"{res.label} — RWY {end} (AD 2.12)\n\n"
+                            f"[{end}] {detail}\n\n"
+                            f"———\nSource: Nigeria AIP · AD 2.12 · {config.AIRAC_CYCLE}\n"
+                            f"{config.DISCLAIMER}")
+    return runway_data_reply(res, records, requested_runway, query)
+
+
+def ad22_reply(res: Resolution, record: dict) -> str:
+    """AD 2.2 (geographical and administrative data) from the STRUCTURED
+    record, every field it holds, each under its own label.
+
+    Gold run 2026-11-25: 23 reference-temperature and 35 ARP questions were
+    answered with the elevation line only, because the stored AD 2.2 chunk is
+    just "DNAA elevation 342.0m/1122.0ft". The structured record holds the
+    rest. All fields are shown, so no wording decides which one: the pilot
+    reads the labelled line. ARP, magnetic variation, operator, traffic and
+    remarks are the strings as printed; elevation, temperature and geoid were
+    stored as numbers at ingestion (D7, car 3 keeps the printed form)."""
+    def num(v):
+        return _plain_number(v) if v is not None else None
+
+    lines = [f"{res.label} — aerodrome data (AD 2.2)", ""]
+    rows = [
+        ("Reference point (ARP)", (record.get("arp_site_description") or "").strip()),
+        ("Direction and distance from city",
+         (record.get("direction_distance_from_city") or "").strip()),
+        ("Elevation", " / ".join(p for p in (
+            f"{num(record.get('elevation_m'))} m" if record.get("elevation_m") is not None else "",
+            f"{num(record.get('elevation_ft'))} ft" if record.get("elevation_ft") is not None else "")
+            if p)),
+        ("Reference temperature", f"{num(record.get('reference_temp_c'))} °C"
+         if record.get("reference_temp_c") is not None else ""),
+        ("Geoid undulation", f"{num(record.get('geoid_undulation_m'))} m"
+         if record.get("geoid_undulation_m") is not None else ""),
+        ("Magnetic variation", (record.get("magnetic_variation") or "").strip()),
+        ("Operator", (record.get("operator_info") or "").strip()),
+        ("Types of traffic permitted", (record.get("traffic_type") or "").strip()),
+        ("Remarks", (record.get("remarks") or "").strip()),
+    ]
+    shown = [f"{k}: {v}" for k, v in rows if v]
+    if not shown:
+        shown = ["Not in my stored copy — see AD 2.2."]
+    lines += shown
+    return ("\n".join(lines) + f"\n\n———\nSource: Nigeria AIP · AD 2.2 · "
+            f"{config.AIRAC_CYCLE}\n{config.DISCLAIMER}")
+
+
 def runway_data_reply(res: Resolution, records: list, requested_runway=None,
                       query: str = "") -> str:
     """Exact runway-physical-characteristics answer from STRUCTURED data (AD

@@ -49,6 +49,7 @@ from responder import (ambiguous, answer, chart_intro, chart_not_found,
                        grounded_reply,
                        facts_reply, info_block_reply, lighting_data_reply, low_confidence,
                        navaid_reply, not_found, not_in_aip, runway_data_reply,
+                       runway_end_reply, ad22_reply,
                        overview_reply, rwy_char_reply, sid_charts_intro, sid_reply,
                        subsection_reply,
                        unresolved)
@@ -1566,6 +1567,14 @@ async def process(chat_id: int, text: str, force_scope=None,
                 note = ("This value differs per runway end, so I won't single one "
                         "out — read the exact figure for the runway end you need "
                         "from the AD 2.12 source below:")
+                # Structured per-end record first (gold run 2026-11-25: the
+                # AD 2.12 chunk holds no threshold value at all).
+                rrecs = (await asyncio.to_thread(get_runway_physical_data, res.icao)
+                         if res.icao else [])
+                if rrecs:
+                    await send_info(f"{note}\n\n"
+                                    f"{runway_end_reply(res, rrecs, ex.runway, follow_query)}")
+                    return
                 rtext = ""
                 if res.icao:
                     rtext = await asyncio.to_thread(get_section_text, res.icao,
@@ -1649,6 +1658,16 @@ async def process(chat_id: int, text: str, force_scope=None,
                 # rather than merely detectable.
                 section = ga
                 rec["path"] = f"subsection:{section}"
+                if section == "AD 2.2" and res.icao:
+                    # The stored AD 2.2 chunk is one line (the elevation), so
+                    # it answered reference temperature and ARP questions with
+                    # the elevation (gold run 2026-11-25). Answer from the
+                    # structured record, every field labelled.
+                    ad22 = await asyncio.to_thread(get_structured, res.icao, "2.2")
+                    if ad22:
+                        rec["path"] = "subsection:AD 2.2:structured"
+                        await send_info(ad22_reply(res, ad22[0]))
+                        return
                 sect_text = (await asyncio.to_thread(get_subsection_text, res.icao, section)
                              if res.icao else "")
                 if sect_text and section == "AD 2.22":

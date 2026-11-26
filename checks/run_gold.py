@@ -5,6 +5,7 @@ itself, never from Vannie's own database.
     python checks/run_gold.py                       # gold_set.csv, verified rows gate
     python checks/run_gold.py gold_set.csv --out checks_<date>/gold
     python checks/run_gold.py --only DNAA           # rows whose id/question mention DNAA
+    python checks/run_gold.py --section "AD 2.2"    # one section
 
 WHY THIS EXISTS (audit 2026-11-19, car 2). The stress set's expected answers
 are read from aip_facts, the same table Vannie answers from. A frequency stored
@@ -202,6 +203,7 @@ def main(argv=None) -> int:
     ap.add_argument("gold", nargs="?", default="gold_set.csv")
     ap.add_argument("--out", default="gold_results")
     ap.add_argument("--only", default="", help="only rows whose id or question contains this")
+    ap.add_argument("--section", default="", help="only rows of this section, e.g. 'AD 2.2'")
     ap.add_argument("--regrade", default="", metavar="GOLD_RESULTS_CSV",
                     help="grade the replies saved by an earlier run again, without asking the bot")
     a = ap.parse_args(argv)
@@ -209,6 +211,8 @@ def main(argv=None) -> int:
     rows = load(a.gold)
     if a.only:
         rows = [r for r in rows if a.only.lower() in (r["id"] + " " + r["question"]).lower()]
+    if a.section:
+        rows = [r for r in rows if (r.get("section") or "").strip().lower() == a.section.strip().lower()]
     if not rows:
         print("no rows to run")
         return 0
