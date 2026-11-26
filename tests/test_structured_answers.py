@@ -65,3 +65,47 @@ def test_main_routes_these_to_the_structured_records():
     assert "runway_end_reply(res, rrecs, ex.runway" in src
     assert 'get_structured, res.icao, "2.2"' in src and "ad22_reply(res, ad22[0])" in src
     assert 'get_structured, res.icao, "2.6"' in src and "ad26_reply(res, ad26[0])" in src
+
+
+def test_ad22_reply_shows_numbers_as_printed():
+    """Gold 2026-11-26: 221.810 shown as 221.81 and 30.0° as 30 (D7)."""
+    from responder import ad22_reply, overview_reply
+    rec = {"elevation_m": 221.81, "elevation_ft": 727.714, "reference_temp_c": 30.0,
+           "geoid_undulation_m": 27.9, "elevation_m_text": "221.810",
+           "elevation_ft_text": "727.714", "reference_temp_text": "30.0",
+           "geoid_undulation_text": "27.9"}
+    out = ad22_reply(RES, rec)
+    assert "221.810 m / 727.714 ft" in out and "30.0 °C" in out and "27.9 m" in out
+    assert "221.810 m" in overview_reply(RES, [rec], [], [])
+    # A record ingested before car 3 has no _text fields: the plain number.
+    old = {k: v for k, v in rec.items() if not k.endswith("_text")}
+    assert "221.81 m" in ad22_reply(RES, old) and "30 °C" in ad22_reply(RES, old)
+
+
+ASABA_218 = [
+    {"service": "TWR", "raw_text": "TWR Asaba Tower 118.500 MHz 0600 - 1800 119.400 MHz 0600 - 1800",
+     "lines": ["TWR Asaba Tower 118.500 MHz 0600 - 1800", "119.400 MHz 0600 - 1800"],
+     "frequencies": [{"value": 118.5, "value_text": "118.500", "unit": "MHZ"},
+                     {"value": 119.4, "value_text": "119.400", "unit": "MHZ"}]},
+    {"service": "ATIS", "raw_text": "ATIS Asaba Arrival Information 126.600 MHz 0600 - 1800",
+     "frequencies": [{"value": 126.6, "unit": "MHZ"}]},     # pre-car-3 record
+]
+
+
+def test_ad218_reply_shows_each_service_as_printed():
+    from responder import ad218_reply, overview_reply
+    out = ad218_reply(Resolution(icao="DNAS", label="Asaba"), ASABA_218)
+    assert "TWR Asaba Tower 118.500 MHz 0600 - 1800\n119.400 MHz 0600 - 1800" in out
+    assert "ATIS Asaba Arrival Information 126.600 MHz" in out     # raw_text fallback
+    assert "TWR=" not in out and "118.5MHZ" not in out
+    # Each service is its own block: TWR's lines never run into ATIS's.
+    assert out.index("119.400") < out.index("\n\nATIS")
+    assert "Not in my stored copy" in ad218_reply(RES, [])
+    card = overview_reply(RES, [], [], ASABA_218)
+    assert "TWR: 118.500 MHZ, 119.400 MHZ" in card and "ATIS: 126.6 MHZ" in card
+
+
+def test_main_routes_comms_to_the_structured_records():
+    import inspect, main
+    src = inspect.getsource(main.process)
+    assert 'get_structured, res.icao, "2.18"' in src and "ad218_reply(res, crecs)" in src

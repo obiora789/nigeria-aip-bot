@@ -49,7 +49,7 @@ from responder import (ambiguous, answer, chart_intro, chart_not_found,
                        grounded_reply,
                        facts_reply, info_block_reply, lighting_data_reply, low_confidence,
                        navaid_reply, not_found, not_in_aip, runway_data_reply,
-                       runway_end_reply, ad22_reply, ad26_reply,
+                       runway_end_reply, ad22_reply, ad26_reply, ad218_reply,
                        overview_reply, rwy_char_reply, sid_charts_intro, sid_reply,
                        subsection_reply,
                        unresolved)
@@ -1548,6 +1548,14 @@ async def process(chat_id: int, text: str, force_scope=None,
                 note = ("This aerodrome lists several ATS frequencies together, so I "
                         "won't single one out — read the exact frequency for the "
                         "service you need from the AD 2.18 source below:")
+                # Structured per-service records first (gold run 2026-11-26:
+                # the AD 2.18 chunk is "TWR=118.5MHZ", not the printed 118.500).
+                crecs = (await asyncio.to_thread(get_structured, res.icao, "2.18")
+                         if res.icao else [])
+                if crecs:
+                    rec["path"] = "comms:structured"
+                    await send_info(f"{note}\n\n{ad218_reply(res, crecs)}")
+                    return
                 ctext = ""
                 if res.icao:
                     ctext = await asyncio.to_thread(get_section_text, res.icao,

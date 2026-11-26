@@ -146,6 +146,7 @@ class AD218Extractor(SubsectionExtractor):
                 # mislabeled one is not.
                 frequencies.append({
                     "value": val,
+                    "value_text": fm.group(1),   # as printed: "118.500", not 118.5
                     "unit": unit,
                     "hours": hm.group(1),
                     "remark": remark_m.group(0) if remark_m else None,
@@ -191,7 +192,8 @@ class AD218Extractor(SubsectionExtractor):
                         raw_hm = re.match(r"\s*(\S+)", window)
                         hours_val = raw_hm.group(1) if raw_hm else None
                     frequencies.append({
-                        "value": val, "unit": "MHZ", "hours": hours_val,
+                        "value": val, "value_text": bfm.group(1),
+                        "unit": "MHZ", "hours": hours_val,
                         "remark": remark_m.group(0) if remark_m else None,
                     })
                 if frequencies:
@@ -207,6 +209,10 @@ class AD218Extractor(SubsectionExtractor):
                 "icao": icao, "service": service,
                 "frequencies": frequencies,
                 "raw_text": full_text,
+                # The service's table lines as printed, one per source line
+                # (car 3). What the pilot reads: the call sign, every frequency
+                # with its hours and remarks, attributed here, not by the reply.
+                "lines": [self.clean_text(t) for t in text_lines],
             })
 
         embed_text = f"{icao} ATS comms: " + "; ".join(

@@ -74,6 +74,13 @@ def _dms_to_decimal(dms, is_lon):
     return round(deg + minute / 60 + sec / 3600, 6)
 
 
+def _printed(match):
+    """The number exactly as the AIP prints it ("221.810", "30.0", "1 107.526"),
+    spacing collapsed. Gold run 2026-11-26: storing only the float turned
+    221.810 into 221.81 and 30.0° into 30, which is not what the page says."""
+    return " ".join(match.group(1).split()) if match else None
+
+
 def _parse_elevation(value):
     m_match = M_RE.search(value)
     ft_match = FT_RE.search(value)
@@ -83,6 +90,12 @@ def _parse_elevation(value):
         _to_float(ft_match.group(1)) if ft_match else None,
         _to_float(c_match.group(1)) if c_match else None,
     )
+
+
+def _parse_elevation_text(value):
+    """Same three matches as _parse_elevation, returned as printed strings."""
+    return (_printed(M_RE.search(value)), _printed(FT_RE.search(value)),
+            _printed(C_RE.search(value)))
 
 
 def _parse_coordinates(value):
@@ -172,22 +185,28 @@ class AD22Extractor(SubsectionExtractor):
                              f"(field value was: {values['arp_raw']!r})")
 
         elev_m = elev_ft = temp_c = None
+        elev_m_t = elev_ft_t = temp_c_t = None
         if values["elevation_raw"]:
             elev_m, elev_ft, temp_c = _parse_elevation(values["elevation_raw"])
+            elev_m_t, elev_ft_t, temp_c_t = _parse_elevation_text(values["elevation_raw"])
         if elev_m is None and elev_ft is None:
             elev_m2, elev_ft2, temp_c2 = _parse_elevation(full_text)
             if elev_m2 is not None or elev_ft2 is not None:
+                m_t2, ft_t2, c_t2 = _parse_elevation_text(full_text)
                 elev_m, elev_ft = elev_m2, elev_ft2
-                temp_c = temp_c if temp_c is not None else temp_c2
+                elev_m_t, elev_ft_t = m_t2, ft_t2
+                if temp_c is None:
+                    temp_c, temp_c_t = temp_c2, c_t2
                 warnings.append("elevation recovered via full-segment fallback, "
                                  "not the gutter-split field value")
         if elev_m is None and elev_ft is None:
             warnings.append(f"could not parse elevation from: {values['elevation_raw']!r}")
 
-        geoid_m = None
+        geoid_m = geoid_t = None
         if values["geoid_undulation_raw"]:
             gm = M_RE.search(values["geoid_undulation_raw"])
             geoid_m = _to_float(gm.group(1)) if gm else None
+            geoid_t = _printed(gm)
 
         record = {
             "icao": icao,
@@ -199,6 +218,12 @@ class AD22Extractor(SubsectionExtractor):
             "elevation_ft": elev_ft,
             "reference_temp_c": temp_c,
             "geoid_undulation_m": geoid_m,
+            # The same four values as printed (car 3): what the pilot is shown.
+            # The floats above stay for anything that compares or computes.
+            "elevation_m_text": elev_m_t,
+            "elevation_ft_text": elev_ft_t,
+            "reference_temp_text": temp_c_t,
+            "geoid_undulation_text": geoid_t,
             "magnetic_variation": values["magnetic_variation"],
             "operator_info": values["operator_info"],
             "traffic_type": values["traffic_type"],

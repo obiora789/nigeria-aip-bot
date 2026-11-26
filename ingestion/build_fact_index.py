@@ -226,7 +226,8 @@ def facts_from_record(icao, aero_name, subsection, rec):
         svc = _clean(rec.get("service")) or "?"
         freqs = rec.get("frequencies") or []
         if freqs:
-            joined = ", ".join(f"{f.get('value')}{f.get('unit','')}" for f in freqs)
+            joined = ", ".join(f"{f.get('value_text') or f.get('value')}{f.get('unit','')}"
+                               for f in freqs)
             out.append({
                 "entity": svc, "label": "Frequency",
                 "fact_value": joined,
@@ -292,6 +293,17 @@ def facts_from_record(icao, aero_name, subsection, rec):
                      "mhz": "MHz", "khz": "kHz", "deg": "\u00b0",
                      "kg": "kg", "lb": "lb", "t": "t",
                      "c": "\u00b0C", "f": "\u00b0F"}
+    # Car 3: "<base>_text" is the printed form of a number stored as a float
+    # ("elevation_m_text": "221.810" for "elevation_m": 221.81). It replaces
+    # that number's value and is not a fact of its own.
+    rec = dict(rec)
+    for k in [k for k in rec if k.endswith("_text")]:
+        base = k[:-len("_text")]
+        target = base if base in rec else next(
+            (o for o in rec if o.startswith(base + "_") and o != k), None)
+        printed = rec.pop(k)
+        if target and printed:
+            rec[target] = printed
     grouped = {}
     for k, v in rec.items():
         if k in ("icao", "icao_code"):

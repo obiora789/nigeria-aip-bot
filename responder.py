@@ -233,6 +233,16 @@ def _plain_number(v) -> str:
     return t[:-2] if t.endswith(".0") else t
 
 
+def _printed(record: dict, key: str) -> str:
+    """A number as the AIP prints it. Records ingested since car 3 carry
+    "<key>_text" ("221.810"); older records only the float, shown plainly.
+    "elevation_m" -> "elevation_m_text"; "reference_temp_c" -> "reference_temp_text"."""
+    text_key = {"reference_temp_c": "reference_temp_text",
+                "geoid_undulation_m": "geoid_undulation_text"}.get(key, f"{key}_text")
+    t = record.get(text_key)
+    return t if t else _plain_number(record.get(key))
+
+
 def overview_reply(res, ad22: list, runways: list, comms: list) -> str:
     """The same summary card for every aerodrome, whatever it is called
     (Obiora, 2026-11-21: "Kebbi", "Lagos", "Sokoto", "Kano" each got a
@@ -249,8 +259,8 @@ def overview_reply(res, ad22: list, runways: list, comms: list) -> str:
     if arp:
         lines.append(f"Reference point: {arp}")
     if m is not None or ft is not None:
-        parts = [f"{_plain_number(m)} m" if m is not None else "",
-                 f"{_plain_number(ft)} ft" if ft is not None else ""]
+        parts = [f"{_printed(a, 'elevation_m')} m" if m is not None else "",
+                 f"{_printed(a, 'elevation_ft')} ft" if ft is not None else ""]
         lines.append("Elevation: " + " / ".join(p for p in parts if p))
     if not arp and m is None and ft is None:
         lines.append("Not in my stored copy — see AD 2.2.")
@@ -268,7 +278,8 @@ def overview_reply(res, ad22: list, runways: list, comms: list) -> str:
     lines += ["", "ATS communications (AD 2.18)"]
     shown = 0
     for c in comms or []:
-        freqs = ", ".join(f"{f.get('value')} {f.get('unit', '')}".strip()
+        freqs = ", ".join(f"{f.get('value_text') or f.get('value')} "
+                          f"{f.get('unit', '')}".strip()
                           for f in (c.get("frequencies") or []))
         if c.get("service") and freqs:
             lines.append(f"{c['service']}: {freqs}")
@@ -447,6 +458,28 @@ def runway_end_reply(res: Resolution, records: list, requested_runway=None,
     return runway_data_reply(res, records, requested_runway, query)
 
 
+def ad218_reply(res: Resolution, records: list) -> str:
+    """AD 2.18 (ATS communication facilities) from the STRUCTURED records.
+
+    Gold run 2026-11-26: tower and ATIS questions got the embedding sentence
+    "DNAS ATS comms: TWR=118.5MHZ,119.4MHZ" under "Source", which is not the
+    AIP's text (it prints 118.500 MHz). Each record is one service, attributed
+    at ingestion; its lines are shown as printed, every service under its own
+    block, so no wording decides which frequency is meant. Records ingested
+    before car 3 have no "lines" and show "raw_text", the same text on one line."""
+    blocks = []
+    for r in records or []:
+        lines = [l.strip() for l in (r.get("lines") or []) if l and l.strip()]
+        if not lines and (r.get("raw_text") or "").strip():
+            lines = [r["raw_text"].strip()]
+        if lines:
+            blocks.append("\n".join(lines))
+    body = "\n\n".join(blocks) or "Not in my stored copy — see AD 2.18."
+    return (f"{res.label} — ATS communication facilities (AD 2.18)\n\n{body}"
+            f"\n\n———\nSource: Nigeria AIP · AD 2.18 · {config.AIRAC_CYCLE}\n"
+            f"{config.DISCLAIMER}")
+
+
 def ad26_reply(res: Resolution, record: dict) -> str:
     """AD 2.6 (rescue and fire fighting) from the STRUCTURED record, as printed.
 
@@ -477,10 +510,10 @@ def ad22_reply(res: Resolution, record: dict) -> str:
     just "DNAA elevation 342.0m/1122.0ft". The structured record holds the
     rest. All fields are shown, so no wording decides which one: the pilot
     reads the labelled line. ARP, magnetic variation, operator, traffic and
-    remarks are the strings as printed; elevation, temperature and geoid were
-    stored as numbers at ingestion (D7, car 3 keeps the printed form)."""
-    def num(v):
-        return _plain_number(v) if v is not None else None
+    remarks are the strings as printed; elevation, temperature and geoid are
+    shown as printed when the record has the car 3 "_text" fields (D7)."""
+    def num(key):
+        return _printed(record, key) if record.get(key) is not None else None
 
     lines = [f"{res.label} — aerodrome data (AD 2.2)", ""]
     rows = [
@@ -488,12 +521,12 @@ def ad22_reply(res: Resolution, record: dict) -> str:
         ("Direction and distance from city",
          (record.get("direction_distance_from_city") or "").strip()),
         ("Elevation", " / ".join(p for p in (
-            f"{num(record.get('elevation_m'))} m" if record.get("elevation_m") is not None else "",
-            f"{num(record.get('elevation_ft'))} ft" if record.get("elevation_ft") is not None else "")
+            f"{num('elevation_m')} m" if record.get("elevation_m") is not None else "",
+            f"{num('elevation_ft')} ft" if record.get("elevation_ft") is not None else "")
             if p)),
-        ("Reference temperature", f"{num(record.get('reference_temp_c'))} °C"
+        ("Reference temperature", f"{num('reference_temp_c')} °C"
          if record.get("reference_temp_c") is not None else ""),
-        ("Geoid undulation", f"{num(record.get('geoid_undulation_m'))} m"
+        ("Geoid undulation", f"{num('geoid_undulation_m')} m"
          if record.get("geoid_undulation_m") is not None else ""),
         ("Magnetic variation", (record.get("magnetic_variation") or "").strip()),
         ("Operator", (record.get("operator_info") or "").strip()),
