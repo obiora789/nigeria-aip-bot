@@ -447,6 +447,27 @@ def runway_end_reply(res: Resolution, records: list, requested_runway=None,
     return runway_data_reply(res, records, requested_runway, query)
 
 
+def ad26_reply(res: Resolution, record: dict) -> str:
+    """AD 2.6 (rescue and fire fighting) from the STRUCTURED record, as printed.
+
+    Gold run 2026-11-26: all 35 fire-category questions got "DNAA RFF
+    category 9" — the embedding sentence written at ingestion, shown under
+    "Source (AIP, verbatim)" although the AIP prints "CAT 9". The record keeps
+    the printed strings; every field is shown under its own label."""
+    rows = [
+        ("AD category for fire fighting", record.get("rff_category_raw")),
+        ("Rescue equipment", record.get("rescue_equipment")),
+        ("Capability for removal of disabled aircraft", record.get("removal_capability")),
+        ("Remarks", record.get("remarks")),
+    ]
+    shown = [f"{k}: {str(v).strip()}" for k, v in rows if v and str(v).strip()]
+    if not shown:
+        shown = ["Not in my stored copy — see AD 2.6."]
+    return (f"{res.label} — rescue and fire fighting (AD 2.6)\n\n" + "\n".join(shown)
+            + f"\n\n———\nSource: Nigeria AIP · AD 2.6 · {config.AIRAC_CYCLE}\n"
+            f"{config.DISCLAIMER}")
+
+
 def ad22_reply(res: Resolution, record: dict) -> str:
     """AD 2.2 (geographical and administrative data) from the STRUCTURED
     record, every field it holds, each under its own label.

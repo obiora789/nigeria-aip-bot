@@ -50,8 +50,18 @@ def test_ad22_reply_shows_every_stored_field():
     assert "Not in my stored copy" in ad22_reply(RES, {})
 
 
+def test_ad26_reply_shows_the_category_as_printed():
+    from responder import ad26_reply
+    out = ad26_reply(RES, {"rff_category": 9, "rff_category_raw": "CAT 9",
+                           "rescue_equipment": "3 crash tenders", "remarks": "NIL"})
+    assert "AD category for fire fighting: CAT 9" in out and "3 crash tenders" in out
+    assert "category 9" not in out.replace("fire fighting: CAT 9", "")
+    assert "Not in my stored copy" in ad26_reply(RES, {})
+
+
 def test_main_routes_these_to_the_structured_records():
     import inspect, main
     src = inspect.getsource(main.process)
     assert "runway_end_reply(res, rrecs, ex.runway" in src
     assert 'get_structured, res.icao, "2.2"' in src and "ad22_reply(res, ad22[0])" in src
+    assert 'get_structured, res.icao, "2.6"' in src and "ad26_reply(res, ad26[0])" in src

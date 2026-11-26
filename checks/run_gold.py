@@ -91,7 +91,7 @@ def norm(s: str) -> str:
     s = re.sub(r"\s+", " ", s).strip().casefold()
     # "3 500 ft" = "3500ft"; only before a real unit, so "65 also" and
     # "3300 x 60" are left alone
-    return re.sub(r"(\d) (?=(?:m|ft|mhz|khz|nm|km|°)(?![a-z]))", r"\1", s)
+    return re.sub(r"(\d) (?=(?:(?:m|ft|mhz|khz|nm|km)(?![a-z])|°))", r"\1", s)
 
 
 def _items(cell: str) -> list:

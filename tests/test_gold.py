@@ -93,3 +93,11 @@ def test_lenient_matches_the_same_number_in_any_format():
     assert not run_gold.lenient(row, "elevation 343.0m/1122.0ft")
     assert run_gold.lenient({"must_contain": "221.810 m"}, "221.81m")
     assert run_gold.lenient({"must_contain": "CAT 9"}, "RFF category 9")
+
+
+def test_a_degree_sign_followed_by_c_still_matches():
+    # gold run 2026-11-26: "Reference temperature: 35.6 °C" failed "35.6°"
+    # because the unit join refused a unit followed by a letter.
+    assert _g("answer", "Reference temperature: 35.6 °C", want="35.6°") == "PASS"
+    assert _g("answer", "Reference temperature: 35.6°C", want="35.6°") == "PASS"
+    assert _g("answer", "Reference temperature: 35.65 °C", want="35.6°") == "FAIL"

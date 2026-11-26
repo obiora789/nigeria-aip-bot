@@ -49,7 +49,7 @@ from responder import (ambiguous, answer, chart_intro, chart_not_found,
                        grounded_reply,
                        facts_reply, info_block_reply, lighting_data_reply, low_confidence,
                        navaid_reply, not_found, not_in_aip, runway_data_reply,
-                       runway_end_reply, ad22_reply,
+                       runway_end_reply, ad22_reply, ad26_reply,
                        overview_reply, rwy_char_reply, sid_charts_intro, sid_reply,
                        subsection_reply,
                        unresolved)
@@ -1667,6 +1667,14 @@ async def process(chat_id: int, text: str, force_scope=None,
                     if ad22:
                         rec["path"] = "subsection:AD 2.2:structured"
                         await send_info(ad22_reply(res, ad22[0]))
+                        return
+                if section == "AD 2.6" and res.icao:
+                    # Same for AD 2.6: the stored chunk is the sentence "DNAA RFF
+                    # category 9"; the record keeps "CAT 9" as printed.
+                    ad26 = await asyncio.to_thread(get_structured, res.icao, "2.6")
+                    if ad26:
+                        rec["path"] = "subsection:AD 2.6:structured"
+                        await send_info(ad26_reply(res, ad26[0]))
                         return
                 sect_text = (await asyncio.to_thread(get_subsection_text, res.icao, section)
                              if res.icao else "")
