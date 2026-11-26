@@ -45,8 +45,6 @@ import json
 import os
 import sys
 
-import fitz  # PyMuPDF
-
 from aip_structure import AERODROMES, STANDARD_36
 from ad222_extractor import _H22_RE, _H23_RE, _HC_RE
 
@@ -91,6 +89,7 @@ def main():
     entries = [e for e in AERODROMES if e[0] in STANDARD_36
                and (only is None or e[0] in only)]
 
+    import fitz  # PyMuPDF; imported here so airac_check can use find_span without it
     doc = fitz.open(pdf_path)
     flagged = []
     for icao, name, start, end in entries:
