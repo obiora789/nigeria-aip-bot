@@ -18,7 +18,10 @@ SAFE BY DEFAULT
   differs, unless --allow-changes is given (a new AIRAC amendment).
 
   A subsection whose validation fails is skipped and its stored rows kept, as
-  in vectorise_aip_v3.py. Rows are upserted first; only then are stored rows
+  in vectorise_aip_v3.py. One the AIP prints empty ("NIL", headings only)
+  has no records: any stored ones show as a count change and are removed on
+  --write. Text subsections (AD 2.10, 2.23) have no records and are counted
+  as text-only. Rows are upserted first; only then are stored rows
   past the new count removed, so a failed write never leaves a gap.
 
 USAGE (from the repo folder; PDF_PATH comes from .env, as for the other scripts)
@@ -85,8 +88,9 @@ def stored(supabase, icao, sub):
 def write(supabase, icao, sub, records):
     rows = [{"icao_code": icao, "subsection": sub, "record_index": i, "record": rec}
             for i, rec in enumerate(records)]
-    supabase.table(STRUCT_TABLE).upsert(
-        rows, on_conflict="icao_code,subsection,record_index").execute()
+    if rows:          # none when the AIP prints the subsection empty
+        supabase.table(STRUCT_TABLE).upsert(
+            rows, on_conflict="icao_code,subsection,record_index").execute()
     (supabase.table(STRUCT_TABLE).delete()
      .eq("icao_code", icao).eq("subsection", sub)
      .gte("record_index", len(records)).execute())
@@ -117,7 +121,7 @@ def main(argv=None):
 
     extractors = [(s, extractor_for(s)) for s in a.subsections]
     only = {c.upper() for c in a.only} if a.only else None
-    plan, tally = [], {"same": 0, "CHANGED": 0, "count": 0, "skipped": 0}
+    plan, tally = [], {"same": 0, "CHANGED": 0, "count": 0, "skipped": 0, "text": 0}
 
     with pdfplumber.open(os.path.expanduser(a.pdf)) as pdf:
         for icao, name, start, end in AERODROMES:
@@ -138,10 +142,14 @@ def main(argv=None):
                     continue
                 result = ex.extract(icao, segs)
                 errors = [i.message for i in ex.validate(result) if i.severity == "error"]
-                if errors or not result.records:
+                if errors:
                     print(f"  {icao} {sub}: validation failed — skipped, stored rows kept: "
-                          f"{errors or 'no records'}")
+                          f"{errors}")
                     tally["skipped"] += 1
+                    continue
+                if not result.records and result.empty_as_printed is None:
+                    # A text subsection (AD 2.10, 2.23): no records to store here.
+                    tally["text"] += 1
                     continue
                 status, details = compare(stored(supabase, icao, sub), result.records)
                 tally[status] += 1
@@ -151,7 +159,7 @@ def main(argv=None):
                 plan.append((icao, sub, result.records, status))
 
     print(f"\nsame {tally['same']}  CHANGED {tally['CHANGED']}  "
-          f"count {tally['count']}  skipped {tally['skipped']}")
+          f"count {tally['count']}  skipped {tally['skipped']}  text-only {tally['text']}")
     if not a.write:
         print("Dry run — nothing written. Add --write to store.")
         return 0

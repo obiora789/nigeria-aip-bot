@@ -52,12 +52,46 @@ class ExtractResult:
     # all and "Where is TEMSA?" was answered "not in the Nigerian AIP".
     scope_kind: str = "AD"          # AD | ENR_AREA | ENR_POINT | ENR_ROUTE |
                                     # ENR_AIRSPACE | GEN
+    # Set when the AIP prints the subsection with no entries (see
+    # segment_page.printed_empty): "" for headings only, else the printed
+    # words ("NIL", "To be developed."). None: not printed empty.
+    empty_as_printed: object = None
 
     @property
     def scope_id(self) -> str:
         """The entity this result belongs to. `icao` for aerodromes; for ENR
         the scope id was passed in through the same field."""
         return self.icao
+
+
+def note_printed_empty(result, segments):
+    """If the extractor found no records and the AIP prints the subsection
+    empty, say so in the result: its text is the heading and what is printed,
+    so a question about it is answered from the AIP ("NIL"), and an earlier
+    cycle's rows for it are replaced rather than left to be served."""
+    if result.records or not segments:
+        return result
+    from segment_page import printed_empty
+    empty = printed_empty(segments)
+    if empty is None:
+        return result
+    title = (segments[0].title or "").strip()
+    result.empty_as_printed = empty
+    shown = empty or "(The AIP prints this table with its headings only — no entries.)"
+    result.text = f"{result.icao} AD {result.subsection} {title}\n{shown}"
+    result.embed_text = (f"{result.icao} AD {result.subsection} {title.lower()}: "
+                         f"{empty or 'no entries'}")
+    return result
+
+
+def empty_or_error(result, message):
+    """validate() for a result with no records: a warning when the AIP prints
+    the subsection empty, otherwise the extractor's error."""
+    if result.empty_as_printed is not None:
+        return [ValidationIssue("warning", "records",
+                                f"{result.icao}: AD {result.subsection} printed with no "
+                                f"entries ({result.empty_as_printed or 'headings only'})")]
+    return [ValidationIssue("error", "records", message)]
 
 
 @dataclass

@@ -48,7 +48,8 @@ _sys.path[1:1] = [str(p) for p in (_R, _R / "checks", _R / "ingestion", _R / "in
                   if str(p) not in _sys.path]
 import re
 
-from extractor_base import SubsectionExtractor, ExtractResult, ValidationIssue
+from extractor_base import (SubsectionExtractor, ExtractResult, ValidationIssue,
+                            note_printed_empty, empty_or_error)
 
 AID_VOCAB = ["DVOR/DME", "VOR/DME", "GP ILS/DME", "GP/DME", "GP", "LLZ",
              "VOR", "NDB", "DME", "L"]
@@ -260,17 +261,15 @@ class AD219Extractor(SubsectionExtractor):
             f"{r['aid_type']}={r['frequency']}{r['freq_unit']}" for r in records
             if r["frequency"])
 
-        return ExtractResult(
+        return note_printed_empty(ExtractResult(
             icao=icao, subsection=self.subsection, kind=self.kind,
             records=records, text="", embed_text=embed_text, warnings=warnings,
-        )
+        ), segments)
 
     def validate(self, result: ExtractResult) -> list:
         issues = []
         if not result.records:
-            issues.append(ValidationIssue("error", "records",
-                                          f"{result.icao}: no navaid records"))
-            return issues
+            return empty_or_error(result, f"{result.icao}: no navaid records")
         # No hard block on missing frequency/coordinates here (unlike AD
         # 2.18's comms, where every service always has one) — some navaid
         # rows genuinely have partial data or unusual formats (confirmed:

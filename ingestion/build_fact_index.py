@@ -135,7 +135,10 @@ def _strip_ad214_furniture(value: str) -> str:
     survives intact."""
     t = _AD214_TITLE_RE.sub(" ", value or "")
     t = _AD214_HEADER_RE.sub(" ", t)
-    return re.sub(r"\s{2,}", " ", t).strip(" ,;.")
+    # Only the separators the removal leaves behind. Not "." — that stripped
+    # the AIP's own full stop from every value ("THR lights RWY 21 U/S."),
+    # found by rebuild_airac.sh check on 26 Nov.
+    return re.sub(r"\s{2,}", " ", t).strip(" ,;")
 
 
 def facts_from_record(icao, aero_name, subsection, rec):
@@ -798,10 +801,50 @@ def build_enr(subsections, pdf_path, dry_run=False, limit=40):
                   "so only the missing rows are added.")
         if written != len(facts) or upsert_errors or failed:
             any_error = True
+        else:
+            # ENR subsection numbers repeat AD's ("2.1"), so AD rows are excluded.
+            try:
+                gone = _prune_stale(facts, lambda q, _s=sub: q.eq("subsection", _s)
+                                    .neq("scope_kind", "AD"))
+                if gone:
+                    print(f"    removed {gone} stale fact(s) no longer in ENR {sub}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"    stale-fact removal FAILED ({str(exc)[:90]}) — re-run")
+                any_error = True
         total += written
 
     return total, any_error
 
+
+
+def _fact_key(f):
+    return (f.get("scope_kind") or "", f.get("scope_id") or "",
+            str(f.get("subsection") or ""), f.get("entity") or "", f.get("label") or "")
+
+
+def _prune_stale(facts, narrow):
+    """Delete aip_facts rows in one scope whose key this run did not write.
+
+    Car 3. Upserts never remove anything, so a fact the new AIRAC dropped (a
+    frequency withdrawn, a remark deleted) stayed in the index Vannie queries
+    FIRST. Call only after the scope's facts were ALL written: the rows kept
+    are exactly the ones just written. `narrow(query)` adds the scope's
+    filters. Returns the number of rows deleted."""
+    keep = {_fact_key(f) for f in facts}
+    stale, start = [], 0
+    while True:
+        page = _db(lambda c: narrow(c.table("aip_facts")
+                   .select("id,scope_kind,scope_id,subsection,entity,label"))
+                   .order("id").range(start, start + 999))
+        rows = page.data or []
+        stale += [r["id"] for r in rows if _fact_key(r) not in keep]
+        if len(rows) < 1000:
+            break
+        start += 1000
+    for i in range(0, len(stale), 100):
+        ids = stale[i:i + 100]
+        _db(lambda c: c.table("aip_facts").delete().in_("id", ids))
+    return len(stale)
 
 
 def _embed_and_upsert(facts):
@@ -964,6 +1007,7 @@ def main():
         # The text-kind subsections (2.10, 2.22, 2.23) have no structured
         # records, so they contribute nothing above. Pull their text from
         # aip_knowledge_base and split it on its own numbered headings.
+        text_ok = True
         try:
             kb = _db(lambda c: c.table("aip_knowledge_base")
                      .select("aip_section, content, source_page, source_chunk")
@@ -983,6 +1027,7 @@ def main():
                     for f in facts_from_text(icao, names.get(icao, icao), sec, blob)
                 ])
         except Exception as exc:  # noqa: BLE001
+            text_ok = False      # their facts are absent below: never prune then
             print(f"    (could not read text subsections: {exc})")
 
         raw_count = len(facts)
@@ -1037,6 +1082,17 @@ def main():
                   "so only the missing rows are added.")
         if upsert_errors or failed:
             any_error = True
+        elif written == len(facts) and text_ok:
+            try:
+                gone = _prune_stale(facts, lambda q, _i=icao: q.eq("scope_kind", "AD")
+                                    .eq("scope_id", _i))
+                if gone:
+                    print(f"    removed {gone} stale fact(s) no longer in {icao}'s records")
+            except Exception as exc:  # noqa: BLE001
+                print(f"    stale-fact removal FAILED ({str(exc)[:90]}) — re-run")
+                any_error = True
+        elif not text_ok:
+            print("    stale facts NOT removed: text subsections could not be read")
 
     print(f"\n{'DRY RUN — nothing written. ' if args.dry_run else ''}"
           f"{total} facts across {len(targets)} aerodrome(s)")

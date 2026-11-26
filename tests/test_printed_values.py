@@ -74,3 +74,17 @@ def test_fact_index_uses_the_printed_numbers():
     comms = facts_from_record("DNAS", "Asaba", "2.18", {
         "service": "TWR", "frequencies": [{"value": 118.5, "value_text": "118.500", "unit": "MHZ"}]})
     assert comms[0]["fact_value"] == "118.500MHZ"
+
+
+def test_ad214_cleanup_keeps_the_aips_full_stop():
+    """26 Nov check: the cleanup stripped every value's final "." although its
+    docstring promised DNAK's "Not available." survives intact."""
+    from ad214_extractor import _strip_table_furniture
+    from build_fact_index import _strip_ad214_furniture
+    header = ("RWY APCH LGT THR LGT VASIS TDZ, RWY Centre RWY edge LGT RWY End SWY LGT "
+              "Remarks Designator 1 2 3 4 5 6 7 8 9 10")
+    for strip in (_strip_table_furniture, _strip_ad214_furniture):
+        assert strip("DNAK AD 2.14 APPROACH AND RUNWAY LIGHTING Not available.") == "Not available."
+        assert strip("21 SALS CAT I Note: THR lights RWY 21 U/S.") == "21 SALS CAT I Note: THR lights RWY 21 U/S."
+        assert strip(f"DNAN AD 2.14 APPROACH AND RUNWAY LIGHTING {header} 06 24") == "06 24"
+        assert strip(f"10 NIL Green White White {header}") == "10 NIL Green White White"

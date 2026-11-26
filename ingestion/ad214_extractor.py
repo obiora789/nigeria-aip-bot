@@ -83,7 +83,10 @@ def _strip_table_furniture(text: str) -> str:
     """
     t = _SECTION_TITLE_RE.sub(" ", text or "")
     t = _COL_HEADER_RE.sub(" ", t)
-    return re.sub(r"\s{2,}", " ", t).strip(" ,;.")
+    # Only the separators the removal leaves behind. Not "." — that stripped
+    # the AIP's own full stop from every value ("THR lights RWY 21 U/S."),
+    # found by rebuild_airac.sh check on 26 Nov.
+    return re.sub(r"\s{2,}", " ", t).strip(" ,;")
 
 
 class AD214Extractor(SubsectionExtractor):

@@ -227,6 +227,44 @@ def _split_page_into_subsections(page_index, words, open_state, known_icao=None)
     return segments, new_open_state
 
 
+# What the AIP prints in a subsection it has nothing for: a table with headings
+# and no rows, a row of "NIL" in every column, or "To be developed.".
+_EMPTY_WORDS = {"nil", "to", "be", "developed", "not", "applicable", "available", "avbl"}
+
+
+def printed_empty(segments):
+    """How the AIP prints this subsection as having no entries, or None.
+
+    Car 3 (found by rebuild_airac.sh check, 26 Nov): the AD 2.13/2.19/2.20
+    validators failed on five subsections the AIP really does print empty —
+    DNAK and DNFD AD 2.19 (headings, no rows), DNKS AD 2.19 ("NIL" in every
+    column), DNBB AD 2.13 (headings, no rows), DNFB AD 2.20 ("To be
+    developed."). "No records" could not tell those from an extraction failure.
+
+    Returns "" for a table printed with headings only, the printed words for
+    NIL / "To be developed." (one "NIL" for a row of them), or None when
+    anything else is under the headings — so a real row the extractor could
+    not read still fails validation. A table's headings end at its column-number
+    row ("1 2 3 4 5 6"); without that row, only NIL-type words may follow the
+    subsection heading."""
+    lines = []
+    for seg in sorted(segments, key=lambda g: g.page_index):
+        lines.extend(_line_groups(seg.words))
+    body = [ln for ln in lines
+            if not SUBSECTION_HDR_RE.search(" ".join(w[4] for w in ln))]
+    for i, ln in enumerate(body):
+        toks = [w[4] for w in ln]
+        if len(toks) >= 3 and toks == [str(k) for k in range(1, len(toks) + 1)]:
+            body = body[i + 1:]
+            break
+    toks = [w[4] for ln in body for w in ln]
+    if not toks:
+        return ""
+    if all(re.sub(r"\W", "", t).casefold() in _EMPTY_WORDS for t in toks):
+        return toks[0] if len(set(toks)) == 1 else " ".join(toks)
+    return None
+
+
 def segment_aerodrome(icao, page_words_by_index, classify_fn):
     """Walk one aerodrome's pages in order, producing per-subsection segments
     with cross-page continuation carried correctly.

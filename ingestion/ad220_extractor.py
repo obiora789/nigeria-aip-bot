@@ -30,7 +30,8 @@ _sys.path[1:1] = [str(p) for p in (_R, _R / "checks", _R / "ingestion", _R / "in
                   if str(p) not in _sys.path]
 import re
 
-from extractor_base import SubsectionExtractor, ExtractResult, ValidationIssue
+from extractor_base import (SubsectionExtractor, ExtractResult, ValidationIssue,
+                            note_printed_empty, empty_or_error)
 
 ITEM_START_RE = re.compile(r'^2\.20\.(\d+)\s+(.*)')
 # Gutter is computed dynamically per aerodrome, not hardcoded — confirmed
@@ -165,17 +166,15 @@ class AD220Extractor(SubsectionExtractor):
         embed_text = f"{icao} AD 2.20 local regulations: " + "; ".join(
             f"{r['raw_label']}={r['detail']}" for r in records)
 
-        return ExtractResult(
+        return note_printed_empty(ExtractResult(
             icao=icao, subsection=self.subsection, kind=self.kind,
             records=records, text="", embed_text=embed_text, warnings=warnings,
-        )
+        ), segments)
 
     def validate(self, result: ExtractResult) -> list:
         issues = []
         if not result.records:
-            issues.append(ValidationIssue("error", "records",
-                                          f"{result.icao}: no AD 2.20 records produced"))
-            return issues
+            return empty_or_error(result, f"{result.icao}: no AD 2.20 records produced")
         for rec in result.records:
             if rec["item"] is None:
                 issues.append(ValidationIssue(

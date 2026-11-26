@@ -159,3 +159,7 @@ after*.json
 checks_quick_*/
 checks_*/
 checks_*.zip
+
+# rebuild_airac.sh logs (one folder per stage run)
+airac_runs/
+vectorise_v3_progress.json

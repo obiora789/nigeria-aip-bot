@@ -220,11 +220,54 @@ def kb_save(icao, subsection, content, embedding, page_num, chunk_idx):
             payload,
             on_conflict="reference_tag,aip_section,source_page,source_chunk"
         ).execute()
+        return True
     except Exception:
         try:
             supabase.table(KB_TABLE).insert(payload).execute()
+            return True
         except Exception as e:  # noqa: BLE001
             print(f"  KB error {icao} {subsection} chunk{chunk_idx}: {e}", flush=True)
+            return False
+
+
+# ── replace in place (car 3) ────────────────────────────────────────────────
+# The README's re-ingest began by deleting every AD 2 chunk and every structured
+# record, then rebuilt them: a run that failed part-way left Vannie with nothing
+# to answer from. Without that delete, the upserts above leave stale rows: a
+# chunk is keyed by its page, so when an amendment moves a subsection to another
+# page the old chunk stays beside the new one, and a record list that shrinks
+# keeps its old tail. So each subsection is now replaced in place: the new rows
+# are written first, and only when ALL of them were written are that
+# subsection's other rows removed. Nothing is deleted before its replacement
+# exists, and nothing outside (aerodrome, subsection) is touched.
+
+def kb_remove_stale(icao, subsection, first_page, n_chunks):
+    """Delete this subsection's chunks that the run just now did not write:
+    any on another page, and any past the new chunk count on this page."""
+    base = lambda: (supabase.table(KB_TABLE).delete()          # noqa: E731
+                    .eq("aip_part", "AD").eq("reference_tag", icao)
+                    .eq("aip_section", f"AD {subsection}"))
+    a = base().neq("source_page", first_page).execute()
+    b = base().eq("source_page", first_page).gte("source_chunk", n_chunks).execute()
+    return len(a.data or []) + len(b.data or [])
+
+
+def struct_remove_stale(icao, subsection, n_records):
+    r = (supabase.table(STRUCT_TABLE).delete()
+         .eq("icao_code", icao).eq("subsection", subsection)
+         .gte("record_index", n_records).execute())
+    return len(r.data or [])
+
+
+def stored_rows(icao, subsection):
+    """How many chunks an earlier ingest left for this subsection."""
+    try:
+        r = (supabase.table(KB_TABLE).select("id", count="exact")
+             .eq("aip_part", "AD").eq("reference_tag", icao)
+             .eq("aip_section", f"AD {subsection}").execute())
+        return r.count or 0
+    except Exception:  # noqa: BLE001
+        return -1                                   # unknown: reported as such
 
 
 def struct_save(icao, subsection, records):
@@ -233,6 +276,14 @@ def struct_save(icao, subsection, records):
     preserves source order (runway ends, navaids and comms services are all
     order-significant in the source)."""
     if not records:
+        # Text subsections never have records; one the AIP prints empty
+        # ("NIL") must not keep an earlier cycle's. Either way none belong here.
+        try:
+            gone = struct_remove_stale(icao, subsection, 0)
+            if gone:
+                print(f"  {icao} {subsection}: {gone} stale record(s) removed", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"  struct stale-removal error {icao} {subsection}: {e}", flush=True)
         return 0
     rows = [{
         "icao_code": icao,
@@ -243,10 +294,16 @@ def struct_save(icao, subsection, records):
     try:
         supabase.table(STRUCT_TABLE).upsert(
             rows, on_conflict="icao_code,subsection,record_index").execute()
-        return len(rows)
     except Exception as e:  # noqa: BLE001
         print(f"  struct error {icao} {subsection}: {e}", flush=True)
         return 0
+    try:
+        gone = struct_remove_stale(icao, subsection, len(rows))
+        if gone:
+            print(f"  {icao} {subsection}: {gone} stale record(s) removed", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"  struct stale-removal error {icao} {subsection}: {e}", flush=True)
+    return len(rows)
 
 
 def embed_payload(result):
@@ -292,17 +349,44 @@ def ingest_result(icao, subsection, result, first_page, prog):
             merged.append(buf)
         for idx, chunk in enumerate(merged):
             emb = get_embedding(f"{result.embed_text}\n\n{chunk}")
-            kb_save(icao, subsection, chunk, emb, first_page, idx)
-            kb_written += 1
+            kb_written += bool(kb_save(icao, subsection, chunk, emb, first_page, idx))
             time.sleep(RATE_PAUSE)
+        n_chunks = len(merged)
     else:
         emb = get_embedding(embed_payload(result))
-        kb_save(icao, subsection, text, emb, first_page, 0)
-        kb_written = 1
+        kb_written = int(bool(kb_save(icao, subsection, text, emb, first_page, 0)))
         time.sleep(RATE_PAUSE)
+        n_chunks = 1
+
+    if kb_written == n_chunks:
+        try:
+            gone = kb_remove_stale(icao, subsection, first_page, n_chunks)
+            if gone:
+                print(f"  {icao} {subsection}: {gone} stale chunk(s) removed", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"  KB stale-removal error {icao} {subsection}: {e}", flush=True)
+    else:
+        print(f"  {icao} {subsection}: {n_chunks - kb_written} chunk(s) NOT written — "
+              f"older chunks kept; re-run this aerodrome", flush=True)
 
     recs_written = struct_save(icao, subsection, result.records)
     return kb_written, recs_written
+
+
+STALE_MARK = " STALE:"
+
+
+def _stale_note(icao, subsection):
+    """A subsection this run did not write keeps whatever an earlier ingest
+    stored. On a new AIRAC that is last cycle's data served as this cycle's,
+    so it is named, and process() fails the run while any remain."""
+    n = stored_rows(icao, subsection)
+    if n == 0:
+        return ""
+    held = "an unknown number of" if n < 0 else str(n)
+    return (f"{STALE_MARK} {held} chunk(s) from an earlier ingest are still served "
+            f"for AD {subsection} — check by hand, delete them if this AIRAC "
+            f"no longer publishes it")
 
 
 def run_aerodrome(pdf, icao, name, start, end, span22, prog):
@@ -315,7 +399,7 @@ def run_aerodrome(pdf, icao, name, start, end, span22, prog):
     for subsection, extractor in SEGMENT_EXTRACTORS:
         segs = [s for s in segments if s.subsection == subsection]
         if not segs:
-            warnings.append(f"{subsection}: no segment found")
+            warnings.append(f"{subsection}: no segment found" + _stale_note(icao, subsection))
             continue
         result = extractor.extract(icao, segs)
         # Validation is a GATE, not a filter — a hard error means the extractor
@@ -324,6 +408,9 @@ def run_aerodrome(pdf, icao, name, start, end, span22, prog):
         errors = [i for i in extractor.validate(result) if i.severity == "error"]
         if errors:
             warnings.extend(f"{subsection}: SKIPPED — {i.message}" for i in errors)
+            note = _stale_note(icao, subsection)
+            if note:
+                warnings.append(f"{subsection}:{note}")
             continue
         warnings.extend(f"{subsection}: {w}" for w in result.warnings)
         first_page = min(s.page_index for s in segs)
@@ -344,16 +431,25 @@ def run_aerodrome(pdf, icao, name, start, end, span22, prog):
                   if i.severity == "error"]
         if errors:
             warnings.extend(f"2.22: SKIPPED — {i.message}" for i in errors)
+            note = _stale_note(icao, "2.22")
+            if note:
+                warnings.append(f"2.22:{note}")
         else:
             kb, recs = ingest_result(icao, "2.22", result, lo, prog)
             kb_total += kb
             rec_total += recs
     else:
-        warnings.append("2.22: no span in _span22.json — SKIPPED")
+        warnings.append("2.22: no span in _span22.json — SKIPPED" + _stale_note(icao, "2.22"))
 
     del page_words
     gc.collect()
     return kb_total, rec_total, warnings
+
+
+def _run_stamp():
+    """Which PDF and cycle a progress file belongs to."""
+    size = os.path.getsize(PDF_PATH) if PDF_PATH and os.path.exists(PDF_PATH) else 0
+    return f"{config.AIRAC_CYCLE} | {os.path.basename(PDF_PATH or '')} | {size} bytes"
 
 
 def process(only=None):
@@ -364,6 +460,14 @@ def process(only=None):
               "be answerable.", flush=True)
 
     prog = load_progress()
+    stamp = _run_stamp()
+    if prog.get("done") and prog.get("stamp") != stamp:
+        # A progress file from another PDF or cycle must not make this run
+        # skip aerodromes it never ingested from this PDF.
+        print(f"Progress file is from {prog.get('stamp') or 'an older run'}; "
+              f"this run is {stamp} — starting from the first aerodrome.", flush=True)
+        prog = {"done": [], "kb_chunks": 0, "records": 0}
+    prog["stamp"] = stamp
     done = set(prog["done"])
     entries = [e for e in AERODROMES if e[0] in STANDARD_36
                and (only is None or e[0] in only)]
@@ -393,18 +497,24 @@ def process(only=None):
         print(f"\n{len(all_warnings)} warning(s) — review before trusting the index:")
         for w in all_warnings:
             print(f"  {w}")
+    stale = [w for w in all_warnings if STALE_MARK in w]
+    if stale:
+        print(f"\n{len(stale)} subsection(s) still serve data this run did not write "
+              f"(lines marked STALE above). The run is not complete until each is "
+              f"checked against the new AIP.", flush=True)
+    return 1 if stale else 0
     print("\nNext: run the generic (GEN / ENR / AD 1.x) ingest — Layer 2 covers\n"
           "AD 2 only, and those parts of the AIP still need the page-walk path\n"
           "harvested from vectorise_aip_v2.py.", flush=True)
 
 
 if __name__ == "__main__":
-    only = set(a.upper() for a in sys.argv[1:]) or None
-    print("This rewrites AD 2 rows in aip_knowledge_base and aip_structured.")
-    print("Clear them first:")
-    print("  DELETE FROM aip_knowledge_base WHERE aip_part = 'AD';")
-    print("  DELETE FROM aip_structured;")
-    if input("Confirmed cleared? (yes/no): ").strip().lower() == "yes":
-        process(only)
-    else:
-        print("Aborted.")
+    args = [a for a in sys.argv[1:] if a != "--yes"]
+    only = set(a.upper() for a in args) or None
+    print("This rewrites AD 2 rows in aip_knowledge_base and aip_structured, one\n"
+          "subsection at a time, in place: new rows are written first, then that\n"
+          "subsection's old rows are removed. Do NOT delete anything first.\n"
+          "Embedding cost: roughly 900 chunks for all 36 aerodromes.")
+    if "--yes" in sys.argv or input("Go ahead? (yes/no): ").strip().lower() == "yes":
+        sys.exit(process(only))
+    print("Aborted.")

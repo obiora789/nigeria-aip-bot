@@ -44,7 +44,8 @@ _sys.path[1:1] = [str(p) for p in (_R, _R / "checks", _R / "ingestion", _R / "in
                   if str(p) not in _sys.path]
 import re
 
-from extractor_base import SubsectionExtractor, ExtractResult, ValidationIssue
+from extractor_base import (SubsectionExtractor, ExtractResult, ValidationIssue,
+                            note_printed_empty, empty_or_error)
 
 DESIGNATOR_RE = re.compile(r"^(\d{2}[LRC]?)\b")
 HEADER_LABELS = ["TORA", "TODA", "ASDA", "LDA", "Remarks"]
@@ -182,17 +183,15 @@ class AD213Extractor(SubsectionExtractor):
             f"{r['runway']} TORA={r['tora_m']} TODA={r['toda_m']} "
             f"ASDA={r['asda_m']} LDA={r['lda_m']}" for r in records)
 
-        return ExtractResult(
+        return note_printed_empty(ExtractResult(
             icao=icao, subsection=self.subsection, kind=self.kind,
             records=records, text="", embed_text=embed_text, warnings=warnings,
-        )
+        ), segments)
 
     def validate(self, result: ExtractResult) -> list:
         issues = []
         if not result.records:
-            issues.append(ValidationIssue("error", "records",
-                                          f"{result.icao}: no declared-distance records"))
-            return issues
+            return empty_or_error(result, f"{result.icao}: no declared-distance records")
         for rec in result.records:
             # null-over-guess, now correctly scoped PER FIELD rather than
             # all-or-nothing per runway (the DNKT fix): a genuinely blank
