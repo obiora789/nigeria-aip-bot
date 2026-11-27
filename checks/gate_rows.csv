@@ -1,0 +1,13 @@
+id,icao,subsection,entity,label,expected_value,question,corruption,expected_behaviour,match_mode
+S00728,DNBY,AD 2.11,,supplementary equipment,Telephone,what is the suppleemntary equipment for Amassoma,typo,answer,exact
+S00815,DNBY,AD 2.19,LLZ,Hours of operation,0600 - 1800,Amassoma hours of operation?,question_mark,answer,exact
+S01117,DNAN,AD 2.2,,arp lat,6.267222,arp lat at Umueri,no_articles,answer,exact
+S01477,DNBY,AD 2.10,9 | Tree | 1,Obstacle,9 | Tree | 045659.69N 0061115.51E | 18m,what is the obstacle for Amassoma?,question_mark,clarify,exact
+S02213,DNBY,AD 2.7,,clearing equipment,Not Applicable,Amassoma clearing equimpent,typo,answer,absent
+S04143,DNJO,AD 2.2,,magnetic variation,1° W (2010)/+7’ E,magnetic varitaion at Jos,typo,answer,exact
+S04144,DNJO,AD 2.2,,magnetic variation,1° W (2010)/+7’ E,Jos magnetic varitaion,typo,answer,exact
+S05001,DNBY,AD 2.11,,ats units,BAYELSA TWR,Amassoma ats units,plural,answer,exact
+S06756,DNAI,AD 2.19,LLZ,Hours of operation,0600-2000,Uyo hours operation,no_articles,answer,exact
+S07294,DNKT,AD 2.15,,secondary power,Available,katsina secondary power,lowercase,answer,exact
+S07500,DNBY,AD 2.17,,ATS unit call sign/language(s),Bayelsa Tower/EN,what is the ats unit call sign/language(s) for Amassoma?,question_mark,answer,exact
+S07559,DNAN,AD 2.20,,Airport regulations,Available.,regulations at Umueri,terse,answer,exact

@@ -533,6 +533,47 @@ def _wants_chart(ex) -> bool:
 _APPROACH_RE = re.compile(r"\b(ils|vor|rnav|gnss|rnp|ndb|loc)\b", re.I)
 
 
+# Statuses that fetch their answer BY NAME — the aerodrome's structured record
+# or its stored subsection — never from the search results. Every other status
+# (grounded, fallback, declared_distance's and rwy_data's no-record fallbacks,
+# approach charts) can end up showing the retrieved chunks, so a weak search
+# still stops them.
+_BY_NAME_SECTION = {"comms": "AD 2.18", "navaid": "AD 2.19", "rwy_char": "AD 2.12"}
+
+
+def _decide_past_weak_search(query, outcome, ex, res):
+    """(status, payload) for a question the similarity gate would stop, or None.
+
+    D30 (gold 27 Nov, checks/why_low_confidence.py): Umueri and Amassoma
+    resolve correctly and the model names the subsection (2.6, 2.2, 2.4), yet
+    the search scores 0.33-0.39 against the 0.40 gate, so "couldn't find a
+    confident match" — while Asaba passes at 0.48-0.61 because chunks that
+    contain the word "Asaba" (AD 2.1's title, the AD 0.6 contents) score on
+    the place name; Asaba's own AD 2.6 record was not even its top hit. The
+    gate was measuring how familiar the name is to the embedding model.
+
+    When the model has named the subsection, synthesize_decision returns it
+    without looking at the search results (its layers 2-3), so the score
+    cannot change the answer — only block it. Here that same decision is
+    made, and accepted only when (a) the aerodrome is a pinned ICAO, (b) the
+    status fetches by name, and (c) that subsection is stored for the
+    aerodrome. Anything else keeps today's refusal."""
+    if not res.icao or res.part != "AD" or res.is_national:
+        return None
+    if not synthesize._normalise_subsection(getattr(ex, "ad2_subsection", None)):
+        return None
+    status, ga = synthesize.synthesize_decision(query, outcome.results, ex)
+    if status in ("subsection", "subsection_verbatim"):
+        section = ga
+    else:
+        section = _BY_NAME_SECTION.get(status)
+    if not section:
+        return None
+    if not get_subsection_text(res.icao, section):
+        return None
+    return status, ga
+
+
 def _is_approach(ex, text) -> bool:
     """True for an instrument APPROACH (which has holding/letdown/missed-approach
     procedures) — not aerodrome/parking/obstacle/SID/STAR charts."""
@@ -1404,16 +1445,28 @@ async def process(chat_id: int, text: str, force_scope=None,
         )
         rec["similarity"] = outcome.max_similarity
 
+        # A weak search does not stop a question whose aerodrome AND AD 2
+        # subsection are already known (see _decide_past_weak_search).
+        pinned = None
         if outcome.abstained and outcome.reason == "low_confidence":
+            pinned = await asyncio.to_thread(
+                _decide_past_weak_search, follow_query, outcome, ex, res)
+
+        if outcome.abstained and outcome.reason == "low_confidence" and pinned is None:
             rec["path"] = "low_confidence"
             await send_info(low_confidence(outcome))
             # still offer charts below if we have an ICAO
-        elif outcome.abstained:
+        elif outcome.abstained and pinned is None:
             rec["path"] = "not_found"
             await send_info(not_found())
         else:
-            status, ga = await asyncio.to_thread(
-                synthesize.synthesize_decision, follow_query, outcome.results, ex)
+            if pinned is not None:
+                status, ga = pinned
+                log.info("past weak search (%.2f): %s %s %s", outcome.max_similarity,
+                         res.icao, status, ga)
+            else:
+                status, ga = await asyncio.to_thread(
+                    synthesize.synthesize_decision, follow_query, outcome.results, ex)
 
             # FIELD-LEVEL FACTS. Tried once the safety guards and structured
             # handlers have declined — i.e. exactly where the old code fell
