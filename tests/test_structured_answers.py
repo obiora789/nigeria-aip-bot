@@ -109,3 +109,41 @@ def test_main_routes_comms_to_the_structured_records():
     import inspect, main
     src = inspect.getsource(main.process)
     assert 'get_structured, res.icao, "2.18"' in src and "ad218_reply(res, crecs)" in src
+
+
+def test_d31_sections_show_every_row_under_the_aips_label():
+    """27 Nov: "katsina secondary power" got "DNKT AD 2.15: ABN/IBN=Available",
+    the one-line chunk; the record holds every row."""
+    from responder import record_section_reply
+    katsina = Resolution(icao="DNKT", label="Katsina")
+    out = record_section_reply(katsina, "2.15", {
+        "abn_ibn": "Available", "ldi_anemometer": "Anenometer available in MET garden.",
+        "twy_lighting": "Not Applicable", "secondary_power": "Available", "remarks": "NIL"})
+    assert "Secondary power supply/switch-over time: Available" in out
+    assert "LDI location and LGT / Anemometer location and LGT: Anenometer available in MET garden." in out
+    met = record_section_reply(katsina, "2.11", {"hours_of_service": "H24 Not Applicable",
+                                                 "taf_preparation": "KANO 30 Hours"})
+    assert "Hours of service / MET Office outside hours: H24 Not Applicable" in met
+    assert "Office responsible for TAF preparation / Period of validity: KANO 30 Hours" in met
+    twy = record_section_reply(katsina, "2.8", {"taxiway_info": "Width: 30 M  Surface: Asphalt",
+                                                "multi_facility_flag": False})
+    assert "Taxiway width, surface and strength: Width: 30 M Surface: Asphalt" in twy
+    assert "multi_facility" not in twy
+    assert "Not in my stored copy — see AD 2.15." in record_section_reply(katsina, "2.15", {})
+
+
+def test_main_routes_d31_sections_to_the_records():
+    import inspect, main
+    src = inspect.getsource(main.process)
+    assert 'section in ("AD 2.8", "AD 2.11", "AD 2.15")' in src
+    assert "record_section_reply(res, _num, _recs[0])" in src
+
+
+def test_ad22_reply_shows_operator_lines_without_the_label():
+    from responder import ad22_reply
+    out = ad22_reply(RES, {"operator_lines": ["Federal Airports Authority of Nigeria",
+                                              "P. O. Box 4532,", "Ikeja-Lagos"],
+                           "operator_info": "Federal Airports Authority of Nigeria P. O. Box 4532, Ikeja-Lagos"})
+    assert "Operator: \n   Federal Airports Authority of Nigeria\n   P. O. Box 4532,\n   Ikeja-Lagos" in out
+    old = ad22_reply(RES, {"operator_info": "Name of aerodrome operator, address, X"})
+    assert "Operator: Name of aerodrome operator, address, X" in old      # pre-D32 record

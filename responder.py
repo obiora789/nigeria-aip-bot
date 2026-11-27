@@ -480,6 +480,59 @@ def ad218_reply(res: Resolution, records: list) -> str:
             f"{config.DISCLAIMER}")
 
 
+# AD 2 subsections answered from the STRUCTURED record (D31, 27 Nov): their
+# knowledge-base chunk is the one-line embedding sentence ("DNKT AD 2.15:
+# ABN/IBN=Available"), which drops most of the row values — "katsina secondary
+# power" was answered with the beacon line. Labels are the AIP's own row titles;
+# where one printed row carries two items ("Hours of service" over "MET Office
+# outside hours") both are named, because the record holds that row's values
+# together, in printed order.
+_RECORD_SECTIONS = {
+    "2.8": ("aprons, taxiways and check locations", [
+        ("Apron surface and strength", "apron_info"),
+        ("Taxiway width, surface and strength", "taxiway_info"),
+        ("Altimeter checkpoint location and elevation", "altimeter_checkpoint"),
+        ("VOR checkpoints", "vor_checkpoints"),
+        ("INS checkpoints", "ins_checkpoints"),
+        ("Remarks", "remarks"),
+    ]),
+    "2.11": ("meteorological information provided", [
+        ("Associated MET Office", "associated_met_office"),
+        ("Hours of service / MET Office outside hours", "hours_of_service"),
+        ("Office responsible for TAF preparation / Period of validity", "taf_preparation"),
+        ("Type of landing forecast / Interval of issuance", "landing_forecast"),
+        ("Briefing/consultation provided", "briefing_consultation"),
+        ("Flight documentation / Language(s) used", "flight_documentation"),
+        ("Charts and other information available for briefing or consultation",
+         "charts_and_info"),
+        ("Supplementary equipment available for providing information",
+         "supplementary_equipment"),
+        ("ATS units provided with information", "ats_units"),
+        ("Additional information", "additional_information"),
+    ]),
+    "2.15": ("other lighting, secondary power supply", [
+        ("ABN/IBN location, characteristics and hours of operation", "abn_ibn"),
+        ("LDI location and LGT / Anemometer location and LGT", "ldi_anemometer"),
+        ("TWY edge and centre line lighting", "twy_lighting"),
+        ("Secondary power supply/switch-over time", "secondary_power"),
+        ("Remarks", "remarks"),
+    ]),
+}
+
+
+def record_section_reply(res: Resolution, subsection: str, record: dict) -> str:
+    """AD 2.8 / 2.11 / 2.15 from the structured record: every row the record
+    holds, under the AIP's row label, values as printed."""
+    title, rows = _RECORD_SECTIONS[subsection]
+    shown = [f"{label}: {' '.join(str(record.get(key)).split())}"
+             for label, key in rows if record.get(key) and str(record.get(key)).strip()]
+    if not shown:
+        shown = [f"Not in my stored copy — see AD {subsection}."]
+    return (f"{res.label} — {title} (AD {subsection})\n\n" + "\n".join(shown)
+            + f"\n\n———\nSource: Nigeria AIP · AD {subsection} · {config.AIRAC_CYCLE}\n"
+            f"{config.DISCLAIMER}")
+
+
 def ad26_reply(res: Resolution, record: dict) -> str:
     """AD 2.6 (rescue and fire fighting) from the STRUCTURED record, as printed.
 
@@ -499,6 +552,16 @@ def ad26_reply(res: Resolution, record: dict) -> str:
     return (f"{res.label} — rescue and fire fighting (AD 2.6)\n\n" + "\n".join(shown)
             + f"\n\n———\nSource: Nigeria AIP · AD 2.6 · {config.AIRAC_CYCLE}\n"
             f"{config.DISCLAIMER}")
+
+
+def _operator_text(record: dict) -> str:
+    """The operator block's lines as printed (D32: records since then carry
+    "operator_lines" without the row's own label); older records the joined
+    text."""
+    lines = [l.strip() for l in (record.get("operator_lines") or []) if l and l.strip()]
+    if lines:
+        return "\n   " + "\n   ".join(lines)
+    return (record.get("operator_info") or "").strip()
 
 
 def ad22_reply(res: Resolution, record: dict) -> str:
@@ -529,7 +592,7 @@ def ad22_reply(res: Resolution, record: dict) -> str:
         ("Geoid undulation", f"{num('geoid_undulation_m')} m"
          if record.get("geoid_undulation_m") is not None else ""),
         ("Magnetic variation", (record.get("magnetic_variation") or "").strip()),
-        ("Operator", (record.get("operator_info") or "").strip()),
+        ("Operator", _operator_text(record)),
         ("Types of traffic permitted", (record.get("traffic_type") or "").strip()),
         ("Remarks", (record.get("remarks") or "").strip()),
     ]

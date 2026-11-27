@@ -88,3 +88,32 @@ def test_ad214_cleanup_keeps_the_aips_full_stop():
         assert strip("21 SALS CAT I Note: THR lights RWY 21 U/S.") == "21 SALS CAT I Note: THR lights RWY 21 U/S."
         assert strip(f"DNAN AD 2.14 APPROACH AND RUNWAY LIGHTING {header} 06 24") == "06 24"
         assert strip(f"10 NIL Green White White {header}") == "10 NIL Green White White"
+
+
+def test_operator_label_is_removed_and_the_value_kept():
+    """D32: the label's words are removed line by line; "AFS:" with its colon
+    is the address block's own sub-label and stays."""
+    from ad22_extractor import _strip_operator_label
+    umueri = [
+        "Name of aerodrome operator, address, telephone, Chinua Achebe Cargo Airport".split(),
+        "telefax numbers, email address, AFS address and, if Umueri".split(),
+        "available, website address".split(),
+        "Anambra State".split(), "AFS:".split()]
+    assert _strip_operator_label(umueri) == [
+        "Chinua Achebe Cargo Airport", "Umueri", "Anambra State", "AFS:"]
+    katsina = [
+        "AD Administration, address, telephone, telefax, telex, Postal address: Federal".split(),
+        "AFS Katsina Airport".split(), "AFTN: DNKTYDYX".split()]
+    assert _strip_operator_label(katsina) == [
+        "Postal address: Federal", "Katsina Airport", "AFTN: DNKTYDYX"]
+    assert _strip_operator_label([["Some", "other", "label", "value"]]) is None
+
+
+def test_full_row_lines_keep_each_line_left_to_right():
+    from extractor_base import SubsectionExtractor
+    words = [(70, 100, 76, 108, "6"), (103, 100, 130, 108, "Name"), (309, 100, 340, 108, "Value"),
+             (103, 114, 130, 122, "more"), (309, 114, 340, 122, "line2"),
+             (70, 140, 76, 148, "7"), (103, 140, 130, 148, "Next")]
+    rows = SubsectionExtractor.parse_full_row_lines(words)
+    assert [[w[4] for w in ln] for ln in rows[0]] == [["Name", "Value"], ["more", "line2"]]
+    assert [[w[4] for w in ln] for ln in rows[1]] == [["Next"]]

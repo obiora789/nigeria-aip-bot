@@ -319,6 +319,40 @@ class SubsectionExtractor:
         return out
 
     @staticmethod
+    def parse_full_row_lines(words, page_width=595.2, line_tol=4.0):
+        """Like parse_full_rows, but each numbered row as its LINES: a list
+        of rows, each a list of lines, each line its words left to right.
+        Within a line the row's label column comes before its value column,
+        which is what lets a caller remove a known label word by word without
+        touching the value (AD 2.2 operator, D32)."""
+        import re
+        INT_RE = re.compile(r'\d{1,2}')
+        ROWNUM_MAX_XFRAC = 0.16
+        anchors = sorted(
+            (w for w in words if INT_RE.fullmatch(w[4]) and w[2] < ROWNUM_MAX_XFRAC * page_width),
+            key=lambda w: w[1],
+        )
+        tops = [a[1] for a in anchors] + [float("inf")]
+        rows = []
+        for i, a in enumerate(anchors):
+            lo, hi = a[1] - 2.0, tops[i + 1] - 2.0
+            body = sorted((w for w in words if lo <= w[1] < hi and w is not a),
+                          key=lambda w: w[1])
+            lines, cur, ref = [], [], None
+            for w in body:
+                if ref is None or abs(w[1] - ref) <= line_tol:
+                    cur.append(w)
+                    ref = w[1] if ref is None else ref
+                else:
+                    lines.append(sorted(cur, key=lambda x: x[0]))
+                    cur, ref = [w], w[1]
+            if cur:
+                lines.append(sorted(cur, key=lambda x: x[0]))
+            if lines:
+                rows.append(lines)
+        return rows
+
+    @staticmethod
     def parse_full_rows(words, page_width=595.2):
         """Like parse_key_value_rows, but returns each numbered row's COMPLETE
         text — label side and value side combined, in correct reading order —

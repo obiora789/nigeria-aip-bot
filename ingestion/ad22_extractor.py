@@ -113,6 +113,45 @@ def _parse_coordinates(value):
     return lat, lon
 
 
+# The two wordings of AD 2.2 row 6's own label in this AIP (19 and 17 of the
+# 36 aerodromes, 27 Nov).
+OPERATOR_LABELS = (
+    "Name of aerodrome operator, address, telephone, telefax numbers, "
+    "email address, AFS address and, if available, website address",
+    "AD Administration, address, telephone, telefax, telex, AFS",
+)
+
+
+def _label_token(t):
+    # Only the label's own commas are ignored. Not ":" — "AFS:" in the value
+    # column is the AFS sub-label of the address block, not the label's "AFS".
+    return t.casefold().rstrip(",")
+
+
+def _strip_operator_label(lines):
+    """The operator block's value lines, or None.
+
+    `lines` are the row's lines as word lists, left to right. The label sits
+    in the left column, so on each line its words come first: a line's
+    leading words are removed while they continue the label wording, and the
+    rest of the line is value. Only when one wording is used up completely is
+    the result returned; otherwise None and the caller keeps the full row."""
+    for label in OPERATOR_LABELS:
+        want = [_label_token(t) for t in label.split()]
+        k, out = 0, []
+        for toks in lines:
+            j = 0
+            while j < len(toks) and k < len(want) and _label_token(toks[j]) == want[k]:
+                j += 1
+                k += 1
+            rest = " ".join(toks[j:]).strip()
+            if rest:
+                out.append(rest)
+        if k == len(want):
+            return out
+    return None
+
+
 class AD22Extractor(SubsectionExtractor):
     subsection = "2.2"
     kind = "tabular"
@@ -148,8 +187,22 @@ class AD22Extractor(SubsectionExtractor):
         # stripped), but guarantees no real content is lost, which matters
         # more than a perfectly clean value for a contact-information field.
         full_rows = self.parse_full_rows(all_words)
+        operator_lines = None
         if len(full_rows) == len(pairs) and len(full_rows) > 5:
             values["operator_info"] = self.clean_text(full_rows[5])
+            # D32 (27 Nov): the full row read line by line interleaves the
+            # two-line label with the value — "Name of aerodrome operator,
+            # address, telephone, Chinua Achebe Cargo Airport telefax numbers,
+            # …". Remove the label's own words and keep everything else.
+            row_lines = self.parse_full_row_lines(all_words)
+            if len(row_lines) == len(full_rows):
+                operator_lines = _strip_operator_label(
+                    [[w[4] for w in line] for line in row_lines[5]])
+            if operator_lines:
+                values["operator_info"] = self.clean_text(" ".join(operator_lines))
+            else:
+                warnings.append("operator label not recognised — operator_info "
+                                "kept with its label words")
         elif len(full_rows) != len(pairs):
             warnings.append(f"parse_full_rows returned {len(full_rows)} rows but "
                              f"parse_key_value_rows returned {len(pairs)} — indices "
@@ -226,6 +279,7 @@ class AD22Extractor(SubsectionExtractor):
             "geoid_undulation_text": geoid_t,
             "magnetic_variation": values["magnetic_variation"],
             "operator_info": values["operator_info"],
+            "operator_lines": operator_lines,
             "traffic_type": values["traffic_type"],
             "remarks": values["remarks"],
         }
