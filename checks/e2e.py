@@ -130,10 +130,9 @@ def run_pipeline(q: str) -> dict:
 
     # Chart requests short-circuit to plate-only (no KB text).
     if ex.intent == "chart_retrieval":
-        ql = q.lower()
         chart_icao = res.icao
-        if chart_icao is None and (res.reference == "DNKK" or "fir" in ql
-                                   or "en-route" in ql or "enroute" in ql):
+        if chart_icao is None and (res.reference == "DNKK"
+                                   or getattr(ex, "enroute_chart_request", False)):
             chart_icao = "DNKK"
         charts = []
         if chart_icao:
@@ -170,8 +169,7 @@ def run_pipeline(q: str) -> dict:
             out["path"], out["reply"] = "answer", answer(outcome, res, ex.runway, q)
 
     # Supplementary charts (SAR rides along with SAR text; chart-procedure hints).
-    ql = q.lower()
-    is_sar = re.search(r"\bsar\b|search and rescue|\brescue\b", ql) is not None
+    is_sar = bool(getattr(ex, "sar_request", False))
     chart_icao = res.icao or ("GEN" if is_sar else None)
     if chart_icao and (_wants_chart(ex) or is_sar):
         if chart_icao in ("GEN", "DNKK"):

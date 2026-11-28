@@ -316,6 +316,29 @@ class AIPQueryExtraction(BaseModel):
             "Never invent one."),
     )
 
+    # EN-ROUTE CHARTS and SEARCH AND RESCUE, decided by the model (car 5, D18).
+    # main.py tested `"fir" in text` — true for "confirm", "first" and
+    # "firefighting" — and `\brescue\b`, which sent the SAR units chart, unasked,
+    # for "rescue and fire fighting category".
+    enroute_chart_request: bool = Field(
+        False,
+        description=(
+            "True when the message asks for the EN-ROUTE chart(s): the Kano FIR "
+            "en-route charts (ENR 6), 'en-route chart', 'enroute chart', 'FIR "
+            "chart', 'show me the en-route charts'. False for an aerodrome's own "
+            "charts, approach plates, SIDs and STARs, and for every message that "
+            "does not ask for en-route charts ('confirm the first fix', "
+            "'firefighting category at Kano')."),
+    )
+    sar_request: bool = Field(
+        False,
+        description=(
+            "True when the message is about SEARCH AND RESCUE (SAR, GEN 3.6): SAR "
+            "services, SAR units, the SAR chart, the rescue coordination centre. "
+            "False for RESCUE AND FIRE FIGHTING (RFF, the aerodrome fire "
+            "category, AD 2.6) and for everything else."),
+    )
+
     runway: Optional[str] = Field(
         None,
         description="Runway designator if mentioned, e.g. '18L', '22'. Leave null if none.",

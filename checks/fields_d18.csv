@@ -1,0 +1,31 @@
+question,field,expected
+Show me the en-route charts,enroute_chart_request,true
+enroute chart,enroute_chart_request,true
+Kano FIR chart please,enroute_chart_request,true
+I need the en-route chart for Nigeria,enroute_chart_request,true
+ENR 6 charts,enroute_chart_request,true
+FIR charts,enroute_chart_request,true
+en-route charts for the Kano FIR,enroute_chart_request,true
+Can you confirm the first fix on the SID at Lagos?,enroute_chart_request,false
+firefighting category at Kano,enroute_chart_request,false
+rescue and fire fighting category at Abuja,enroute_chart_request,false
+Lagos aerodrome chart,enroute_chart_request,false
+ILS approach plate Kano,enroute_chart_request,false
+confirm runway length at Ilorin,enroute_chart_request,false
+first aid facilities at Enugu,enroute_chart_request,false
+what is the fire category at Owerri?,enroute_chart_request,false
+Abuja STAR chart,enroute_chart_request,false
+search and rescue units in Nigeria,sar_request,true
+SAR chart,sar_request,true
+Who coordinates search and rescue in Nigeria?,sar_request,true
+rescue coordination centre Nigeria,sar_request,true
+SAR services,sar_request,true
+search and rescue chart,sar_request,true
+rescue and fire fighting category at Abuja,sar_request,false
+RFF category at Lagos,sar_request,false
+firefighting equipment at Kano,sar_request,false
+fire category Owerri,sar_request,false
+rescue equipment at Port Harcourt,sar_request,false
+Kano rescue and firefighting vehicles,sar_request,false
+en-route charts,sar_request,false
+Lagos tower frequency,sar_request,false

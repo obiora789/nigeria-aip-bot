@@ -1297,7 +1297,6 @@ async def process(chat_id: int, text: str, force_scope=None,
         # the text layer of chart pages is flattened diagram annotations (scale
         # bars, bearing ticks, loose numbers) and must NEVER be shown to a pilot.
         if ex.intent == "chart_retrieval":
-            ql = text.lower()
             chart_icao = res.icao
             # A SID question (the model's sid_request) goes to the SID choice:
             # runway, then SID, as an approach goes to the approach choice.
@@ -1320,8 +1319,8 @@ async def process(chat_id: int, text: str, force_scope=None,
                     and not subsection_router.is_approach_query(text)):
                 log.info("AD 2.22 non-approach query — text only, no chart")
                 chart_icao = None
-            elif chart_icao is None and (res.reference == "DNKK" or "fir" in ql
-                                         or "en-route" in ql or "enroute" in ql):
+            elif chart_icao is None and (res.reference == "DNKK"
+                                         or getattr(ex, "enroute_chart_request", False)):
                 chart_icao = "DNKK"
             charts = []
             if chart_icao:
@@ -1795,12 +1794,14 @@ async def process(chat_id: int, text: str, force_scope=None,
         #    Kano FIR en-route plates (icao_code DNKK) and the SAR units chart
         #    (icao_code GEN, GEN 3.6), which aren't tied to a normal aerodrome.
         chart_icao = res.icao
-        ql = text.lower()
-        is_sar = re.search(r"\bsar\b|search and rescue|\brescue\b", ql) is not None
+        # The model's fields decide (car 5, D18): "fir" in the text matched
+        # "confirm"/"first"/"firefighting", and "rescue" matched "rescue and
+        # fire fighting" — which sent the SAR chart unasked.
+        is_sar = bool(getattr(ex, "sar_request", False))
         if chart_icao is None:
             if is_sar:
                 chart_icao = "GEN"        # SAR Units chart
-            elif res.reference == "DNKK" or "fir" in ql or "en-route" in ql or "enroute" in ql:
+            elif res.reference == "DNKK" or getattr(ex, "enroute_chart_request", False):
                 chart_icao = "DNKK"       # Kano FIR en-route charts
 
         # SAR chart accompanies SAR text even without an explicit chart request.

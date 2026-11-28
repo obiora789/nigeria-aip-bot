@@ -64,10 +64,9 @@ def run(text: str) -> None:
 
     # Chart requests are plate-only — no KB text shown (mirrors production).
     if ex.intent == "chart_retrieval":
-        ql = text.lower()
         chart_icao = res.icao
-        if chart_icao is None and (res.reference == "DNKK" or "fir" in ql
-                                   or "en-route" in ql or "enroute" in ql):
+        if chart_icao is None and (res.reference == "DNKK"
+                                   or getattr(ex, "enroute_chart_request", False)):
             chart_icao = "DNKK"
         charts = []
         if chart_icao:
