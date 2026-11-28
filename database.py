@@ -309,8 +309,12 @@ def list_scope_ids(scope_kind: str) -> list:
     rows, page, size = [], 0, 1000
     while True:
         lo = page * size
+        # Ordered (D15): without ORDER BY, PostgREST pages are not stable,
+        # so a row could fall between two pages and a published name be
+        # answered "I don't have that".
         res = _execute(lambda: (supabase.table("aip_facts").select("scope_id")
                                 .eq("scope_kind", scope_kind)
+                                .order("id")
                                 .range(lo, lo + size - 1)),
                        f"list_scope_ids ({scope_kind} page {page})")
         batch = res.data or []

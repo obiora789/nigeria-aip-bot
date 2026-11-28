@@ -1396,7 +1396,7 @@ async def process(chat_id: int, text: str, force_scope=None,
                     return
                 if status == "not_in_aip":
                     rec["path"] = "not_in_aip"
-                    await send_info(not_in_aip(res))
+                    await send_info(not_in_aip(res, ad_out, follow_query))
                     return
                 # any other status -> show the AD 2.2 chunk focused (safe, sourced)
                 rec["path"] = "aerodrome_data"
@@ -1787,7 +1787,7 @@ async def process(chat_id: int, text: str, force_scope=None,
             if status == "grounded":
                 await send_info(grounded_reply(ga, outcome, res))
             elif status == "not_in_aip":
-                await send_info(not_in_aip(res))
+                await send_info(not_in_aip(res, outcome, follow_query))
             else:
                 await send_info(answer(outcome, res, ex.runway, follow_query))
 

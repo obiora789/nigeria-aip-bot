@@ -102,21 +102,59 @@ def _cite(r, outcome: SearchOutcome) -> str:
     return " / ".join(bits) if bits else "Nigeria AIP"
 
 
+def _needle_at(text: str, needle: str):
+    """Where `needle` occurs in `text` as a whole token, case ignored, or None.
+
+    D11: text.find() was case-sensitive ("tower" never found "TOWER") and
+    matched inside other tokens ("22" found "2200 ft" before "RWY 22")."""
+    n = (needle or "").strip()
+    if not n:
+        return None
+    if re.fullmatch(r"[\d.,]+", n):
+        pat = rf"(?<![\d.,]){re.escape(n)}(?![\d])"
+    else:
+        pat = rf"(?<!\w){re.escape(n)}(?!\w)"
+    m = re.search(pat, text, re.I)
+    return m.start() if m else None
+
+
+def _snap(text: str, lo: int, hi: int):
+    """Move a window's edges out to whole tokens, and never between the groups
+    of a spaced number. D11: a fixed-width cut showed "TORA 12 500 m" as
+    "TORA 12 5 …" — a different number inside a reply labelled verbatim."""
+    while lo > 0 and text[lo - 1] != " ":
+        lo -= 1
+    # "12 500": a window starting at "500" starts at "12".
+    while lo >= 2 and text[lo - 1] == " " and text[lo - 2].isdigit() \
+            and re.match(r"\d{3}(?!\d)", text[lo:]):
+        lo -= 1
+        while lo > 0 and text[lo - 1] != " ":
+            lo -= 1
+    while hi < len(text) and text[hi - 1] != " " and text[hi] != " ":
+        hi += 1
+    while hi < len(text) and text[hi - 1].isdigit() and re.match(r" \d{3}(?!\d)", text[hi:]):
+        hi += 4
+    return lo, hi
+
+
 def _focus(content: str, needles: list, width: int = 360) -> str:
     """Collapse whitespace and return a focused window around the answer's values,
-    so the source shows the supporting line — not a screen of flattened table."""
+    so the source shows the supporting line — not a screen of flattened table.
+    Needles match whole tokens, case ignored; the window never cuts a token or
+    a spaced number (D11)."""
     text = re.sub(r"\s+", " ", (content or "").strip())
     if len(text) <= width:
         return text
-    pos = [text.find(n) for n in needles]
-    pos = [p for p in pos if p >= 0]
+    pos = [p for p in (_needle_at(text, n) for n in needles) if p is not None]
     if pos:
         lo = max(0, min(pos) - 90)
         hi = min(len(text), max(pos) + 210)
         if hi - lo > width:
             hi = lo + width
-        return ("… " if lo > 0 else "") + text[lo:hi].strip() + (" …" if hi < len(text) else "")
-    return text[:width].strip() + " …"
+    else:
+        lo, hi = 0, width
+    lo, hi = _snap(text, lo, hi)
+    return ("… " if lo > 0 else "") + text[lo:hi].strip() + (" …" if hi < len(text) else "")
 
 
 def _source_block(outcome: SearchOutcome, ans) -> str:
@@ -136,14 +174,24 @@ def _source_block(outcome: SearchOutcome, ans) -> str:
     requires it) case where no fact carries a valid source_excerpt.
     """
     results = outcome.results
+    cited = []
     for f in ans.facts_used:
         idx = getattr(f, "source_excerpt", None)
-        if idx and 1 <= idx <= len(results):
+        if idx and 1 <= idx <= len(results) and idx not in cited:
+            cited.append(idx)
+    if cited:
+        # One block per cited excerpt (car 4): an answer built from two
+        # excerpts showed only the first, hiding the source of the rest.
+        blocks = []
+        for idx in cited[:3]:
             best = results[idx - 1]
             values = [v.replace(",", "") for ff in ans.facts_used
+                      if getattr(ff, "source_excerpt", None) == idx
                       for v in re.findall(r"\d[\d,]*(?:\.\d+)?", ff.value)]
             pct = int(round(best.similarity * 100))
-            return f"[AIP {_cite(best, outcome)} · {pct}% match]\n{_focus(best.content, values)}"
+            blocks.append(f"[AIP {_cite(best, outcome)} · {pct}% match]\n"
+                          f"{_focus(best.content, values)}")
+        return "\n\n".join(blocks)
 
     values = [v.replace(",", "") for f in ans.facts_used
               for v in re.findall(r"\d[\d,]*(?:\.\d+)?", f.value)]
@@ -185,12 +233,39 @@ def grounded_reply(ans, outcome: SearchOutcome, res: Resolution) -> str:
     return f"{res.label}\n\n{head}\n\nSource (AIP, verbatim):\n{source}\n\n———\n{footer}"
 
 
-def not_in_aip(res: Resolution) -> str:
-    """Faithful abstention when the retrieved excerpts don't contain the answer."""
-    return (f"{res.label}\n\nThat specific detail isn't stated in the AIP data I "
+def not_in_aip(res: Resolution, outcome: SearchOutcome = None, query: str = "") -> str:
+    """Abstention when the model finds no answer in the retrieved excerpts.
+
+    D13: the model can miss a value that IS in the excerpt, and the reply
+    then said only "isn't stated", leaving the pilot nothing to check. With
+    the search outcome, the closest retrieved text is shown with it, as
+    printed, so the pilot can see for themselves."""
+    head = (f"{res.label}\n\nThat specific detail isn't stated in the AIP data I "
             f"retrieved, so I won't guess. It may not be published, or try naming the "
-            f"exact field (e.g. RFFS category, declared distances, ATIS frequency).\n\n"
-            f"———\nSource: Nigeria AIP · {config.AIRAC_CYCLE}\n{config.DISCLAIMER}")
+            f"exact field (e.g. RFFS category, declared distances, ATIS frequency).")
+    best = _best_excerpt(outcome, res, query) if outcome is not None else None
+    if best is not None:
+        chunk, snippet = best
+        pct = int(round(chunk.similarity * 100))
+        head += (f"\n\nClosest AIP text I retrieved — check it yourself:\n"
+                 f"[AIP {_cite(chunk, outcome)} · {pct}% match]\n{snippet}")
+    return (f"{head}\n\n———\nSource: Nigeria AIP · {config.AIRAC_CYCLE}\n"
+            f"{config.DISCLAIMER}")
+
+
+def _best_excerpt(outcome: SearchOutcome, res: Resolution, query: str = ""):
+    """(chunk, focused snippet) of the retrieved chunk that best matches the
+    query's words, or None. Shared by answer() and not_in_aip()."""
+    if outcome is None or not outcome.results:
+        return None
+    want = set(re.findall(r"[a-z]{4,}", f"{query} {res.label}".lower()))
+    best = max(outcome.results,
+               key=lambda r: (len(want & set(re.findall(r"[a-z]{4,}", r.content.lower()))),
+                              r.similarity))
+    needles = (re.findall(r"\d[\d,]*(?:\.\d+)?", query)
+               or list(dict.fromkeys(re.findall(r"[a-z]{4,}",
+                                                f"{query} {res.label}".lower())))[:6])
+    return best, _focus(best.content, needles, width=520)
 
 
 def answer(outcome: SearchOutcome, res: Resolution, requested_runway=None,
@@ -200,15 +275,11 @@ def answer(outcome: SearchOutcome, res: Resolution, requested_runway=None,
     here, so we keep it verbatim, just scoped to the relevant region."""
     if not outcome.results:
         return not_found()
-    # Rank by overlap with the query (+ aerodrome label) so the shown chunk is the
-    # one that answers what was asked, not merely the top similarity hit.
-    want = set(re.findall(r"[a-z]{4,}", f"{query} {res.label}".lower()))
-    best = max(outcome.results,
-               key=lambda r: (len(want & set(re.findall(r"[a-z]{4,}", r.content.lower()))),
-                              r.similarity))
+    # The chunk that best matches the query's words (+ aerodrome label), not
+    # merely the top similarity hit; focused on the query's terms in query
+    # order — list(set)[:6] picked different words per process (D11).
+    best, snippet = _best_excerpt(outcome, res, query)
     pct = int(round(best.similarity * 100))
-    needles = re.findall(r"\d[\d,]*(?:\.\d+)?", query) or list(want)[:6]
-    snippet = _focus(best.content, needles, width=520)
     body = f"[AIP {_cite(best, outcome)} · {pct}% match]\n{snippet}"
     warn = _runway_text_warning(requested_runway, best.content)
     if warn:
@@ -938,7 +1009,10 @@ def facts_reply(res: Resolution, facts: list, query: str = "") -> str:
     # names a section that does not exist — a pilot checking the source against
     # the real AIP would not find it, which defeats the point of citing at all.
     part = "AD" if (getattr(res, "scope_kind", "AD") or "AD") == "AD" else "ENR"
-    cite = f"{part} {sections[0]}" if len(sections) == 1 else f"{part} 2"
+    # Every section the facts come from (car 4): mixed sections were cited
+    # "AD 2" / "ENR 2" — and ENR 2 is ATS airspace, not where a navaid or a
+    # waypoint is published.
+    cite = ", ".join(f"{part} {s}" for s in sections) if sections else part
 
     grouped = {}
     for f in facts:

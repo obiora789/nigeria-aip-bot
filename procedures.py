@@ -87,7 +87,11 @@ _TAIL = re.compile(
     r"Takeoff\s+Minima\s+for\s+R(?:un)?wa?y|\d\.\d+(?:\.\d+)*\s+OCA/H\b|Aircraft\s+category)",
     re.I)
 _JUNK = re.compile(
-    r"NIGERIAN AIRSPACE MANAGEMENT AGENCY|AD 2-DN[A-Z]{2}-\d+|\d{2} [A-Z]{3} \d{2}|"
+    # The page date is a real date ("27 NOV 25"). The old "\d{2} [A-Z]{3} \d{2}"
+    # under re.I also matched "10 and 15", deleting "Descend to 2 500 FT between
+    # 10 and 15 DME ABC" from a verbatim procedure (D12).
+    r"NIGERIAN AIRSPACE MANAGEMENT AGENCY|AD 2-DN[A-Z]{2}-\d+|"
+    r"\b\d{2} (?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC) \d{2}\b|"
     r"NIGERIA AIP|FLIGHT PROCEDURES INSTRUMENT APPROACH|^\s*FLIGHT\s+PROCEDURES\s*$", re.I)
 _ORDER = ["Holding", "Letdown", "Missed Approach"]
 
